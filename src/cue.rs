@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! CUE/BIN track layout, read-only input validation and data track normalization.
-//! CDDA audio is handled separately by audio.rs.
+//! CDDA audio is handled separately by audio.rs. Only CUE plus BIN inputs are supported.
 use std::fs::{self,File,OpenOptions};
 use std::io::{Read,Seek,SeekFrom,Write};
 use std::path::{Path,PathBuf,Component};
@@ -44,7 +44,8 @@ fn file_record(line:&str)->Result<String,String>{
 fn valid_relative(name:&str)->bool{
     let p=Path::new(name);
     !p.as_os_str().is_empty() && p.components().all(|c|matches!(c,Component::Normal(_))) &&
-        !name.contains([':', '\\', '\0']) && !name.starts_with('/')
+        !name.contains([':', '\\', '\0']) && !name.starts_with('/') &&
+        p.extension().is_some_and(|e|e.eq_ignore_ascii_case("bin"))
 }
 /// Resolve a CUE file reference inside its directory, refusing symlinks.
 /// A completely absent audio file is allowed and reported separately by the caller.
@@ -129,13 +130,13 @@ pub fn tracks(cue:&Path)->Result<Vec<Track>,String>{
 /// otherwise INDEX 01. Uses the end of the file for separate-file tracks.
 pub fn track_end(tracks:&[Track],which:usize,total_sectors:u64)->Result<u64,String>{
     let current=&tracks[which];
-    let next=tracks[which+1..].iter().find(|t|t.file.eq_ignore_ascii_case(&current.file));
+    let next=tracks.get(which+1).filter(|t|t.file.eq_ignore_ascii_case(&current.file));
     let end=next.map(|t|t.index00.unwrap_or(t.index01)).unwrap_or(total_sectors);
     if current.index01>=end||end>total_sectors {return Err(format!("Invalid bounds for track {:02}",current.number));}
     Ok(end)
 }
 
-pub fn normalize(cue:&Path, override_bin:Option<&Path>, temp_dir:&Path)->Result<TempIso,String>{
+pub fn normalize(cue:&Path, temp_dir:&Path)->Result<TempIso,String>{
     let tracks=tracks(cue)?;
     let data=&tracks[0];
     let (sector_size,start)=match data.mode.as_str(){
@@ -144,13 +145,7 @@ pub fn normalize(cue:&Path, override_bin:Option<&Path>, temp_dir:&Path)->Result<
         "MODE2/2352"=>(2352usize,24usize),
         _=>return Err("First CUE track is not a supported CD-ROM data track".into()),
     };
-    let bin=if let Some(path)=override_bin{
-        let m=fs::symlink_metadata(path).map_err(|e|e.to_string())?;
-        if !m.is_file()||m.file_type().is_symlink(){return Err("Override BIN must be a regular file".into());}
-        path.to_path_buf()
-    } else {
-        bin_path(cue,&data.file)?.ok_or_else(||format!("Data BIN missing: {}",data.file))?
-    };
+    let bin=bin_path(cue,&data.file)?.ok_or_else(||format!("Data BIN missing: {}",data.file))?;
     let mut input=File::open(&bin).map_err(|e|e.to_string())?;
     let len=input.metadata().map_err(|e|e.to_string())?.len();
     if len==0||len>8*1024*1024*1024||len%sector_size as u64!=0{
@@ -206,9 +201,50 @@ mod tests{use super::*;
         sector[15]=1;
         sector[16..16+2048].fill(0x5a);
         fs::write(root.join("data.bin"),sector).unwrap();
-        let output=normalize(&cue,None,&root).expect("Missing audio must not block data extraction");
+        let output=normalize(&cue,&root).expect("Missing audio must not block data extraction");
         assert_eq!(fs::read(&output.0).unwrap(),vec![0x5a;2048]);
         drop(output);fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn cue_with_multiple_separate_binary_tracks() {
+        let root=std::env::temp_dir().join(format!("cyber-multibin-{}",std::process::id()));
+        let _=fs::remove_dir_all(&root);fs::create_dir(&root).unwrap();
+        let cue=root.join("multi.cue");
+        fs::write(&cue,concat!(
+            "FILE \\"Track 01.bin\\" BINARY\\n",
+            " TRACK 01 MODE1/2352\\n",
+            " INDEX 01 00:00:00\\n",
+            "FILE \\"Track 02.bin\\" BINARY\\n",
+            " TRACK 02 AUDIO\\n",
+            " INDEX 00 00:00:00\\n",
+            " INDEX 01 00:00:01\\n",
+            "FILE \\"Track 03.bin\\" BINARY\\n",
+            " TRACK 03 AUDIO\\n",
+            " INDEX 01 00:00:00\\n",
+        ).replace("\\\\"","\\")).unwrap();
+        let parsed=tracks(&cue).unwrap();
+        assert_eq!(parsed.len(),3);
+        assert_eq!(parsed[0].mode,"MODE1/2352");
+        assert_eq!(parsed[1].mode,"AUDIO");
+        assert_eq!(parsed[2].file,"Track 03.bin");
+        assert!(bin_path(&cue,&parsed[1].file).unwrap().is_none());
+        let mut data=vec![0u8;2352*2];
+        for sector in data.chunks_exact_mut(2352) {
+            sector[..12].copy_from_slice(&[0,255,255,255,255,255,255,255,255,255,255,0]);
+            sector[15]=1;
+        }
+        data[16..16+2048].fill(0x5a);
+        fs::write(root.join("Track 01.bin"),data).unwrap();
+        let output=normalize(&cue,&root).unwrap();
+        assert_eq!(fs::metadata(&output.0).unwrap().len(),4096);
+        drop(output);
+        fs::remove_dir_all(&root).unwrap();
+    }
+    #[test]
+    fn rejects_non_bin_cue_file_reference() {
+        assert!(!valid_relative("track.wav"));
+        assert!(!valid_relative("disc.iso"));
+        assert!(valid_relative("Track 02.BIN"));
     }
     #[test]
     fn same_file_boundary_uses_next_index00(){
