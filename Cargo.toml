@@ -1,0 +1,28 @@
+[package]
+name = "cyber-gladiators-fix"
+version = "0.1.2"
+edition = "2021"
+rust-version = "1.95"
+description = "Windows CLI ISO/CUE installer, speed fix, verifier and launcher for CyberGladiators (1996)"
+license = "GPL-3.0-or-later"
+authors = ["legluondunet assisted by ChatGPT (OpenAI)"]
+publish = false
+build = "build.rs"
+
+[[bin]]
+name = "CyberGladiatorsFix"
+path = "src/main.rs"
+
+[dependencies]
+isomage = "=2.1.0"
+sha2 = "0.10"
+flacenc = "=0.5.1"
+
+[dev-dependencies]
+claxon = "0.4"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

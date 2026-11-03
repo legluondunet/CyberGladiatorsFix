@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Windows console patcher/installer; supports Wine on Linux.
+#[cfg(not(windows))]
+compile_error!("CyberGladiatorsFix targets Windows x64 (and Wine on Linux). Build for a Windows target.");
+mod cue;
+mod audio;
+mod install;
+mod nglide;
+mod patch;
+mod verify;
+
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path,PathBuf};
+use std::io::Write;
+
+const NAME:&str="CyberGladiatorsFix";
+const HELP:&str="CyberGladiatorsFix - Windows x64 console CD installer and game speed fix
+
+Usage:
+  CyberGladiatorsFix.exe
+  CyberGladiatorsFix.exe <disc.iso>
+  CyberGladiatorsFix.exe <disc.cue> [track.bin]
+  CyberGladiatorsFix.exe --verify
+  CyberGladiatorsFix.exe --launch [--3dfx-logo]
+  CyberGladiatorsFix.exe --help
+  CyberGladiatorsFix.exe --version
+
+No arguments: discover exactly one ISO/CUE in the current working directory;
+install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
+create CYBER.EXE.bak, extract available CUE AUDIO tracks as TrackNN.flac,
+and optionally copy a user-installed nGlide glide.dll.
+If CyberGladiatorsFix exists, only apply the verified speed fix; never overwrite it.
+--verify is read-only; --launch verifies first; --3dfx-logo additionally
+requires a user-provided 32-bit 3DfxSpl.dll. No game or nGlide files bundled.
+Unrecognized CD editions/executables are refused rather than modified.
+";
+fn show(s:&str,root:&Path){
+    println!("{s}");
+    let p=root.join("CyberGladiatorsFix.log");
+    if let Ok(mut f)=fs::OpenOptions::new().create(true).append(true).open(&p){let _=writeln!(f,"{s}");}
+}
+fn require_image(path:&Path)->Result<(),String>{
+    if !path.extension().is_some_and(|s|s.eq_ignore_ascii_case("iso")||s.eq_ignore_ascii_case("cue")){
+        return Err("Expected an .iso or .cue file".into());
+    }
+    Ok(())
+}
+fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
+    let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
+    match args{
+        [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
+        [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
+        [one] if one.to_str()==Some("--verify")=>{let r=verify::verify(root)?;show(&r,root);return Ok(());},
+        [one] if one.to_str()==Some("--launch")=>{
+            let mut child=verify::launch(root,false)?;
+            show(&format!("Started CYBER.EXE (PID {})",child.id()),root);
+            let status=child.wait().map_err(|e|e.to_string())?;
+            if !status.success(){return Err(format!("Game exited with status {status}"));}
+            return Ok(());
+        },
+        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>{
+            let mut child=verify::launch(root,true)?;
+            show(&format!("Started CYBER.EXE with 3dfx splash (PID {})",child.id()),root);
+            let status=child.wait().map_err(|e|e.to_string())?;
+            if !status.success(){return Err(format!("Game exited with status {status}"));}
+            return Ok(());
+        },
+        _=>{},
+    }
+    if args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>2{
+        return Err(format!("Invalid option(s).\n{HELP}"));
+    }
+    let target=root.join(install::DIR);
+    if target.is_symlink(){return Err("Refusing symlink game directory".into());}
+    if target.exists(){
+        if !args.is_empty(){return Err("Installation already exists: refusal to overwrite".into());}
+        let exe=target.join("cyber.exe");
+        let status=patch::apply(&exe)?;
+        let glide=nglide::try_install(root,&target)?;
+        show(&format!("{status}. nGlide {}",if glide{"ready"}else{"missing"}),root);
+        return Ok(());
+    }
+    let input=if let Some(arg)=args.first(){PathBuf::from(arg)}else{
+        install::find_image(&std::env::current_dir().map_err(|e|e.to_string())?)?
+    };
+    require_image(&input)?;
+    let bin=if let Some(b)=args.get(1){Some(PathBuf::from(b))}else{None};
+    show(&format!("Selected disc image: {}",input.display()),root);
+    let status=install::install(&input,bin.as_deref(),&target,root)?;
+    show(&status,root);
+    Ok(())
+}
+fn main(){
+    let root=std::env::current_exe().ok().and_then(|p|p.parent().map(Path::to_path_buf))
+        .unwrap_or_else(||PathBuf::from("."));
+    let args:Vec<OsString>=std::env::args_os().skip(1).collect();
+    if let Err(e)=dispatch(&args,&root){
+        show(&format!("{NAME}: ERROR: {e}"),&root);
+        std::process::exit(1);
+    }
+}
