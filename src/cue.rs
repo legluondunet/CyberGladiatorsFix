@@ -210,18 +210,17 @@ mod tests{use super::*;
         let root=std::env::temp_dir().join(format!("cyber-multibin-{}",std::process::id()));
         let _=fs::remove_dir_all(&root);fs::create_dir(&root).unwrap();
         let cue=root.join("multi.cue");
-        fs::write(&cue,concat!(
-            "FILE \\"Track 01.bin\\" BINARY\\n",
-            " TRACK 01 MODE1/2352\\n",
-            " INDEX 01 00:00:00\\n",
-            "FILE \\"Track 02.bin\\" BINARY\\n",
-            " TRACK 02 AUDIO\\n",
-            " INDEX 00 00:00:00\\n",
-            " INDEX 01 00:00:01\\n",
-            "FILE \\"Track 03.bin\\" BINARY\\n",
-            " TRACK 03 AUDIO\\n",
-            " INDEX 01 00:00:00\\n",
-        ).replace("\\\\"","\\")).unwrap();
+        fs::write(&cue, r#"FILE "Track 01.bin" BINARY
+ TRACK 01 MODE1/2352
+ INDEX 01 00:00:00
+FILE "Track 02.bin" BINARY
+ TRACK 02 AUDIO
+ INDEX 00 00:00:00
+ INDEX 01 00:00:01
+FILE "Track 03.bin" BINARY
+ TRACK 03 AUDIO
+ INDEX 01 00:00:00
+"#).unwrap();
         let parsed=tracks(&cue).unwrap();
         assert_eq!(parsed.len(),3);
         assert_eq!(parsed[0].mode,"MODE1/2352");
