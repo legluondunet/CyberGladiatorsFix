@@ -46,7 +46,7 @@ fn encode(file:File,sector_start:u64,sector_end:u64,destination:&Path)->Result<(
     let frames=(sector_end-sector_start)*SECTOR_BYTES/BYTES_PER_STEREO_SAMPLE;
     let src=AudioSource{file:f,remaining_frames:frames};
     let conf=flacenc::config::Encoder::default().into_verified()
-        .map_err(|e|format!("FLAC encoder configuration: {e}"))?;
+        .map_err(|e|format!("FLAC encoder configuration: {e:?}"))?;
     let stream=flacenc::encode_with_fixed_block_size(&conf,src,conf.block_size)
         .map_err(|e|format!("Lossless FLAC encoding failed: {e}"))?;
     let mut sink=ByteSink::new();
