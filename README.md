@@ -97,5 +97,5 @@ The source project includes a Windows GitHub Actions workflow. **The initial sna
 ## Credits and reference
 
 - Project architecture based on [ScorchedPlanetFix](https://github.com/legluondunet/ScorchedPlanetFix) by the same author.
-- Game timing bug analysis/byte substitutions: [Bitpatch (archived and cited by SierraVault)](https://mirror.sierravault.net/1996-cybergladiators).
+- **Original speed fix credit:** Aqrit ([Bitpatch.com — CyberGladiators Speed Fix](https://bitpatch.com/cybergladiators.html)). The original analysis and the two `CYBER.EXE` hexadecimal substitutions are by Aqrit; CyberGladiatorsFix incorporates them with SHA-256 executable verification and an automatic backup. The patch is also documented by [SierraVault](https://mirror.sierravault.net/1996-cybergladiators).
 - nGlide: © Zeus Software; download separately at official site.
