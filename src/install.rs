@@ -199,7 +199,7 @@ mod cue_selection_tests {
         fs::write(root.join("disc.iso"),b"not accepted").unwrap();
         fs::write(root.join("disc.bin"),b"not accepted").unwrap();
         assert!(find_cue(&root).unwrap_err().contains("one .cue"));
-        fs::write(root.join("disc.cue"),b"FILE \\"disc.bin\\" BINARY").unwrap();
+        fs::write(root.join("disc.cue"),br#"FILE "disc.bin" BINARY"#).unwrap();
         assert_eq!(find_cue(&root).unwrap(),root.join("disc.cue"));
         fs::remove_dir_all(&root).unwrap();
     }
