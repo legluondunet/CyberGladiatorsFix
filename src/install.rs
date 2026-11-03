@@ -22,16 +22,16 @@ const USA_SPLASH_AVI_SHA256:&str="41773e2525a2b7e959e1bcb44ad3cd640df780551a13b1
 #[derive(Clone)]
 struct Asset{node:TreeNode,path:PathBuf,size:u64}
 
-pub fn find_image(cwd:&Path)->Result<PathBuf,String>{
+pub fn find_cue(cwd:&Path)->Result<PathBuf,String>{
     let mut matches=Vec::<PathBuf>::new();
     for entry in fs::read_dir(cwd).map_err(|e|e.to_string())? {
         let p=entry.map_err(|e|e.to_string())?.path();
         let m=fs::symlink_metadata(&p).map_err(|e|e.to_string())?;
-        if m.is_file()&&!m.file_type().is_symlink()&&p.extension().is_some_and(|s|s.eq_ignore_ascii_case("iso")||s.eq_ignore_ascii_case("cue")){
+        if m.is_file()&&!m.file_type().is_symlink()&&p.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")){
             matches.push(p);
         }
     }
-    if matches.len()!=1{return Err(format!("Expected exactly one ISO/CUE in {}, found {}. Supply an explicit path.",cwd.display(),matches.len()));}
+    if matches.len()!=1{return Err(format!("Expected exactly one .cue file in {}, found {}. Supply an explicit path.",cwd.display(),matches.len()));}
     Ok(matches.remove(0))
 }
 fn safe_name(name:&str)->bool{
@@ -124,13 +124,15 @@ fn image_file(path:&Path)->Result<File,String>{
 
 /// Install only CYBER/*, not Sierra's obsolete Windows 95 installer.
 /// A CD may still be required at runtime until the game's CD logic is analyzed.
-pub fn install(image:&Path,bin:Option<&Path>,destination:&Path,root:&Path)->Result<String,String>{
+pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,String>{
     if destination.exists()||destination.is_symlink(){return Err(format!("Destination already exists: {}",destination.display()));}
-    let ext=image.extension().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
-    let temp_iso=if ext=="cue"{Some(cue::normalize(image,bin,root)?)}
-        else if ext=="iso"&&bin.is_none(){None}
-        else{return Err("Expected ISO or CUE [BIN]".into());};
-    let iso_path=temp_iso.as_ref().map(|p|p.0.as_path()).unwrap_or(image);
+    if !cue_path.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")) {
+        return Err("Only a .cue sheet referencing one or more .bin files is supported".into());
+    }
+    // Normalize the first raw data track to an internal, short-lived
+    // 2048-byte/sector filesystem view. Standalone ISO is not accepted.
+    let temp_iso=cue::normalize(cue_path,root)?;
+    let iso_path=temp_iso.0.as_path();
     let mut iso=image_file(iso_path)?;
     let len=iso.metadata().map_err(|e|e.to_string())?.len();
     if len==0||len>MAX_BYTES{return Err("Unsupported ISO file size".into());}
@@ -172,13 +174,13 @@ pub fn install(image:&Path,bin:Option<&Path>,destination:&Path,root:&Path)->Resu
             if (i+1)%50==0 {println!("Extracted {}/{} files",i+1,files.len());}
         }
         let outcome=patch::apply(&staged.join("cyber.exe"))?;
-        let audio_report=if ext=="cue"{Some(audio::extract(image,&staged)?)}else{None};
-        if let Some(ref audio)=audio_report{manifest.push_str(&audio.manifest_rows);}
+        let audio_report=audio::extract(cue_path,&staged)?;
+        manifest.push_str(&audio_report.manifest_rows);
         fs::write(staged.join(MANIFEST),manifest).map_err(|e|e.to_string())?;
         let has_glide=nglide::try_install(root,&staged)?;
         fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
-        let audio_note=audio_report.map(|r|format!("{} lossless FLAC tracks saved as TrackNN.flac; {} tracks omitted (missing BIN files)",r.extracted,r.missing.len()))
-            .unwrap_or_else(||"No CUE sheet provided; audio tracks cannot be extracted from this ISO".into());
+        let audio_note=format!("{} lossless FLAC tracks saved as TrackNN.flac; {} tracks omitted (missing BIN files)",
+            audio_report.extracted,audio_report.missing.len());
         Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, nGlide {}. Audio: {}. Installed to {}.",
             files.len(),outcome,if has_glide{"installed"}else{"missing (install separately)"},audio_note,destination.display()))
     })();
@@ -186,6 +188,30 @@ pub fn install(image:&Path,bin:Option<&Path>,destination:&Path,root:&Path)->Resu
     operation
 }
 
+#[cfg(test)]
+mod cue_selection_tests {
+    use super::*;
+    #[test]
+    fn autodetect_ignores_iso_and_bin_but_accepts_cue() {
+        let root=std::env::temp_dir().join(format!("cyber-cue-only-{}",std::process::id()));
+        let _=fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("disc.iso"),b"not accepted").unwrap();
+        fs::write(root.join("disc.bin"),b"not accepted").unwrap();
+        assert!(find_cue(&root).unwrap_err().contains("one .cue"));
+        fs::write(root.join("disc.cue"),b"FILE \\"disc.bin\\" BINARY").unwrap();
+        assert_eq!(find_cue(&root).unwrap(),root.join("disc.cue"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+    #[test]
+    fn explicit_iso_is_rejected_before_extraction() {
+        let root=std::env::temp_dir().join(format!("cyber-iso-refused-{}",std::process::id()));
+        let _=fs::remove_dir_all(&root);fs::create_dir(&root).unwrap();
+        let result=install(&root.join("disc.iso"),&root.join("installed"),&root);
+        assert!(result.unwrap_err().contains("Only a .cue"));
+        fs::remove_dir_all(&root).unwrap();
+    }
+}
 #[cfg(test)]
 mod bounds_tests {
     use super::*;
