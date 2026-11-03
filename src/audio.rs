@@ -140,6 +140,81 @@ mod tests{
         fs::remove_dir_all(&base).unwrap();
     }
     #[test]
+    fn extract_two_audio_tracks_from_one_multitrack_bin() {
+        let base=std::env::temp_dir().join(format!("cyber-audio-shared-{}",std::process::id()));
+        let _=fs::remove_dir_all(&base);fs::create_dir(&base).unwrap();
+        fs::write(base.join("disc.cue"),r#"FILE "all.bin" BINARY
+ TRACK 01 MODE1/2352
+ INDEX 01 00:00:00
+ TRACK 02 AUDIO
+ INDEX 00 00:00:02
+ INDEX 01 00:00:03
+ TRACK 03 AUDIO
+ INDEX 00 00:00:05
+ INDEX 01 00:00:06
+"#).unwrap();
+        let mut data=vec![0u8;2352*8];
+        for sector in data[..2352*2].chunks_exact_mut(2352){
+            sector[..12].copy_from_slice(&[0,255,255,255,255,255,255,255,255,255,255,0]);
+            sector[15]=1;
+        }
+        // pregaps in sectors 2 and 5 intentionally carry arbitrary values;
+        // tracks 02 and 03 contain distinctive constant PCM samples.
+        data[2352*2..2352*3].fill(0x7d);
+        data[2352*5..2352*6].fill(0x2d);
+        for (start,end,sample) in [(3,5,1200i16),(6,8,-1700i16)] {
+            for frame in data[start*2352..end*2352].chunks_exact_mut(2) {
+                frame.copy_from_slice(&sample.to_le_bytes());
+            }
+        }
+        fs::write(base.join("all.bin"),data).unwrap();
+        // The CUE is the only input; each output must have exactly two
+        // sectors (2 * 588 stereo frames), excluding pregaps.
+        let report=extract(&base.join("disc.cue"),&base).unwrap();
+        assert_eq!(report.extracted,2);
+        assert!(report.missing.is_empty());
+        for (track,sample) in [(2,1200i32),(3,-1700i32)] {
+            let filename=format!("Track{track:02}.flac");
+            assert!(report.manifest_rows.contains(&filename));
+            let mut reader=claxon::FlacReader::open(base.join(filename)).unwrap();
+            assert_eq!(reader.streaminfo().channels,2);
+            assert_eq!(reader.streaminfo().sample_rate,44_100);
+            let restored:Vec<i32>=reader.samples().map(|r|r.unwrap()).collect();
+            assert_eq!(restored.len(),2*588*2);
+            assert!(restored.iter().all(|v|*v==sample));
+        }
+        fs::remove_dir_all(&base).unwrap();
+    }
+    #[test]
+    fn extract_two_audio_tracks_from_separate_bin_files() {
+        let base=std::env::temp_dir().join(format!("cyber-audio-separate-{}",std::process::id()));
+        let _=fs::remove_dir_all(&base);fs::create_dir(&base).unwrap();
+        fs::write(base.join("disc.cue"),r#"FILE "data.bin" BINARY
+ TRACK 01 MODE1/2352
+ INDEX 01 00:00:00
+FILE "a02.bin" BINARY
+ TRACK 02 AUDIO
+ INDEX 00 00:00:00
+ INDEX 01 00:00:01
+FILE "a03.bin" BINARY
+ TRACK 03 AUDIO
+ INDEX 01 00:00:00
+"#).unwrap();
+        fs::write(base.join("a02.bin"),vec![0u8;2352*3]).unwrap();
+        fs::write(base.join("a03.bin"),vec![0u8;2352*2]).unwrap();
+        let report=extract(&base.join("disc.cue"),&base).unwrap();
+        assert_eq!(report.extracted,2);
+        assert!(report.missing.is_empty());
+        for track in [2,3] {
+            let name=format!("Track{track:02}.flac");
+            let file=base.join(name);
+            assert!(file.exists());
+            let mut reader=claxon::FlacReader::open(file).unwrap();
+            assert_eq!(reader.samples().count(),2*588*2);
+        }
+        fs::remove_dir_all(&base).unwrap();
+    }
+    #[test]
     fn shared_file_track_boundary_excludes_next_pregap(){
         let t=vec![
             crate::cue::Track{number:2,file:"all.bin".into(),mode:"AUDIO".into(),index00:None,index01:0},
