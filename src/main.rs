@@ -19,14 +19,14 @@ const HELP:&str="CyberGladiatorsFix - Windows x64 console CD installer and game 
 
 Usage:
   CyberGladiatorsFix.exe
-  CyberGladiatorsFix.exe <disc.iso>
-  CyberGladiatorsFix.exe <disc.cue> [track.bin]
+  CyberGladiatorsFix.exe <disc.cue>
   CyberGladiatorsFix.exe --verify
   CyberGladiatorsFix.exe --launch [--3dfx-logo]
   CyberGladiatorsFix.exe --help
   CyberGladiatorsFix.exe --version
 
-No arguments: discover exactly one ISO/CUE in the current working directory;
+No arguments: discover exactly one CUE in the current working directory;
+read one or more .bin tracks referenced by that CUE; standalone ISO/BIN is unsupported;
 install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
 create CYBER.EXE.bak, extract available CUE AUDIO tracks as TrackNN.flac,
 and optionally copy a user-installed nGlide glide.dll.
@@ -40,9 +40,9 @@ fn show(s:&str,root:&Path){
     let p=root.join("CyberGladiatorsFix.log");
     if let Ok(mut f)=fs::OpenOptions::new().create(true).append(true).open(&p){let _=writeln!(f,"{s}");}
 }
-fn require_image(path:&Path)->Result<(),String>{
-    if !path.extension().is_some_and(|s|s.eq_ignore_ascii_case("iso")||s.eq_ignore_ascii_case("cue")){
-        return Err("Expected an .iso or .cue file".into());
+fn require_cue(path:&Path)->Result<(),String>{
+    if !path.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")){
+        return Err("Expected a .cue sheet referencing one or more .bin files; ISO/BIN files cannot be selected directly".into());
     }
     Ok(())
 }
@@ -68,7 +68,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         _=>{},
     }
-    if args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>2{
+    if args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>1{
         return Err(format!("Invalid option(s).\n{HELP}"));
     }
     let target=root.join(install::DIR);
@@ -82,12 +82,11 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         return Ok(());
     }
     let input=if let Some(arg)=args.first(){PathBuf::from(arg)}else{
-        install::find_image(&std::env::current_dir().map_err(|e|e.to_string())?)?
+        install::find_cue(&std::env::current_dir().map_err(|e|e.to_string())?)?
     };
-    require_image(&input)?;
-    let bin=if let Some(b)=args.get(1){Some(PathBuf::from(b))}else{None};
-    show(&format!("Selected disc image: {}",input.display()),root);
-    let status=install::install(&input,bin.as_deref(),&target,root)?;
+    require_cue(&input)?;
+     show(&format!("Selected CUE sheet: {}",input.display()),root);
+    let status=install::install(&input,&target,root)?;
     show(&status,root);
     Ok(())
 }
