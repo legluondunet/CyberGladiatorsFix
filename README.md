@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.1.2 (lossless CD audio extraction).** Windows console ISO/CUE installer, FLAC audio extraction, speed fix, verifier and game launcher for CyberGladiators (1996).
+**v0.1.2 (lossless CD audio extraction).** Windows console CUE/BIN installer, FLAC audio extraction, speed fix, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -25,15 +25,14 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 
 ```text
 CyberGladiatorsFix.exe
-CyberGladiatorsFix.exe <disc.iso>
-CyberGladiatorsFix.exe <disc.cue> [track.bin]
+CyberGladiatorsFix.exe <disc.cue>
 CyberGladiatorsFix.exe --verify
 CyberGladiatorsFix.exe --launch [--3dfx-logo]
 CyberGladiatorsFix.exe --help
 CyberGladiatorsFix.exe --version
 ```
 
-Without arguments, looks for exactly one ISO/CUE in the current working directory. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it verifies or applies the exact speed patch and attempts to install the user's nGlide DLL.
+Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it verifies or applies the exact speed patch and attempts to install the user's nGlide DLL.
 
 `--verify` checks known patched executable identity, original `.bak` identity, installer-recorded SHA-256 values for extracted resources, and presence of a 32-bit `glide.dll`.
 
@@ -45,8 +44,8 @@ Install the **official nGlide** from [Zeus Software](https://www.zeus-software.c
 
 ## Disc support
 
-- Supports ISO9660/Joliet/UDF detection through the same `isomage` parser used by ScorchedPlanetFix.
-- Supports CUE/BIN data tracks MODE1/2048, MODE1/2352 and MODE2/2352 (Form 1) with bounds checks and temporary normalization. The first CUE track must be data.
+- Reads the ISO9660/Joliet/UDF filesystem inside the CUE/BIN **data track** through the same `isomage` parser used by ScorchedPlanetFix. This is internal conversion only, **not** support for ISO files as input.
+- Accepts **CUE + one or multiple referenced BIN files**, or a **single shared BIN with multiple tracks**, with data track MODE1/2048, MODE1/2352 or MODE2/2352 (Form 1) and strict bounds checks. The first CUE track must contain data. CDDA tracks use 2352-byte sectors; if their BIN files exist, they are converted losslessly to FLAC.
 - Rejects ambiguous input, unsafe paths, unexpected executable hashes, and preexisting output.
 - The **complete CYBER directory** is kept conservatively until real disc inventories establish which individual resources are unnecessary. Installers outside CYBER are discarded.
 - **USA edition identified using the provided CUE/BIN Track 01:** `CyberGladiators (USA).cue` + 133,217,280-byte `Track 01.bin`, MODE1/2352, volume `CYBER`, 56,640 sectors.
@@ -54,6 +53,22 @@ Install the **official nGlide** from [Zeus Software](https://www.zeus-software.c
 - Known USA profile requires the exact retail `CYBER.EXE`, `GRAPHICS/SHELL.FNT` and `SPLASH.AVI` hashes from this disc. The original binary SHA-256 matches the previously supplied `CYBER.EXE`.
 - The supplied CUE declares 15 tracks: **Track 01 data** and **Tracks 02–15 CD audio**. The 14 audio BIN files were deliberately omitted in the supplied test fixture. When present, the installer extracts them losslessly as FLAC using a pure Rust encoder (no ffmpeg/flac executable required). Missing audio BIN files are reported and skipped without preventing extraction of the game data. No proprietary game audio is bundled. **The game does not automatically play FLAC instead of CDDA; integrating playback is a separate task.**
 - All 56,640 raw MODE1 sectors were checked for sync and mode; all 342 game files were read and hashed from the data track; a local extraction and 8-byte binary patch simulation succeeded. **Rust compilation and Windows/Wine gameplay are not yet validated.**
+
+## CUE/BIN input layout
+
+Both formats below are supported. The `.cue` sheet is always the only argument:
+
+```text
+disc.cue
+Track 01.bin       # game data
+Track 02.bin       # optional CD audio
+Track 03.bin       # optional CD audio
+...                 # further tracks named in CUE
+```
+
+Alternatively, a CUE may describe multiple sequential tracks within a **single shared BIN**.
+The parser respects `INDEX 01` and boundaries at the next `INDEX 00`, when present.
+No `track.bin` override CLI argument is needed or accepted. BIN files are resolved from the CUE; do not rename them without updating the CUE sheet.
 
 ## CD AUDIO (new in 0.1.2)
 
@@ -67,9 +82,9 @@ SHA-256 and size for each generated FLAC; `--verify` checks those files as well.
 
 On the provided US CUE, filenames will be `Track02.flac` .. `Track15.flac`.
 Since the source audio BINs have not been provided, that conversion cannot
-be tested against the retail audio yet. An absent BIN is clearly reported and
-skipped; a present, damaged BIN is rejected. An ISO without a CUE sheet has no
-track layout, therefore audio extraction is not attempted.
+be tested against the retail audio yet. An absent audio BIN is clearly reported and
+skipped; a present, damaged BIN is rejected. An ISO without a CUE sheet is not
+accepted. A data BIN is always required.
 
 **Important:** Extracted FLACs are an archive of the music, not yet a CDDA
 emulation layer. `CYBER.EXE` may continue to request physical CD audio; nGlide
@@ -92,7 +107,7 @@ cargo test --target x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 ```
 
-The source project includes a Windows GitHub Actions workflow. **The initial snapshot has not been compiled locally**, which has no Rust toolchain. Do not release it as production ready until CI and game tests pass.
+The source project includes a Windows GitHub Actions workflow. CI compilation, unit tests and CLI smoke tests have passed; real Windows/Wine gameplay and full retail audio extraction remain unverified.
 
 ## Credits and reference
 
