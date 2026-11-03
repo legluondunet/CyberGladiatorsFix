@@ -67,18 +67,30 @@ fn collect(dir:&TreeNode, parent:&Path, all:&mut Vec<Asset>, seen:&mut BTreeSet<
     }
     Ok(())
 }
-fn bounds(node:&TreeNode,len:u64,count:&mut usize)->Result<(),String>{
+fn bounds(node:&TreeNode,len:u64,count:&mut usize,parent:&Path)->Result<(),String>{
     *count+=1;
     if *count>MAX_ENTRIES{return Err("ISO filesystem has too many entries".into());}
-    if !safe_name(&node.name)&&node.name!="/" {return Err(format!("Unsafe ISO name: {}",node.name));}
-    if !node.is_directory{
-        let off=node.file_location.ok_or("ISO file has no extent")?;
-        let size=node.file_length.ok_or("ISO file has no size")?;
-        if off.checked_add(size).is_none_or(|end|end>len)||node.size!=size {
-            return Err("ISO file points outside the disc image".into());
+    if !safe_name(&node.name)&&node.name!="/" {
+        return Err(format!("Unsafe ISO name: {}",node.name));
+    }
+    let path=parent.join(&node.name);
+    if !node.is_directory {
+        let off=node.file_location.ok_or_else(||format!("ISO file has no extent: {}",path.display()))?;
+        let size=node.file_length.ok_or_else(||format!("ISO file has no size: {}",path.display()))?;
+        if node.size!=size {
+            return Err(format!("ISO file has inconsistent lengths: {} (size {}, extent {})",
+                path.display(),node.size,size));
+        }
+        // An empty ISO9660 file has no data to read; some retail discs leave
+        // an invalid/sentinel LBA in that directory record. The USA disc
+        // contains AUTORUN/AUTORUN.INF (0 bytes, LBA 0x69696969).
+        // Retain strict bounds checking for every file with actual data.
+        if size>0 && off.checked_add(size).is_none_or(|end|end>len) {
+            return Err(format!("ISO file points outside the disc image: {} (offset {}, size {}, image {})",
+                path.display(),off,size,len));
         }
     }
-    for child in &node.children{bounds(child,len,count)?;}
+    for child in &node.children{bounds(child,len,count,&path)?;}
     Ok(())
 }
 fn hash_on_disc(iso:&mut File,asset:&Asset)->Result<String,String>{
@@ -125,7 +137,7 @@ pub fn install(image:&Path,bin:Option<&Path>,destination:&Path,root:&Path)->Resu
     let tree=detect_and_parse_filesystem(&mut iso,&iso_path.to_string_lossy())
         .map_err(|e|format!("Unsupported ISO/UDF image: {e}"))?;
     let mut count=0;
-    for child in &tree.children{bounds(child,len,&mut count)?;}
+    for child in &tree.children{bounds(child,len,&mut count,Path::new(""))?;}
     let matches:Vec<_>=tree.children.iter().filter(|n|n.is_directory&&n.name.eq_ignore_ascii_case("CYBER")).collect();
     let folder=match matches.as_slice(){[dir]=>dir,_=>return Err("Disc not recognized: expected one CYBER directory".into())};
     let mut seen=BTreeSet::new();
@@ -172,4 +184,52 @@ pub fn install(image:&Path,bin:Option<&Path>,destination:&Path,root:&Path)->Resu
     })();
     if operation.is_err(){let _=fs::remove_dir_all(&staged);}
     operation
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn empty_file_with_garbage_lba_is_valid() {
+        // Seen on the original USA CD: AUTORUN/AUTORUN.INF is 0 bytes
+        // but its extent points beyond the end of the image.
+        let mut autorun=TreeNode::new_directory("AUTORUN".into());
+        autorun.add_child(TreeNode::new_file_with_location(
+            "AUTORUN.INF".into(),0,0x69696969,0));
+        let mut entries=0;
+        assert!(bounds(&autorun,56_640*2_048,&mut entries,Path::new("")).is_ok());
+        assert_eq!(entries,2);
+    }
+
+    #[test]
+    fn nonempty_file_out_of_bounds_is_rejected_with_full_path() {
+        let mut cyber=TreeNode::new_directory("CYBER".into());
+        let mut graphics=TreeNode::new_directory("GRAPHICS".into());
+        graphics.add_child(TreeNode::new_file_with_location(
+            "SHELL.FNT".into(),4,0x69696969,4));
+        cyber.add_child(graphics);
+        let mut entries=0;
+        let err=bounds(&cyber,56_640*2_048,&mut entries,Path::new(""))
+            .expect_err("Nonempty out-of-range extent must be rejected");
+        assert!(err.contains("CYBER\\GRAPHICS\\SHELL.FNT") ||
+                err.contains("CYBER/GRAPHICS/SHELL.FNT"));
+        assert!(err.contains("outside the disc image"));
+    }
+
+    #[test]
+    fn nonempty_file_at_last_byte_is_accepted() {
+        let file=TreeNode::new_file_with_location("DATA.BIN".into(),4,12,4);
+        let mut entries=0;
+        assert!(bounds(&file,16,&mut entries,Path::new("")).is_ok());
+        let mut entries=0;
+        assert!(bounds(&file,15,&mut entries,Path::new("")).is_err());
+    }
+
+    #[test]
+    fn inconsistent_node_size_is_rejected_even_if_empty() {
+        let file=TreeNode::new_file_with_location("MISMATCH.BIN".into(),1,0x69696969,0);
+        let mut entries=0;
+        assert!(bounds(&file,56_640*2_048,&mut entries,Path::new("")).is_err());
+    }
 }
