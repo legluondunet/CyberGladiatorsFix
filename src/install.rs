@@ -6,7 +6,7 @@ use isomage::{cat_node,detect_and_parse_filesystem,TreeNode};
 use sha2::{Digest,Sha256};
 use std::collections::{BTreeSet, BTreeMap};
 use std::fs::{self,File,OpenOptions};
-use std::io::{Read,Write};
+use std::io::Write;
 use std::path::{Path,PathBuf};
 
 pub const DIR:&str="CyberGladiatorsFix";
