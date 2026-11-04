@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Opt-in, process-isolated startup AVI playback. The helper exits before
-//! CYBER.EXE creates its Glide/DXVK device, so the two renderers never share
-//! the original game's DirectDraw or window state.
+//! Process-isolated startup AVI and handoff: MCI closes before the game
+//! initializes DXVK. A black Win32 window (no AVI decoder) remains until
+//! the game HWND appears, avoiding a Wine desktop/console flash.
 use crate::{bundle,cdda,diagnostics,install::DIR,settings,verify};
 use std::fs::{self,File,OpenOptions};
 use std::io::{Read,Write};
