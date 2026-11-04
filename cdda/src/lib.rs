@@ -7,6 +7,7 @@
 #![cfg(windows)]
 mod player;
 mod video_trace;
+mod glide_trace;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
@@ -318,6 +319,9 @@ pub unsafe extern "system" fn mciSendStringA(
         CStr::from_ptr(cmd).to_str().ok().map(str::to_owned)
     };
     if let Some(ref text)=command {
+        if text.trim().eq_ignore_ascii_case("open avivideo"){
+            glide_trace::maybe_install();
+        }
         if let Some(entry)=video_trace::before(text){log(&entry);}
     }
     let result=native(cmd,out,len,hwnd);
@@ -329,6 +333,9 @@ pub unsafe extern "system" fn mciSendStringA(
             String::from_utf8_lossy(&bytes[..end]).into_owned()
         }else{String::new()};
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
+        if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
+            glide_trace::after_video_close();
+        }
     }
     result
 }
