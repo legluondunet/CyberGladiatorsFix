@@ -7,7 +7,7 @@ use std::path::Path;
 
 pub const NAME:&str="CyberGladiatorsFix.ini";
 const MAX_SIZE:u64=4096;
-const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n";
+const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n; Experimental CD audio bridge (disabled by default).\r\n; 0 = system WinMM; 1 = FLAC CDDA bridge.\r\n[Audio]\r\nEnableCDDA=0\r\n";
 
 fn parse(text:&str)->Result<bool,String>{
     let mut video=false;
@@ -42,6 +42,43 @@ fn parse(text:&str)->Result<bool,String>{
     choice.ok_or_else(||"CyberGladiatorsFix.ini is missing SkipIntro=0 or SkipIntro=1".into())
 }
 
+/// Experimental music is opt-in. Legacy INIs lacking [Audio] remain
+/// compatible and preserve original system WinMM imports.
+fn parse_cdda(text:&str)->Result<bool,String>{
+    let mut audio=false;
+    let mut seen_section=false;
+    let mut choice:Option<bool>=None;
+    for (line_no,raw) in text.trim_start_matches('\u{feff}').lines().enumerate(){
+        let line=raw.trim();
+        if line.is_empty()||line.starts_with(';')||line.starts_with('#'){continue;}
+        if line.starts_with('['){
+            if !line.ends_with(']'){return Err(format!("Malformed INI section on line {}",line_no+1));}
+            audio=line[1..line.len()-1].eq_ignore_ascii_case("Audio");
+            if audio{
+                if seen_section{return Err("Duplicate [Audio] section".into());}
+                seen_section=true;
+            }
+            continue;
+        }
+        let (key,value)=line.split_once('=')
+            .ok_or_else(||format!("Malformed INI setting on line {}",line_no+1))?;
+        if !audio{continue;}
+        if !key.trim().eq_ignore_ascii_case("EnableCDDA"){
+            return Err(format!("Unknown [Audio] option: {}",key.trim()));
+        }
+        if choice.is_some(){return Err("Duplicate EnableCDDA".into());}
+        choice=Some(match value.trim().to_ascii_lowercase().as_str(){
+            "0"|"false"|"no"|"off"=>false,
+            "1"|"true"|"yes"|"on"=>true,
+            _=>return Err("EnableCDDA must be 0 or 1".into()),
+        });
+    }
+    if seen_section && choice.is_none(){
+        return Err("[Audio] section requires EnableCDDA=0 or 1".into());
+    }
+    Ok(choice.unwrap_or(false))
+}
+
 /// Called only for a new installation or when launching/upgrading an older one.
 /// No existing config, game settings or user files are ever overwritten.
 pub fn ensure(game:&Path)->Result<(),String>{
@@ -51,7 +88,7 @@ pub fn ensure(game:&Path)->Result<(),String>{
             if m.file_type().is_symlink()||!m.is_file(){
                 return Err(format!("{NAME} must be a regular, non-symlinked file"));
             }
-            read(game).map(|_|())
+            read(game)?;read_cdda(game).map(|_|())
         }
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{
             let mut file=OpenOptions::new().write(true).create_new(true).open(&path)
@@ -77,9 +114,35 @@ pub fn read(game:&Path)->Result<bool,String>{
     parse(&contents)
 }
 
+pub fn read_cdda(game:&Path)->Result<bool,String>{
+    let path=game.join(NAME);
+    let metadata=fs::symlink_metadata(&path)
+        .map_err(|e|format!("Cannot find {}: {e}",path.display()))?;
+    if !metadata.is_file()||metadata.file_type().is_symlink()||metadata.len()>MAX_SIZE{
+        return Err(format!("{NAME} must be a regular text file of at most {MAX_SIZE} bytes"));
+    }
+    let contents=fs::read_to_string(&path).map_err(|e|format!("Cannot read {NAME}: {e}"))?;
+    parse_cdda(&contents)
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn audio_bridge_defaults_off_and_supports_opt_in(){
+        assert!(!parse_cdda(DEFAULT).unwrap());
+        assert!(!parse_cdda("[Video]\nSkipIntro=1\n").unwrap());
+        assert!(parse_cdda("[Video]\nSkipIntro=1\n[Audio]\nEnableCDDA=1\n").unwrap());
+        assert!(!parse_cdda("[Video]\nSkipIntro=1\n[Audio]\nEnableCDDA=off\n").unwrap());
+    }
+    #[test] fn rejects_invalid_audio_configuration(){
+        for input in [
+            "[Video]\nSkipIntro=0\n[Audio]\nEnableCDDA=2",
+            "[Video]\nSkipIntro=0\n[Audio]\nEnableCDDA=0\nEnableCDDA=1",
+            "[Video]\nSkipIntro=0\n[Audio]\nExtra=1",
+            "[Video]\nSkipIntro=0\n[Audio]",
+            "[Video]\nSkipIntro=0\n[Audio]\nEnableCDDA=0\n[Audio]\nEnableCDDA=1",
+        ]{assert!(parse_cdda(input).is_err(),"{input}");}
+    }
     #[test] fn defaults_play_video_and_are_parseable(){
         assert!(!parse(DEFAULT).unwrap());
         assert_eq!(NAME,"CyberGladiatorsFix.ini");
