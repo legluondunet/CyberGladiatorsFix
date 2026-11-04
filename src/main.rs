@@ -15,7 +15,7 @@ use std::path::{Path,PathBuf};
 use std::io::Write;
 
 const NAME:&str="CyberGladiatorsFix";
-const HELP:&str="CyberGladiatorsFix - Windows x64 console CD installer and game speed fix
+const HELP:&str="CyberGladiatorsFix - Windows x64 console CUE/BIN installer, speed and no-CD check fixes
 
 Usage:
   CyberGladiatorsFix.exe
@@ -30,7 +30,8 @@ read one or more .bin tracks referenced by that CUE; standalone ISO/BIN is unsup
 install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
 create CYBER.EXE.bak, extract available CUE AUDIO tracks as TrackNN.flac,
 and optionally copy a user-installed nGlide glide.dll.
-If CyberGladiatorsFix exists, only apply the verified speed fix; never overwrite it.
+If CyberGladiatorsFix exists, upgrade the verified speed-only patch to speed+no-CD;
+never re-extract or overwrite the game assets. The original .bak is required.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. No game or nGlide files bundled.
 Unrecognized CD editions/executables are refused rather than modified.
@@ -85,7 +86,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         install::find_cue(&std::env::current_dir().map_err(|e|e.to_string())?)?
     };
     require_cue(&input)?;
-     show(&format!("Selected CUE sheet: {}",input.display()),root);
+    show(&format!("Selected CUE sheet: {}",input.display()),root);
     let status=install::install(&input,&target,root)?;
     show(&status,root);
     Ok(())
