@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.12 (read-only Wine process-window inventory after intro).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.13 (read-only GUI-thread and DirectDraw state diagnosis after intro).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -106,6 +106,18 @@ The USA CD ships with both `CYBER/SPLASH.AVI` (320×240, Cinepak video, 22.05-kH
 CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in the game directory. Reverse engineering confirmed two four-byte little-endian fields at offsets `0x10` (internal screen-size index: `0` = 640×480 maximum) and `0x14` (detail index: `3` = maximum of 0–3). `--max-graphics` updates only those two fields, preserves the other 24 bytes and backs up the original once. The internal 640×480 image can be upscaled by nGlide; the option does not add native widescreen rendering.
 
 On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
+
+## All three process windows disappear after AVI (v0.2.13)
+
+The user's v0.2.12 Wine trace fully confirms `trace=1 passthru_noop=1`, `SkipIntro=0`, `EnableCDDA=1`, and matching installed/bundled DLL SHA-256 `3d816b5f213a328ccb5b4a3a278c8650c1f304d6d91df555901f975faf1ea90a`. The entire 40-second Cinepak AVI returns `mode=stopped`; `close movie` and `close avivideo` return success. The `grSstPassthruMode(1)` call is bypassed and the wrapper returns. Track12 starts decoding through the FLAC bridge, yet no game window appears.
+
+The v0.2.12 read-only `EnumWindows` snapshots now show the exact window transition: immediately after MCI close the game PID owns **three top-level HWNDs** (main `0x200b0` visible, two hidden 1×1 windows); the main window changes from `(636,283)-(2556,1363)` (1920×1080) to `(636,283)-(1284,796)` (648×513) at 100 ms. At 500 ms the saved game HWND is invalid and **the process owns zero top-level windows**, remaining so at 1.5, 4 and 8 seconds. `GetForegroundWindow()` changes to `0x2007a`, an unrelated/unknown HWND. Thus the symptom is not merely a hidden window or a newly created replacement top-level window; the Windows GUI windows were destroyed while the DLL's monitoring thread remained operational for 8 seconds. Whether the game window-owner thread actually exits, blocks or handles window-destroy messages remains unknown. The 3dfx global continues to show `state_3dfx=1` and `state_vga=0`, which does not alone prove the rendering surface remains healthy.
+
+The `CyberGladiatorsFix-WineTrace.log` provided contained only the launcher header and no Wine diagnostic lines. This is insufficient evidence for or against a Wine exception.
+
+**New in v0.2.13:** after each video close, the x86 DLL records `GLIDE_RESTORE WINDOW_THREAD` status for the original game-window owner's **Win32 thread ID**. It uses `OpenThread`, `GetExitCodeThread` and a nonblocking `WaitForSingleObject` to distinguish an exited/signaled thread from a live thread even when the HWND is gone. It also samples the original game's three DirectDraw COM pointer globals `0x0044728C`, `0x00447290`, `0x00447294` and saved graphics mode `0x00528140` through **read-only** loads. No window is shown, recreated, moved or hooked, no game binary is changed on disk, and the A/B 3dfx NO-OP remains explicitly opt-in. The user's v0.2.12 DLL hash is on the safe upgrade list so this version does **not** require re-extraction of the game or FLAC audio tracks.
+
+Repeat `CyberGladiatorsFix.exe --launch --trace --passthru-noop` using the matched v0.2.13 EXE + DLL with game INI `SkipIntro=0` and `EnableCDDA=1`. Rename the previous `CyberGladiatorsCDDA.log` and collect the fresh log plus any terminal Wine errors. Critical signals: `WINDOW_THREAD signaled=1` after 500 ms indicates that the original window-owning thread has exited; `signaled=0` indicates it remains alive without any window, requiring a different investigation. Compare the DD pointers at 100 and 500 ms to determine how far the restoration reached. No unvalidated workaround is enabled by default.
 
 ## After successful pass-through NO-OP: CDDA plays, game window missing (v0.2.12)
 
