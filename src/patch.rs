@@ -152,7 +152,7 @@ fn replace_exe(path:&Path,patched:&[u8])->Result<(),String>{
     fs::rename(path,&retired).map_err(|e|format!("Cannot move original aside: {e}"))?;
     if let Err(e)=fs::rename(&tmp,path){
         let restore=fs::rename(&retired,path);
-        return Err(format!("Cannot install patched exe: {e}; original restore: {restore:?}; original backup: {}",backup.display()));
+        return Err(format!("Cannot install patched exe: {e}; original restore: {restore:?}; original backup: {}",backup_path(path).display()));
     }
     let _=fs::remove_file(&retired);
     Ok(())
