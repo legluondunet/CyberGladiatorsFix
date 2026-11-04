@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.10 (fail-closed, version-verified post-AVI 3dfx A/B diagnostics).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.11 (safe upgrade from archive-verified first-party CI CDDA DLLs).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -106,6 +106,14 @@ The USA CD ships with both `CYBER/SPLASH.AVI` (320×240, Cinepak video, 22.05-kH
 CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in the game directory. Reverse engineering confirmed two four-byte little-endian fields at offsets `0x10` (internal screen-size index: `0` = 640×480 maximum) and `0x14` (detail index: `3` = maximum of 0–3). `--max-graphics` updates only those two fields, preserves the other 24 bytes and backs up the original once. The internal 640×480 image can be upscaled by nGlide; the option does not add native widescreen rendering.
 
 On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
+
+## Fix: previously unrecognized first-party DLLs (v0.2.11)
+
+An in-place update of an existing installation failed with `Existing CyberGladiatorsCDDA.dll has an unrecognized SHA-256 (f7b26be8cf206e19b80c6418477804b6d25aaef4952e90b75bf7491506c54ab8)`. This DLL is **our own verified GitHub Actions build #87** (`CyberGladiatorsFix-Windows-x64`) from the v0.2.8 development series, not a third-party or modified file: we downloaded its archived DLL and recomputed its exact SHA-256. The existing strict allowlist inadvertently omitted intermediate CI artifacts even when we had provided them for testing.
+
+Version 0.2.11 adds the exact SHA-256 of that binary plus 11 additional previously generated, separately downloaded and verified project-owned CI/DLL snapshots to the safe-upgrade allowlist. Upgrades continue to require the source x86 DLL next to the launcher, preserve a uniquely named backup of the old DLL, verify the installed copy and **refuse unknown hashes**. No CUE/BIN re-extraction or reinstallation of the game/FLAC tracks is required.
+
+**In-place update:** close the game, replace `CyberGladiatorsFix.exe` and `CyberGladiatorsCDDA.dll` beside the patcher with the pair from one v0.2.11 Windows ZIP, then run `CyberGladiatorsFix.exe` (no arguments). If `EnableCDDA=1` in the game-folder `CyberGladiatorsFix.ini`, this safely upgrades the recognized old bridge. Once successful, run `--launch --trace --passthru-noop` with `SkipIntro=0` to repeat the graphics A/B experiment. Preserve past `CyberGladiatorsCDDA.log` files before tracing, as the CDDA logger is append-only. Never delete the game installation to solve this error.
 
 ## In-place diagnostic verification (v0.2.10)
 
