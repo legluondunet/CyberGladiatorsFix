@@ -132,9 +132,9 @@ fn wait_diagnostic(mut child:std::process::Child,root:&Path)->Result<(),String>{
     let start=std::time::Instant::now();
     let status=child.wait().map_err(|e|e.to_string())?;
     show(&format!(
-        "DIAGNOSTIC_EXIT pid={pid} exit_status={status} elapsed_ms={} expected_bridge_log={}",
+        "DIAGNOSTIC_EXIT pid={pid} exit_status={status} elapsed_ms={} session_log={}",
         start.elapsed().as_millis(),
-        root.join(install::DIR).join("CyberGladiatorsFix.log").display()
+        diagnostics::location(root).display()
     ),root);
     if !status.success(){
         return Err(format!("Game exited with status {status}; see CyberGladiatorsFix.log"));
