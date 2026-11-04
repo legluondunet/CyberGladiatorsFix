@@ -48,23 +48,10 @@ pub fn check_logo(game:&Path)->Result<(),String>{
     valid_pe32_dll(&game.join("3DfxSpl.dll"))
         .map_err(|e|format!("--3dfx-logo requires the optional 32-bit 3DfxSpl.dll in game folder: {e}"))
 }
-/// Match ScorchedPlanetFix's per-process nGlide backend policy.
-/// Finding the Vulkan loader does not guarantee a functioning Vulkan driver;
-/// the renderer may still need a manual fallback for unusual Wine setups.
-#[cfg(windows)]
-fn has_vulkan_loader()->bool{
-    use std::ffi::c_void;
-    #[link(name="kernel32")]
-    extern "system"{
-        fn LoadLibraryW(file:*const u16)->*mut c_void;
-        fn FreeLibrary(handle:*mut c_void)->i32;
-    }
-    let path:Vec<u16>="vulkan-1.dll".encode_utf16().chain(std::iter::once(0)).collect();
-    unsafe{
-        let m=LoadLibraryW(path.as_ptr());
-        if m.is_null(){false}else{FreeLibrary(m);true}
-    }
-}
+/// nGlide process-local settings for Cyber Gladiators.
+/// Under Wine, forcing Vulkan merely because vulkan-1.dll loads caused game
+/// startup failures. The confirmed working trace mode used backend 0 (auto).
+/// Keep the same backend for normal launches, without enabling Wine traces.
 fn configure_with_backend(command:&mut Command,logo:bool,backend:&str){
     for (key,value) in [
         ("NGLIDE_BACKEND",backend), // 2=Vulkan if loader present; 0=automatic fallback
@@ -77,14 +64,12 @@ fn configure_with_backend(command:&mut Command,logo:bool,backend:&str){
     ]{command.env(key,value);}
 }
 pub fn configure(command:&mut Command,logo:bool){
-    let backend=if has_vulkan_loader(){"2"}else{"0"};
-    configure_with_backend(command,logo,backend);
-}
-/// Diagnostic-only backend: let nGlide select a renderer automatically,
-/// rather than forcing Vulkan merely because vulkan-1.dll is loadable.
-/// All other per-game settings stay identical.
-pub fn configure_diagnostic(command:&mut Command,logo:bool){
     configure_with_backend(command,logo,"0");
+}
+/// Trace mode uses exactly the same renderer settings as normal launch.
+/// Only the caller sets WINEDEBUG and captures stdout/stderr.
+pub fn configure_diagnostic(command:&mut Command,logo:bool){
+    configure(command,logo);
 }
 
 #[cfg(test)]
@@ -95,32 +80,28 @@ mod process_config_tests {
         cmd.get_envs().find(|(k,_)|*k==OsStr::new(key)).and_then(|(_,v)|v)
     }
     #[test]
-    fn matches_scorched_planet_process_options(){
+    fn normal_launch_uses_auto_backend_and_keeps_visual_settings(){
         let mut command=Command::new("cyber.exe");
-        configure_with_backend(&mut command,false,"2");
+        configure(&mut command,false);
         for (key,value) in [
-            ("NGLIDE_BACKEND","2"),("NGLIDE_RESOLUTION","1"),
+            ("NGLIDE_BACKEND","0"),("NGLIDE_RESOLUTION","1"),
             ("NGLIDE_ASPECT","1"),("NGLIDE_REFRESH","2"),
             ("NGLIDE_VSYNC","1"),("NGLIDE_GAMMA","5"),
             ("NGLIDE_SPLASH","0"),
         ]{assert_eq!(env_value(&command,key),Some(OsStr::new(value)));}
         assert_eq!(command.get_envs().count(),7);
+        assert_eq!(env_value(&command,"WINEDEBUG"),None);
     }
     #[test]
-    fn trace_mode_forces_auto_backend_only(){
-        let mut normal=Command::new("cyber.exe");
-        configure_with_backend(&mut normal,false,"2");
-        let mut trace=Command::new("cyber.exe");
-        configure_diagnostic(&mut trace,false);
-        let n=normal.get_envs().collect::<std::collections::BTreeMap<_,_>>();
-        let d=trace.get_envs().collect::<std::collections::BTreeMap<_,_>>();
-        assert_eq!(d.get(std::ffi::OsStr::new("NGLIDE_BACKEND"))
-            .copied().flatten(),Some(std::ffi::OsStr::new("0")));
-        assert_eq!(n.len(),d.len());
-        for (key,val) in n.iter(){
-            if key.to_string_lossy()!="NGLIDE_BACKEND"{
-                assert_eq!(d.get(key),Some(val));
-            }
+    fn traced_and_normal_launch_have_identical_nglide_settings(){
+        for logo in [false,true] {
+            let mut normal=Command::new("cyber.exe");
+            configure(&mut normal,logo);
+            let mut traced=Command::new("cyber.exe");
+            configure_diagnostic(&mut traced,logo);
+            let n=normal.get_envs().collect::<std::collections::BTreeMap<_,_>>();
+            let t=traced.get_envs().collect::<std::collections::BTreeMap<_,_>>();
+            assert_eq!(n,t);
         }
     }
     #[test]
