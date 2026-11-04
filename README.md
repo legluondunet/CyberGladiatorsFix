@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.8 (diagnose legacy 3dfx pass-through restore after intro).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.9 (isolated diagnostic A/B test of post-AVI 3dfx pass-through).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -106,6 +106,14 @@ The USA CD ships with both `CYBER/SPLASH.AVI` (320×240, Cinepak video, 22.05-kH
 CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in the game directory. Reverse engineering confirmed two four-byte little-endian fields at offsets `0x10` (internal screen-size index: `0` = 640×480 maximum) and `0x14` (detail index: `3` = maximum of 0–3). `--max-graphics` updates only those two fields, preserves the other 24 bytes and backs up the original once. The internal 640×480 image can be upscaled by nGlide; the option does not add native widescreen rendering.
 
 On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
+
+## Experimental 3dfx pass-through isolation (v0.2.9)
+
+**Observed in user's v0.2.8 Wine trace:** `GLIDE_RESTORE pass-through call boundary tracing active` appears, proving that the in-memory pointer verification and instrumentation succeeded. After `close movie` and `close avivideo` return success, the game calls `_grSstPassthruMode@4(1)`: the log contains `GLIDE_RESTORE PASSTHRU BEGIN mode=1`, but **no `PASSTHRU END`**. The game HWND `0x200b0` is visible immediately after MCI close and 100 ms later, then is invalid at 500, 1500 and 4000 ms. This strongly implicates the vintage VGA→Voodoo pass-through call as a crash/hang boundary, though WinMM/Wine or observer interaction could still contribute; no Wine exception trace has been examined.
+
+The new **explicit A/B test** keeps the normal `--launch` and standard `--launch --trace` behavior identical to v0.2.8. A third form, **`CyberGladiatorsFix.exe --launch --trace --passthru-noop`**, sets `CYBER_GLIDE_PASSTHRU_NOOP=1` only for this one game process. The verified in-memory `_grSstPassthruMode@4` observer then **bypasses ONLY the mode=1 call** and logs `GLIDE_RESTORE PASSTHRU BYPASSED mode=1` followed by `GLIDE_RESTORE PASSTHRU END mode=1`. Other mode values and all non-Glide MCI/API calls are delegated unchanged. There are no on-disk binary changes, no registry changes, and no changes to `IQ/`, FLACs or `glide.dll`. The old DLL is safely backed up before replacement.
+
+Reproduce by keeping `[Video] SkipIntro=0` and `[Audio] EnableCDDA=1` and launching `--launch --trace --passthru-noop`. Let the AVI end (40s) and report **whether the menu becomes visible**, together with `CyberGladiatorsCDDA.log` and `CyberGladiatorsFix-WineTrace.log`. If the menu reappears this isolates the pass-through call as a necessary trigger in this setup and supports implementing a guarded compatibility workaround. If it remains black, inspect the logged window state and native Wine errors before changing rendering. For day-to-day gameplay, `SkipIntro=1` remains the proven workaround. **This is an experimental diagnostic, not a release-ready fix.**
 
 ## Tracing the VGA-to-3dfx switch after video (v0.2.8)
 
