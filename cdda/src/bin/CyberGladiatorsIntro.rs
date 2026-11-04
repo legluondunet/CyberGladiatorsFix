@@ -9,6 +9,8 @@
 
 use std::ffi::{c_char,c_void,CString};
 use std::{fs,ptr,thread};
+use std::path::{Path,PathBuf};
+use std::io::Write;
 use std::time::{Duration,Instant};
 
 type Handle=*mut c_void;
@@ -84,6 +86,7 @@ unsafe extern "system" {
     fn PostQuitMessage(code:i32);
     fn ShowWindow(window:Handle,command:i32)->i32;
     fn UpdateWindow(window:Handle)->i32;
+    fn InvalidateRect(window:Handle,rect:*const c_void,erase:i32)->i32;
     fn SetWindowPos(window:Handle,insert_after:Handle,x:i32,y:i32,w:i32,h:i32,flags:u32)->i32;
     fn SetForegroundWindow(window:Handle)->i32;
     fn GetForegroundWindow()->Handle;
@@ -257,7 +260,7 @@ fn pump_messages(host:Handle,accept_skip:bool)->Result<Option<SkipKey>,String>{
         unsafe{TranslateMessage(&msg);DispatchMessageA(&msg);}
     }
 }
-fn play()->Result<(),String>{
+fn play(handoff:Option<&Path>)->Result<(),String>{
     let meta=fs::symlink_metadata("splash4.avi")
         .map_err(|e|format!("Cannot find splash4.avi in game directory: {e}"))?;
     if !meta.is_file()||meta.file_type().is_symlink(){
@@ -339,17 +342,60 @@ fn play()->Result<(),String>{
         // via a key: a game must never start with a live video device.
         playback.and(closed.map(|_|()))
     })();
-    // FullscreenHost is dropped here. Even if video failed, the helper
-    // exits before CYBER.EXE starts. No persistent desktop/mode changes.
+    // At this point "close movie" completed: no MCI AVI device survives.
+    // When requested by the parent, leave ONLY an ordinary black Win32
+    // window up. That prevents Wine's console/desktop from flashing while
+    // a distinct DXVK game process creates its own graphics window.
+    if run.is_ok(){
+        if let Some(dir)=handoff {
+            // The directory was created exclusively by our x64 parent.
+            let meta=fs::symlink_metadata(dir).map_err(|e|format!("Invalid handoff directory: {e}"))?;
+            if !meta.is_dir()||meta.file_type().is_symlink(){
+                return Err("Handoff directory must be a real private directory".into());
+            }
+            unsafe {
+                let _=SetWindowPos(host.hwnd,(-1isize) as Handle,0,0,host.w,host.h,SWP_SHOWWINDOW);
+                let _=InvalidateRect(host.hwnd,ptr::null(),1);
+                let _=UpdateWindow(host.hwnd);
+            }
+            println!("INTRO_HANDOFF BLACK_READY video_device_closed=1 curtain_hwnd={}",host.hwnd as usize);
+            let ready=dir.join("intro.ready");
+            let mut marker=fs::OpenOptions::new().write(true).create_new(true).open(&ready)
+                .map_err(|e|format!("Cannot notify launcher that MCI is closed: {e}"))?;
+            marker.write_all(b"MCI_CLOSED\n").and_then(|_|marker.sync_all())
+                .map_err(|e|format!("Cannot publish MCI-closed marker: {e}"))?;
+            drop(marker);
+            let release=dir.join("intro.release");
+            let start=Instant::now();
+            loop {
+                pump_messages(host.hwnd,false)?;
+                if release.exists(){
+                    println!("INTRO_HANDOFF RELEASE received after {}ms; closing curtain",start.elapsed().as_millis());
+                    break;
+                }
+                if start.elapsed()>Duration::from_secs(40){
+                    // Fail safe: a crashed launcher cannot permanently leave
+                    // a topmost fullscreen black window obscuring the desktop.
+                    println!("INTRO_HANDOFF TIMEOUT; releasing black curtain");
+                    return Err("Black curtain release timed out after 40 seconds".into());
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    // FullscreenHost is dropped here. Never leave a desktop/registry change.
     run
 }
 fn main(){
-    if std::env::args_os().len()!=1{
-        eprintln!("CyberGladiatorsIntro: no arguments supported (launch from game's directory)");
-        std::process::exit(2);
-    }
-    println!("INTRO_VIDEO isolated_x86_mci=1 fullscreen_host=1");
-    match play(){
+    let args=std::env::args_os().collect::<Vec<_>>();
+    let handoff:Option<PathBuf>=if args.len()==1{None}
+        else if args.len()==3 && args[1]=="--handoff"{Some(PathBuf::from(&args[2]))}
+        else{
+            eprintln!("CyberGladiatorsIntro: expected --handoff <private-directory> from the launcher");
+            std::process::exit(2);
+        };
+    println!("INTRO_VIDEO isolated_x86_mci=1 fullscreen_host=1 curtain_handoff={}",handoff.is_some());
+    match play(handoff.as_deref()){
         Ok(())=>{},
         Err(e)=>{eprintln!("INTRO_VIDEO ERROR: {e}");std::process::exit(1);}
     }
