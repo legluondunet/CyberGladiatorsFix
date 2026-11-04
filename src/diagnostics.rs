@@ -189,6 +189,15 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
             .filter(|v|!v.is_empty()).unwrap_or_else(||"unknown".into()),
         physical_memory(),gpu_name(),display_info()
     )).map_err(|e|e.to_string())?;
+    let host_os=std::env::var("CYBER_HOST_OS").ok()
+        .map(|v|clean(&v)).filter(|v|!v.is_empty())
+        .unwrap_or_else(||"not reported (use CyberGladiatorsFix-Wine.sh to include native Linux OS)".into());
+    let host_kernel=std::env::var("CYBER_HOST_KERNEL").ok()
+        .map(|v|clean(&v)).filter(|v|!v.is_empty())
+        .unwrap_or_else(||"not reported".into());
+    write_line(&mut file,"HOST",&format!(
+        "Linux_distribution={} Linux_kernel={}",host_os,host_kernel
+    )).map_err(|e|e.to_string())?;
     write_line(&mut file,"RUNTIME",&format!(
         "PROTON_USE_WINED3D={} WINEDEBUG={} WINEPREFIX=not logged (privacy)",
         safe_env_flag("PROTON_USE_WINED3D"),
