@@ -82,7 +82,12 @@ fn install()->Result<(),String>{
         let mut ignored=0u32;
         let restored=VirtualProtect(slot.cast(),std::mem::size_of::<usize>(),old,&mut ignored)!=0;
         if !restored {
-            return Err("pass-through slot installed but page permissions could not be restored".into());
+            // Best-effort rollback. This page is still writable after a failed
+            // permission restore; never leave a partially installed probe.
+            std::ptr::write_volatile(slot,current);
+            ORIGINAL.store(0,Ordering::Release);
+            let _=VirtualProtect(slot.cast(),std::mem::size_of::<usize>(),old,&mut ignored);
+            return Err("pass-through tracing unavailable (page-protection restore failed)".into());
         }
         Ok(())
     }
