@@ -17,7 +17,7 @@ use std::path::{Path,PathBuf};
 use std::io::Write;
 
 const NAME:&str="CyberGladiatorsFix";
-const HELP:&str="CyberGladiatorsFix - Windows x64 console CUE/BIN installer, speed and no-CD check fixes
+const HELP:&str="CyberGladiatorsFix - Windows x64 installer with experimental x86 CDDA FLAC bridge
 
 Usage:
   CyberGladiatorsFix.exe
@@ -34,14 +34,15 @@ install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
 create CYBER.EXE.bak, install the local x86 CDDA bridge, generate CYBER.INI with maximum graphics, and extract
 available CUE AUDIO tracks as TrackNN.flac,
 and optionally copy a user-installed nGlide glide.dll.
-If CyberGladiatorsFix exists, upgrade a verified speed/no-CD patch with the
-startup AVI fix; never re-extract the game. The original .bak is required.
+If CyberGladiatorsFix exists, install x86 CDDA DLL and upgrade known USA
+speed/no-CD/intro patches; never re-extract the game or FLACs. Keep cyber.exe.bak.
 --max-graphics edits only two validated quality fields in an existing CYBER.INI
 and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
 close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
-CyberGladiatorsCDDA.dll must be beside this installer. No game or nGlide files bundled.
+CyberGladiatorsCDDA.dll must be beside this installer. The bridge writes
+CyberGladiatorsCDDA.log next to the game. No game or nGlide files bundled.
 Unrecognized CD editions/executables are refused rather than modified.
 ";
 fn show(s:&str,root:&Path){
