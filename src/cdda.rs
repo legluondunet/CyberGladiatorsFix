@@ -362,6 +362,41 @@ mod tests {
         assert_ne!(a,game.join("CyberGladiatorsCDDA.dll.previous.bak"));
     }
     #[test]
+    fn upgrade_reuses_verified_backup_from_previous_cycle(){
+        let root=std::env::temp_dir().join(format!("cyber-cdda-repeated-upgrade-{}",std::process::id()));
+        let _=fs::remove_dir_all(&root);
+        let game=root.join("CyberGladiatorsFix");
+        fs::create_dir_all(&game).unwrap();
+        let source=root.join(DLL_NAME);
+        let target=game.join(DLL_NAME);
+        let mut old=vec![0u8;4096];
+        old[0..2].copy_from_slice(b"MZ");
+        old[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        old[0x80..0x84].copy_from_slice(b"PE\0\0");
+        old[0x84..0x86].copy_from_slice(&0x014cu16.to_le_bytes());
+        old[0x96..0x98].copy_from_slice(&0x2000u16.to_le_bytes());
+        old[0x98..0x9a].copy_from_slice(&0x010bu16.to_le_bytes());
+        let mut new=old.clone();
+        new[1024]=0x42;
+        fs::write(&target,&old).unwrap();
+        fs::write(&source,&new).unwrap();
+        let old_hash=digest(&target).unwrap();
+        let saved=prior_version_backup(&game,&old_hash);
+        fs::write(&saved,&old).unwrap();
+        // This was the collision that previously prevented the user
+        // from upgrading their game DLL on a subsequent cycle.
+        try_install_with_consent(&root,&game,true).unwrap();
+        assert_eq!(fs::read(&target).unwrap(),new);
+        assert_eq!(fs::read(&saved).unwrap(),old);
+        assert_eq!(read_receipt(&game).unwrap().as_deref(),Some(digest(&source).unwrap().as_str()));
+        assert!(!game.join("CyberGladiatorsCDDA.dll.rollback.tmp").exists());
+        assert!(!game.join("CyberGladiatorsCDDA.dll.updating.tmp").exists());
+        // Idempotence: running the same ZIP again is safe.
+        try_install_with_consent(&root,&game,true).unwrap();
+        assert_eq!(fs::read(&saved).unwrap(),old);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn refuses_colliding_staging_file_with_its_exact_path(){
         let dir=std::env::temp_dir().join(format!("cyber-cdda-collision-{}",std::process::id()));
         let _=fs::remove_dir_all(&dir);
