@@ -157,8 +157,15 @@ pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,vi
         if log.is_symlink(){return Err("Refusing symlink Wine trace log".into());}
         let mut output=fs::OpenOptions::new().create(true).write(true).truncate(true)
             .open(&log).map_err(|e|format!("Cannot create Wine trace log: {e}"))?;
+        // Proton consumes this option before starting Wine; we record the
+        // value visible to the launcher, not an unverified claim about which
+        // d3d9.dll implementation was actually loaded.
+        let proton_wined3d=match std::env::var("PROTON_USE_WINED3D").as_deref(){
+            Ok("1")=>"1",Ok("0")=>"0",Ok("")=>"empty",
+            Ok(_)=>"other",Err(_)=>"unset",
+        };
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
