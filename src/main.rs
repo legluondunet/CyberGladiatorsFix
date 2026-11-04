@@ -12,11 +12,11 @@ mod settings;
 mod patch;
 mod verify;
 mod intro;
+mod diagnostics;
 
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path,PathBuf};
-use std::io::Write;
 
 const NAME:&str="CyberGladiatorsFix";
 const HELP:&str="CyberGladiatorsFix - Windows x64 installer with experimental x86 CDDA FLAC bridge
@@ -104,8 +104,7 @@ Unrecognized CD editions/executables are refused rather than modified.
 ";
 fn show(s:&str,root:&Path){
     println!("{s}");
-    let p=root.join("CyberGladiatorsFix.log");
-    if let Ok(mut f)=fs::OpenOptions::new().create(true).append(true).open(&p){let _=writeln!(f,"{s}");}
+    diagnostics::log(root,"Launcher",s);
 }
 fn require_cue(path:&Path)->Result<(),String>{
     if !path.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")){
@@ -306,10 +305,20 @@ fn main(){
     let root=std::env::current_exe().ok().and_then(|p|p.parent().map(Path::to_path_buf))
         .unwrap_or_else(||PathBuf::from("."));
     let args:Vec<OsString>=std::env::args_os().skip(1).collect();
+    // --help and --version are read-only queries; do not erase the last
+    // diagnostic session just to display the CLI documentation.
+    let read_only=matches!(args.as_slice(),[one] if matches!(one.to_str(),Some("--help"|"--version")));
+    if !read_only {
+        if let Err(e)=diagnostics::start_session(&root,&args){
+            eprintln!("{NAME}: ERROR: {e}");
+            std::process::exit(1);
+        }
+    }
     if let Err(e)=dispatch(&args,&root){
         show(&format!("{NAME}: ERROR: {e}"),&root);
         std::process::exit(1);
     }
+    if !read_only {diagnostics::log(&root,"SESSION","END success");}
 }
 
 #[cfg(test)]
