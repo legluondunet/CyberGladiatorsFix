@@ -30,12 +30,14 @@ Usage:
 No arguments: discover exactly one CUE in the current working directory;
 read one or more .bin tracks referenced by that CUE; standalone ISO/BIN is unsupported;
 install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
-create CYBER.EXE.bak, extract available CUE AUDIO tracks as TrackNN.flac,
+create CYBER.EXE.bak, generate CYBER.INI with maximum graphics, and extract
+available CUE AUDIO tracks as TrackNN.flac,
 and optionally copy a user-installed nGlide glide.dll.
 If CyberGladiatorsFix exists, upgrade a verified speed/no-CD patch with the
 startup AVI fix; never re-extract the game. The original .bak is required.
 --max-graphics edits only two validated quality fields in an existing CYBER.INI
-and saves cyber.ini.bak. Close the game first; CYBER.INI is written on exit.
+and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
+close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. No game or nGlide files bundled.
 Unrecognized CD editions/executables are refused rather than modified.
