@@ -20,88 +20,35 @@ use std::fs;
 use std::path::{Path,PathBuf};
 
 const NAME:&str="CyberGladiatorsFix";
-const HELP:&str="CyberGladiatorsFix - Windows x64 installer with experimental x86 CDDA FLAC bridge
+const HELP:&str=r"CyberGladiatorsFix — self-contained x64 installer, compatibility patch and game launcher
 
 Usage:
-  CyberGladiatorsFix.exe
-  CyberGladiatorsFix.exe <disc.cue>
-  CyberGladiatorsFix.exe --verify
-  CyberGladiatorsFix.exe --upgrade-cdda
-  CyberGladiatorsFix.exe --max-graphics
-  CyberGladiatorsFix.exe --launch [--3dfx-logo|--trace]\n  CyberGladiatorsFix.exe --launch --trace --passthru-noop
-  CyberGladiatorsFix.exe --launch --trace --no-glide-hook
-  CyberGladiatorsFix.exe --launch --trace --nglide-d3d9
-  CyberGladiatorsFix.exe --launch --trace --dxvk-defer-surface
-  CyberGladiatorsFix.exe --launch --trace --external-intro
-  CyberGladiatorsFix.exe --launch --trace --dxvk-desktop-refresh
-  CyberGladiatorsFix.exe --launch --trace --nglide-vulkan
-  CyberGladiatorsFix.exe --launch --trace --video-delay=100|250|500|1000
-  CyberGladiatorsFix.exe --help
+  CyberGladiatorsFix.exe [<disc.cue>]    Install/update verified US retail CD
+  CyberGladiatorsFix.exe --launch        Play game (isolated fullscreen intro)
+  CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
+  CyberGladiatorsFix.exe --launch --3dfx-logo
+  CyberGladiatorsFix.exe --verify        Strict original CD integrity check
+  CyberGladiatorsFix.exe --max-graphics  Maximize verified game settings
+  CyberGladiatorsFix.exe --upgrade-cdda  Approve backed-up unknown DLL upgrade
+  CyberGladiatorsFix.exe --check-bundle  Validate embedded 32-bit components
   CyberGladiatorsFix.exe --version
+  CyberGladiatorsFix.exe --help
 
-No arguments: discover exactly one CUE in the current working directory;
-read one or more .bin tracks referenced by that CUE; standalone ISO/BIN is unsupported;
-install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
-create CYBER.EXE.bak, install the local x86 CDDA bridge, generate CYBER.INI with maximum graphics, and extract
-available CUE AUDIO tracks as TrackNN.flac,
-and optionally copy a user-installed nGlide glide.dll.
-If CyberGladiatorsFix exists, install x86 CDDA DLL and upgrade known USA
-speed/no-CD/intro patches; never re-extract the game or FLACs. Keep cyber.exe.bak.
---upgrade-cdda explicitly approves a one-time backed-up replacement of an unknown x86 CDDA DLL.\nAfter installation, the saved SHA-256 receipt verifies subsequent updates without a hard-coded hash list.\n--max-graphics edits only two validated quality fields in an existing CYBER.INI
-and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
-CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1;
-[Audio] EnableCDDA=0 (safe system WinMM) or 1 (experimental FLAC bridge).
-[Integrity] AllowModifiedIQ=0 (default) or 1 (explicit launch-only
-permission to retain same-size changes in iq/iq00.dat..iq99.dat).
-With AllowModifiedIQ=1, each mismatch is warned with both SHA-256 values;
-all non-IQ files, file sizes, paths, and the original CD manifest remain strict.
---verify ALWAYS checks all original CD asset hashes, ignoring this permission.
-Make a backup of changed IQ files before enabling this option.
-The --launch command reads SkipIntro and EnableCDDA before starting the game;
-Both --launch and --launch --trace now use NGLIDE_BACKEND=0 (automatic).
---launch --trace additionally captures Wine exceptions and DLL loads in
-CyberGladiatorsFix.log beside this launcher.
---launch --trace --passthru-noop tests bypassing only grSstPassthruMode(1)
-after the intro AVI, using an in-memory diagnostic hook; no files are patched.
---launch --trace --no-glide-hook preserves AVI, window and crash telemetry
-but leaves the game's Glide function pointer unchanged. Requires
-SkipIntro=0 and EnableCDDA=1. Compare with --launch --trace to isolate
-effects of the diagnostic Glide hook.
---launch --trace --nglide-d3d9 forces nGlide's DirectX9 backend
-(NGLIDE_BACKEND=1) with DXVK HUD and DXVK logging, to verify whether
-a properly configured Wine prefix loads DXVK's d3d9.dll.
---launch --trace --dxvk-defer-surface additionally enables DXVK's
-current d3d9.deferSurfaceCreation=True option. It delays Vulkan surface
-creation until the first D3D9 present, useful for mixed-API games.
-This is an unverified workaround, not an automatic fix.
---launch --trace --external-intro is an experimental AVI/DXVK
-isolation test. It plays splash4.avi via a separate bundled x86 MCI
-helper, waits for the helper to exit, then runs CYBER.EXE through DXVK
-with the in-game introduction skipped. The helper only reads the AVI.
-The user's SkipIntro=0 INI setting is preserved; recognized EXE patch
-bytes are restored after the game exits. No other videos are changed.
-Requires CyberGladiatorsIntro.exe from the same Windows build, an
-installed Wine Video-for-Windows/Cinepak decoder, EnableCDDA=1,
-SkipIntro=0, DXVK enabled, and PROTON_USE_WINED3D unset.
-The intro player writes CyberGladiatorsFix.log and fails closed.
---launch --trace --dxvk-desktop-refresh keeps DirectX9 / DXVK but
-asks nGlide for the desktop refresh rate instead of forcing 60 Hz.
-This tests 60/120 Hz mode switches seen in the provided DXVK log.
---launch --trace --nglide-vulkan forces nGlide's own Vulkan backend
-(NGLIDE_BACKEND=2), which bypasses DXVK's Direct3D9 translation.
-These three renderer tests disable the diagnostic Glide hook.
-For DXVK, disable PROTON_USE_WINED3D=1 and enable DXVK in Lutris.
-Look for DXVK HUD or cyber_d3d9.log beside cyber.exe to confirm use.
---launch --trace --video-delay=N waits N milliseconds after native WinMM
-closes the opening AVI and BEFORE the game can restore Glide; only
-100, 250, 500 or 1000 are allowed. Requires SkipIntro=0 and EnableCDDA=1.
-This is a diagnostic experiment, not a permanent video compatibility fix.
-Close the game before manually changing saved settings.
---verify is read-only; --launch verifies first; --3dfx-logo additionally
-requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
-CyberGladiatorsCDDA.dll must be beside this installer. The bridge writes
-CyberGladiatorsFix.log beside the launcher. No game or nGlide files bundled.
-Unrecognized CD editions/executables are refused rather than modified.
+One-file Windows distribution: the x86 CDDA DLL and isolated AVI player are
+included inside this EXE. A matching native Wine/Proton configuration and
+third-party nGlide are required to play. The game and nGlide are NOT bundled.
+
+A fresh CyberGladiatorsFix.log is written beside this EXE per invocation.
+When [Video] SkipIntro=0 (default), the movie plays in a borderless full-screen
+window; Esc, Enter, Space or any ordinary key skips it. The MCI player exits
+before the D3D9 game process starts. If SkipIntro=1, no video is played.
+Music is optional: [Audio] EnableCDDA=1 enables the embedded FLAC bridge.
+Original CD assets and CYBER.EXE.bak are never silently replaced.
+[Integrity] AllowModifiedIQ=1 permits same-size IQ differences on launch only;
+--verify always uses strict original hashes.
+The game's binary CYBER.INI is separate from text CyberGladiatorsFix.ini.
+For additional Wine diagnostics use --trace (also --launch --trace).
+For developer-only experiments, see docs/DEVELOPMENT_HISTORY.md.
 ";
 fn show(s:&str,root:&Path){
     println!("{s}");
@@ -203,23 +150,23 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
     }
 }
 /// The normal user launch keeps the intro in an isolated x86 process.
-fn user_launch(root:&Path,trace:bool)->Result<(),String>{
+fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     if !settings::read(&game)?{
-        return isolated_intro_launch(root,trace);
+        return isolated_intro_launch(root,trace,logo);
     }
     show("INTRO skipped by user's [Video] SkipIntro=1; launching game without AVI",root);
-    let child=verify::launch(root,false,trace,false)?;
+    let child=verify::launch(root,logo,trace,false)?;
     show(&format!("GAME_STARTED pid={} intro_skipped=1 trace={trace}",child.id()),root);
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
 }
 /// One shared implementation for normal and trace isolated-intro launch.
 /// This is the same successful video/DXVK workaround from the user's tests.
-fn isolated_intro_launch(root:&Path,trace:bool)->Result<(),String>{
+fn isolated_intro_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     intro::play_before_game(root)?;
     let exe=root.join(install::DIR).join("cyber.exe");
-    let launched=verify::launch_after_external_intro(root,trace);
+    let launched=verify::launch_after_external_intro(root,trace,logo);
     let (child,dxvk_logs)=match launched{
         Ok(pair)=>pair,
         Err(e)=>{
@@ -258,10 +205,10 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let r=graphics::maximize_saved(&root.join(install::DIR))?;
             show(&r,root);return Ok(());
         },
-        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false),
-        [one] if one.to_str()==Some("--trace")=>return user_launch(root,true),
+        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false),
+        [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>
-            return user_launch(root,true),
+            return user_launch(root,true,false),
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
             && three.to_str()==Some("--no-glide-hook")=>{
@@ -275,7 +222,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
             && three.to_str()==Some("--external-intro")=>
-            return isolated_intro_launch(root,true),
+            return isolated_intro_launch(root,true,false),
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
             && matches!(three.to_str(),Some("--nglide-d3d9"|"--dxvk-defer-surface"|"--dxvk-desktop-refresh"|"--nglide-vulkan"))=>{
@@ -314,11 +261,8 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
                 child.id(),root.join("CyberGladiatorsFix.log").display()),root);
             return wait_diagnostic(child,root);
         },
-        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>{
-            let mut child=verify::launch(root,true,false,false)?;
-            show(&format!("Started CYBER.EXE with 3dfx splash (PID {})",child.id()),root);
-            return wait_game(child,root);
-        },
+        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>
+            return user_launch(root,false,true),
         _=>{},
     }
     let upgrade_cdda=matches!(args,[one] if one.to_str()==Some("--upgrade-cdda"));
@@ -389,18 +333,14 @@ mod diagnostics_tests {
         }
     }
     #[test]
-    fn help_mentions_debug_trace_command(){
-        assert!(HELP.contains("--launch [--3dfx-logo|--trace]"));
-        assert!(HELP.contains("CyberGladiatorsFix.log"));
-        assert!(HELP.contains("NGLIDE_BACKEND=0"));
-        assert!(HELP.contains("--launch --trace --passthru-noop"));
-        assert!(HELP.contains("--upgrade-cdda"));
-        assert!(HELP.contains("--video-delay=100|250|500|1000"));
-        assert!(HELP.contains("--no-glide-hook"));
-        assert!(HELP.contains("--nglide-d3d9"));
-        assert!(HELP.contains("--dxvk-defer-surface"));
-        assert!(HELP.contains("--external-intro"));
-        assert!(HELP.contains("--dxvk-desktop-refresh"));
-        assert!(HELP.contains("--nglide-vulkan"));
+    fn help_lists_only_public_single_file_controls(){
+        for expected in ["--launch","--trace","--verify","--max-graphics",
+            "--upgrade-cdda","--check-bundle","--3dfx-logo","--version","--help",
+            "CyberGladiatorsFix.log","isolated AVI player"]{
+            assert!(HELP.contains(expected),"{expected}");
+        }
+        assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
+        assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
+        assert!(!HELP.contains("--video-delay="));
     }
 }
