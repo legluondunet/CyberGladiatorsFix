@@ -81,6 +81,7 @@ struct Controller {
     time_format:Dword,
 }
 static CONTROLLER:OnceLock<Mutex<Option<Controller>>>=OnceLock::new();
+static TRACE_SESSION:OnceLock<()>=OnceLock::new();
 
 fn controller()->&'static Mutex<Option<Controller>> {
     CONTROLLER.get_or_init(||Mutex::new(None))
@@ -94,6 +95,26 @@ fn log(message:&str){
     if let Ok(mut f)=OpenOptions::new().append(true).create(true).open(path) {
         let _=writeln!(f,"{message}");
     }
+}
+// WinMM exports can be called before the first video or CD track opens.
+// Stamp the *actual* game's CDDA log once for each trace process, so that
+// a previous run's cumulative lines cannot masquerade as new diagnostics.
+// No I/O happens in DllMain or under the Windows loader lock.
+fn mark_trace_session_once(){
+    if std::env::var("CYBER_GLIDE_TRACE").as_deref()!=Ok("1"){return;}
+    TRACE_SESSION.get_or_init(||{
+        let pid=std::process::id();
+        let exe=std::env::current_exe().map(|p|p.display().to_string())
+            .unwrap_or_else(|e|format!("unknown ({e})"));
+        let delay=std::env::var("CYBER_VIDEO_CLOSE_DELAY_MS")
+            .unwrap_or_else(|_|"0".to_owned());
+        let no_op=std::env::var("CYBER_GLIDE_PASSTHRU_NOOP")
+            .unwrap_or_else(|_|"0".to_owned());
+        log(&format!(
+            "TRACE_SESSION BEGIN pid={pid} exe={exe} video_delay_ms={delay} passthru_noop={no_op} bridge_log={}",
+            game_dir().join("CyberGladiatorsCDDA.log").display()
+        ));
+    });
 }
 unsafe fn cd_type_matches(flags:Dword,data:Ptr)->bool {
     if flags&MCI_OPEN_TYPE==0||data==0{return false;}
@@ -291,6 +312,7 @@ macro_rules! forward_winmm {
         #[no_mangle]
         #[allow(non_snake_case)]
         pub unsafe extern "system" fn $function($($arg:$typ),*)->$return {
+            mark_trace_session_once();
             let Some(address)=system_proc(concat!(stringify!($function),"\0").as_bytes()) else {
                 return $failure;
             };
@@ -309,6 +331,7 @@ macro_rules! forward_winmm {
 pub unsafe extern "system" fn mciSendStringA(
     cmd:*const c_char,out:*mut c_char,len:u32,hwnd:Handle
 )->u32 {
+    mark_trace_session_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
     };
@@ -356,6 +379,7 @@ forward_winmm!(mmioClose(h:Handle,flags:u32)->u32, 1);
 
 #[no_mangle]
 pub unsafe extern "system" fn mciSendCommandA(id:u32,message:u32,flags:usize,param:usize)->u32 {
+    mark_trace_session_once();
     // Never change non-CD MCI commands, especially video-related devices.
     if message==MCI_OPEN && cd_type_matches(flags as u32,param) {
         return open_virtual(param);
