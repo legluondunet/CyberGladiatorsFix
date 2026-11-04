@@ -2,7 +2,7 @@
 //! Opt-in, process-isolated startup AVI playback. The helper exits before
 //! CYBER.EXE creates its Glide/DXVK device, so the two renderers never share
 //! the original game's DirectDraw or window state.
-use crate::{diagnostics,install::DIR,settings,verify};
+use crate::{bundle,diagnostics,install::DIR,settings,verify};
 use std::fs::{self,File,OpenOptions};
 use std::io::Read;
 use std::path::Path;
@@ -39,14 +39,14 @@ pub fn play_before_game(root:&Path)->Result<(),String>{
     if settings::read(&game)?{
         return Err("External intro requires [Video] SkipIntro=0 (the option plays it out-of-process and skips it only inside the game)".into());
     }
-    if !settings::read_cdda(&game)?{
-        return Err("External intro trace requires [Audio] EnableCDDA=1 for the verified diagnostic bridge".into());
-    }
     // Honor the same strict-by-default CD receipt and explicit IQ exception
     // as the ordinary launcher, before showing any video.
     verify::verify_launch_assets(root)?;
-    let helper=root.join(PLAYER);
-    validate_x86_exe(&helper)?;
+    // The x86 helper is embedded in the one-file release; stage it in a
+    // uniquely named private temp directory and delete after child exit.
+    let staged=bundle::TemporaryIntro::create()?;
+    let helper=staged.path();
+    validate_x86_exe(helper)?;
     // Append the helper's MCI diagnostics into the ONE session log beside
     // the patcher. Never truncate after the launcher wrote its config header.
     let log_path=diagnostics::location(root);
