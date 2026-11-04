@@ -48,6 +48,12 @@ speed/no-CD/intro patches; never re-extract the game or FLACs. Keep cyber.exe.ba
 and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
 CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1;
 [Audio] EnableCDDA=0 (safe system WinMM) or 1 (experimental FLAC bridge).
+[Integrity] AllowModifiedIQ=0 (default) or 1 (explicit launch-only
+permission to retain same-size changes in iq/iq00.dat..iq99.dat).
+With AllowModifiedIQ=1, each mismatch is warned with both SHA-256 values;
+all non-IQ files, file sizes, paths, and the original CD manifest remain strict.
+--verify ALWAYS checks all original CD asset hashes, ignoring this permission.
+Make a backup of changed IQ files before enabling this option.
 The --launch command reads SkipIntro and EnableCDDA before starting the game;
 Both --launch and --launch --trace now use NGLIDE_BACKEND=0 (automatic).
 --launch --trace additionally captures Wine exceptions and DLL loads in
