@@ -73,6 +73,9 @@ pub fn launch(root:&Path,logo:bool)->Result<Child,String>{
     let enable_cdda=settings::read_cdda(&game)?;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
+    // If the user explicitly opts into CDDA, copy/upgrade the project's
+    // verified DLL first. Never switch the import descriptor to an absent DLL.
+    if enable_cdda {cdda::try_install(root,&game)?;}
     // Prepare the exact import and intro variants *before* verification and
     // launch; disabled CDDA must not load or require the 32-bit DLL.
     patch::set_cdda(&exe,enable_cdda)?;
