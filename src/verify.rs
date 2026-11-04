@@ -84,6 +84,24 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
 }
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
+    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false)
+}
+/// Opt-in comparison of nGlide Direct3D9 (DXVK under a configured Wine prefix)
+/// versus nGlide's direct Vulkan renderer. Never assume D3D9 implies DXVK.
+pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_dialog:bool)->Result<Child,String>{
+    launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_dialog)
+}
+fn validate_renderer_test(backend:Option<&str>,dxvk_dialog:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
+    if backend.is_some_and(|b|!matches!(b,"1"|"2")) || (dxvk_dialog && backend!=Some("1")){
+        return Err("Invalid rendering experiment: nGlide backend must be 1 (DirectX) or 2 (Vulkan); dialog mode requires DirectX".into());
+    }
+    if backend.is_some() && (!trace||!no_glide_hook||logo||passthru_noop||video_delay_ms!=0){
+        return Err("Renderer experiments require trace mode with the diagnostic Glide hook disabled".into());
+    }
+    Ok(())
+}
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_dialog:bool)->Result<Child,String>{
+    validate_renderer_test(backend_override,dxvk_dialog,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
     if no_glide_hook && (!trace||logo||passthru_noop||video_delay_ms!=0){
         return Err("--no-glide-hook requires --launch --trace without other experiments".into());
     }
@@ -143,6 +161,23 @@ pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,vi
         // or the Wine prefix. The trace is opt-in, stored beside the patcher,
         // and replaced by each new --launch --trace invocation.
         nglide::configure_diagnostic(&mut cmd,logo);
+        if let Some(backend)=backend_override {
+            // 1=DirectX9 and 2=direct Vulkan. nGlide uses its own Vulkan
+            // renderer for mode 2, not DXVK. The D3D9 branch uses DXVK only
+            // if the Wine prefix actually provides DXVK's d3d9.dll.
+            cmd.env("NGLIDE_BACKEND",backend);
+            if backend=="1" {
+                // DXVK's HUD and per-process logs confirm whether the actual
+                // DLL implements DXVK; do not mistake a D3D9 selection for it.
+                cmd.env("DXVK_HUD","version,devinfo,fps");
+                cmd.env("DXVK_LOG_LEVEL","info");
+                if dxvk_dialog {
+                    // Experimental DXVK fullscreen/swapchain compatibility.
+                    // No persistent dxvk.conf or global registry change.
+                    cmd.env("DXVK_CONFIG","d3d9.enableDialogMode = True");
+                }
+            }
+        }
         cmd.env("WINEDEBUG","+seh,+loaddll");
         // Only the debug launch observes the native 3dfx-to-VGA transition.
         // The x86 CDDA DLL refuses unknown game/Glide pointers and leaves
@@ -172,7 +207,7 @@ pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,vi
             Ok(_)=>"other",Err(_)=>"unset",
         };
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; DXVK_DIALOG_MODE={dxvk_dialog}; DXVK_DIAGNOSTICS={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
@@ -193,6 +228,17 @@ mod experimental_launch_tests {
         assert!(err.starts_with("Game asset has changed: iq/iq40.dat"));
         assert!(err.contains("expected size=1024, SHA-256=oldhash"));
         assert!(err.contains("actual size=2048, SHA-256=newhash"));
+    }
+    #[test]
+    fn renderer_ab_requires_explicit_safe_trace_and_valid_backends(){
+        for backend in [Some("1"),Some("2")] {
+            assert!(validate_renderer_test(backend,false,true,true,false,false,0).is_ok());
+        }
+        assert!(validate_renderer_test(Some("1"),true,true,true,false,false,0).is_ok());
+        assert!(validate_renderer_test(Some("2"),true,true,true,false,false,0).is_err());
+        assert!(validate_renderer_test(Some("0"),false,true,true,false,false,0).is_err());
+        assert!(validate_renderer_test(Some("1"),false,true,false,false,false,0).is_err());
+        assert!(validate_renderer_test(None,true,true,true,false,false,0).is_err());
     }
     #[test]
     fn video_delay_is_bounded_and_trace_only(){
