@@ -80,9 +80,14 @@ impl TemporaryIntro {
         Ok(Self{dir,path})
     }
     pub fn path(&self)->&Path{&self.path}
+    /// Private directory used for one-shot launcher/player handoff signals.
+    /// This is a temporary control channel, never a diagnostic log.
+    pub fn handoff_dir(&self)->&Path{&self.dir}
 }
 impl Drop for TemporaryIntro{
     fn drop(&mut self){
+        let _=fs::remove_file(self.dir.join("intro.ready"));
+        let _=fs::remove_file(self.dir.join("intro.release"));
         let _=fs::remove_file(&self.path);
         let _=fs::remove_dir(&self.dir);
     }
