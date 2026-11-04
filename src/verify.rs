@@ -29,7 +29,25 @@ fn safe_manifest_path(s:&str)->bool{
     if s.is_empty()||s.contains(['\t','\n','\r',':','\\'])||p.is_absolute(){return false;}
     p.components().all(|c|matches!(c,Component::Normal(_)))
 }
+/// Exact IQ record keys on the original USA CD. Do not accept unrelated
+/// files, paths, extensions, changed lengths or symlinks in this policy.
+fn same_size_iq_asset(name:&str,expected_size:u64,actual_size:u64)->bool{
+    let Some(num)=name.strip_prefix("iq/").and_then(|s|s.strip_prefix("iq"))
+        .and_then(|s|s.strip_suffix(".dat")) else{return false;};
+    expected_size==actual_size && num.len()==2 && num.bytes().all(|b|b.is_ascii_digit())
+}
 pub fn verify(root:&Path)->Result<String,String>{
+    verify_assets(root,false).map(|(summary,_)|summary)
+}
+/// A launch can opt in to exact-path, same-size IQ differences without
+/// rewriting the manifest or asset. --verify always calls the strict mode.
+fn verify_launch_assets(root:&Path)->Result<String,String>{
+    let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
+    let (summary,warnings)=verify_assets(root,allow)?;
+    for message in warnings {crate::show(&message,root);}
+    Ok(summary)
+}
+fn verify_assets(root:&Path,allow_modified_iq:bool)->Result<(String,Vec<String>),String>{
     let game=root.join(DIR);
     let meta=fs::symlink_metadata(&game).map_err(|e|format!("Missing game directory: {e}"))?;
     if !meta.is_dir()||meta.file_type().is_symlink(){return Err("Game folder is not a regular directory".into());}
@@ -38,6 +56,7 @@ pub fn verify(root:&Path)->Result<String,String>{
     if manifest.len()>4*1024*1024||!manifest.starts_with("# CyberGladiatorsFix manifest v1\n"){
         return Err("Missing or invalid extraction manifest".into());
     }
+    let mut warnings=Vec::<String>::new();
     let mut count=0usize;let mut bytes=0u64;
     let mut seen=std::collections::BTreeSet::<String>::new();
     for line in manifest.lines().skip(1){
@@ -60,7 +79,15 @@ pub fn verify(root:&Path)->Result<String,String>{
         }
         let (actual_size,actual_hash)=file_hash(&path)?;
         if actual_size!=size||actual_hash!=hash {
-            return Err(asset_mismatch_message(name,size,hash,actual_size,&actual_hash));
+            if allow_modified_iq && same_size_iq_asset(name,size,actual_size){
+                // User explicitly chose to retain same-size data the game
+                // may update. Never silently rewrite the original CD receipt.
+                warnings.push(format!(
+                    "IQ_INTEGRITY_WARNING allowed only for this launch: {name} changed (expected size={size}, SHA-256={hash}; actual size={actual_size}, SHA-256={actual_hash}). Strict --verify will still fail; preserve a copy to compare with the CD."
+                ));
+            }else{
+                return Err(asset_mismatch_message(name,size,hash,actual_size,&actual_hash));
+            }
         }
         count+=1;bytes+=size;
     }
@@ -69,7 +96,9 @@ pub fn verify(root:&Path)->Result<String,String>{
         cdda::verify(&game)?;
         "CDDA bridge enabled and verified"
     }else{"native WinMM (CDDA bypass)"};
-    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}"))
+    let label=if warnings.is_empty(){"all assets match original CD"}
+        else{"modified IQ data permitted by explicit INI option; other assets match original CD"};
+    Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}; {label}"),warnings))
 }
 fn require_cd_audio_for_passthru(passthru_noop:bool,enable_cdda:bool)->Result<(),String>{
     if passthru_noop && !enable_cdda {
@@ -162,7 +191,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // launch; disabled CDDA must not load or require the 32-bit DLL.
     patch::set_cdda(&exe,enable_cdda)?;
     patch::set_skip_intro(&exe,skip)?;
-    verify(root)?;
+    verify_launch_assets(root)?;
     if logo{nglide::check_logo(&game)?;}
     if passthru_noop {
         let hash=cdda::matching_installed_hash(root,&game)?;
@@ -262,6 +291,18 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
 #[cfg(test)]
 mod experimental_launch_tests {
     use super::*;
+    #[test]
+    fn iq_opt_in_limits_to_exact_cd_paths_and_unchanged_sizes(){
+        for name in ["iq/iq00.dat","iq/iq01.dat","iq/iq40.dat","iq/iq99.dat"]{
+            assert!(same_size_iq_asset(name,3696,3696));
+            assert!(!same_size_iq_asset(name,3696,3695));
+        }
+        for bad in [
+            "iq/iq0.dat","iq/iq100.dat","iq/iqAA.dat","iq/IQ01.dat",
+            "iq/iq01.dat.bak","iq/other.dat","graphics/iq01.dat",
+            "iq/../iq01.dat","iq\\iq01.dat","iq/iq99.exe",
+        ]{assert!(!same_size_iq_asset(bad,3696,3696),"{bad}");}
+    }
     #[test]
     fn asset_change_error_reports_both_size_and_hash_without_approving_changes(){
         let err=asset_mismatch_message("iq/iq40.dat",1024,"oldhash",2048,"newhash");
