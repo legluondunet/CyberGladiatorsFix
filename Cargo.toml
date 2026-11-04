@@ -1,9 +1,9 @@
 [package]
 name = "cyber-gladiators-fix"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 rust-version = "1.95"
-description = "Windows CLI ISO/CUE installer, speed fix, verifier and launcher for CyberGladiators (1996)"
+description = "Windows CLI CUE/BIN installer, speed and no-CD fixes, verifier and launcher for CyberGladiators (1996)"
 license = "GPL-3.0-or-later"
 authors = ["legluondunet assisted by ChatGPT (OpenAI)"]
 publish = false
