@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.6 (nGlide auto backend for normal Wine launches).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.7 (diagnose black screen after intro video).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -107,6 +107,23 @@ CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in t
 
 On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
 
+## Investigating black screen after SPLASH4.AVI (v0.2.7)
+
+User testing on Wine confirms **the game launches and is playable when `[Video] SkipIntro=1`**, but when `SkipIntro=0`, the 40-second Cinepak `SPLASH4.AVI` plays and the game freezes on a black screen instead of showing the character-selection/menu screen. The launcher log records the game starting but cannot by itself identify where execution hangs.
+
+Static disassembly of the verified USA `CYBER.EXE` identifies the original transition:
+
+- `0x004022C1`: starts `play movie window`, then calls `0x004021E6` repeatedly to query `status movie mode`.
+- `0x00402286`: sends `close movie` and `close avivideo`.
+- `0x00403547`: restores the graphics/window state after the video.
+- Source `SPLASH4.AVI` is approximately 40 seconds long, 640×480 Cinepak at 15 fps.
+
+**The cause is not yet isolated.** The game may repeatedly receive `playing` even after the clip ends, or MCI might close successfully while nGlide/Wine fails to restore the display. Do not change the game binary or disable graphics restoration without a trace.
+
+The v0.2.7 x86 `CyberGladiatorsCDDA.dll` now records `MCI_VIDEO BEGIN`, `MCI_VIDEO END`, and sampled `MCI_VIDEO STATUS` lines in **`CyberGladiatorsCDDA.log`**, located beside `CYBER.EXE`. Only movie/avivideo commands are logged. The status mode is recorded on transitions and every 400 polls to avoid excessive I/O. These calls are still forwarded unchanged to the real system WinMM, without modifying any result. The patcher can safely upgrade verified v0.2.5 and v0.2.6 DLLs by SHA-256 and backs up the old DLL.
+
+To reproduce while keeping working CD music, set `[Video] SkipIntro=0` and `[Audio] EnableCDDA=1` in `CyberGladiatorsFix.ini`, then run `CyberGladiatorsFix.exe --launch --trace` (or ordinary `--launch` if it works). After the black screen appears, close the process and provide `CyberGladiatorsCDDA.log` **and** `CyberGladiatorsFix-WineTrace.log` (if present). If the final lines repeatedly report `playing`, investigate the MCI polling loop; if `close movie` and `close avivideo` complete, investigate graphics restoration. Meanwhile `SkipIntro=1` remains the validated workaround.
+
 ## Normal startup graphics compatibility (v0.2.6)
 
 Under Wine, the user confirmed that `CyberGladiatorsFix.exe --launch --trace` starts Cyber Gladiators and plays CDDA music at maximum graphics, while `CyberGladiatorsFix.exe --launch` from v0.2.5 does not start. The principal process-setting difference was `NGLIDE_BACKEND`: normal launch forced Vulkan (`2`) whenever a Vulkan loader was available; trace used nGlide automatic backend (`0`). **This suggests a backend incompatibility, but the previous trace mode also enabled Wine debug logging, so Vulkan has not been isolated as the sole cause.**
@@ -169,7 +186,7 @@ accepted. A data BIN is always required.
 
 **Upgrade existing installs:** extract **both** `CyberGladiatorsFix.exe` and `CyberGladiatorsCDDA.dll` from the **same latest ZIP** next to the patcher, replacing the older copies, then run the patcher **without arguments** once to upgrade the game folder's DLL. Do **not** re-extract the CD or delete `IQ/` files. After upgrading, use `CyberGladiatorsFix.exe --launch`, which reads `[Video] SkipIntro` from `CyberGladiatorsFix.ini`. The older bridge is rejected by `--verify` until upgraded.
 
-The project-owned DLL is **not** a global `winmm.dll` replacement and must not be installed into the Windows/Wine system directories. It is supplied with the patcher by the Windows CI artifact and installed only beside the game. No original music files are bundled; only extracted tracks can play. Basic CDDA music playback under Wine is validated with v0.2.5; pause/resume, track transitions, and native Windows remain to be tested.
+The project-owned DLL is **not** a global `winmm.dll` replacement and must not be installed into the Windows/Wine system directories. It is supplied with the patcher by the Windows CI artifact and installed only beside the game. No original music files are bundled; only extracted tracks can play. Basic CDDA music playback under Wine is validated with v0.2.5; pause/resume, track transitions, and native Windows remain to be tested. The AVI-to-menu black-screen transition remains under investigation using the v0.2.7 MCI movie trace.
 
 ## Known limitations / investigation
 
