@@ -1,4 +1,4 @@
-name: Windows x64 - build and tests
+name: Windows - x64 installer + x86 CDDA bridge
 
 on:
   push:
@@ -21,7 +21,13 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-pc-windows-msvc
+          targets: x86_64-pc-windows-msvc, i686-pc-windows-msvc
+
+      - name: Build Windows x86 CDDA bridge DLL
+        run: cargo build --release --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
+
+      - name: Test Windows x86 CDDA bridge
+        run: cargo test --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
 
       - name: Build release EXE
         run: cargo build --release --target x86_64-pc-windows-msvc
@@ -37,11 +43,21 @@ jobs:
           & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --help
           if ($LASTEXITCODE -ne 0) { throw "Help smoke test failed" }
 
-      - name: Upload standalone Windows x64 executable
-        if: always()
+      - name: Stage Windows launcher and CDDA DLL together
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe dist/
+          Copy-Item cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsCDDA.dll dist/
+          $dll = (Get-Item dist/CyberGladiatorsCDDA.dll).Length
+          if ($dll -lt 4096) { throw "CDDA DLL unexpectedly small" }
+          Write-Host "CDDA DLL bytes: $dll"
+          dumpbin /exports dist/CyberGladiatorsCDDA.dll
+
+      - name: Upload Windows x64 installer and x86 CDDA DLL
         uses: actions/upload-artifact@v4
         with:
           name: CyberGladiatorsFix-Windows-x64
-          path: target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe
-          if-no-files-found: warn
+          path: dist/
+          if-no-files-found: error
           retention-days: 30
