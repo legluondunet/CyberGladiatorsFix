@@ -9,6 +9,7 @@ pub const SPEED_ONLY: &str = "520d516a572f3287458337e8cef1231b5645f59e3952b3f568
 pub const NO_CD_ONLY: &str = "d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9";
 pub const INTRO_ONLY: &str = "d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6";
 pub const PATCHED: &str = "71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb";
+pub const PATCHED_SKIP_INTRO: &str = "05215ec70462c0e34de7a5d3f9bf32adebb0a6a17b2946bcb768efb1db1b328f";
 pub const LEN: usize = 351_776;
 const CHANGES: [(usize, [u8;4], [u8;4]); 2] = [
     (0x3116, [0xc4,0xff,0xff,0xff], [0x0e,0x30,0x04,0x00]),
@@ -119,7 +120,9 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
     if [SPEED_ONLY,NO_CD_ONLY,INTRO_ONLY].contains(&hash.as_str()) {
         return Err("Existing CYBER.EXE requires CDDA upgrade. Place CyberGladiatorsCDDA.dll beside CyberGladiatorsFix.exe and rerun patcher without arguments".into());
     }
-    if hash!=PATCHED {return Err(format!("Unsupported or unpatched CYBER.EXE: SHA-256 {hash}; expected {PATCHED}"));}
+    if hash!=PATCHED && hash!=PATCHED_SKIP_INTRO {
+        return Err(format!("Unsupported CYBER.EXE: SHA-256 {hash}; expected the recognized CDDA patch with intro enabled/disabled"));
+    }
     let backup=backup_path(path);
     let backup_meta=fs::symlink_metadata(&backup)
         .map_err(|e|format!("Original backup missing ({}): {e}",backup.display()))?;
@@ -131,6 +134,30 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
     Ok(())
 }
 
+/// Atomically replace an already validated game EXE; roll back if publishing fails.
+fn replace_exe(path:&Path,patched:&[u8])->Result<(),String>{
+    let tmp=path.with_extension("EXE.tmp");
+    if tmp.exists(){return Err(format!("Temporary patch file already exists: {}",tmp.display()));}
+    {
+        use std::io::Write;
+        let mut f=fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e|e.to_string())?;
+        if let Err(e)=f.write_all(patched).and_then(|_|f.sync_all()) {
+            let _=fs::remove_file(&tmp);return Err(e.to_string());
+        }
+    }
+    // Windows rename cannot replace an existing EXE. In a staged installation
+    // this operation is safe; on an existing installation, original .bak survives.
+    let retired=path.with_extension("EXE.old.tmp");
+    if retired.exists(){let _=fs::remove_file(&tmp);return Err("Temporary old EXE already exists; refusing".into());}
+    fs::rename(path,&retired).map_err(|e|format!("Cannot move original aside: {e}"))?;
+    if let Err(e)=fs::rename(&tmp,path){
+        let restore=fs::rename(&retired,path);
+        return Err(format!("Cannot install patched exe: {e}; original restore: {restore:?}; original backup: {}",backup.display()));
+    }
+    let _=fs::remove_file(&retired);
+    Ok(())
+}
+
 pub fn apply(path:&Path)->Result<&'static str,String>{
     if path.file_name().is_none_or(|n|!n.to_string_lossy().eq_ignore_ascii_case("CYBER.EXE")){
         return Err("The executable must be named CYBER.EXE".into());
@@ -139,7 +166,10 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     if !meta.is_file()||meta.file_type().is_symlink(){return Err("CYBER.EXE must be a regular file".into());}
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
-    if hash==PATCHED {verify_exe(path)?;return Ok("Already patched (verified)");}
+    if hash==PATCHED || hash==PATCHED_SKIP_INTRO {
+        verify_exe(path)?;
+        return Ok("Already patched (verified)");
+    }
     let stage=match hash.as_str() {
         ORIGINAL=>Edition::Original,
         SPEED_ONLY=>Edition::SpeedOnly,
@@ -167,25 +197,7 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
         f.write_all(&data).map_err(|e|e.to_string())?;
         f.sync_all().map_err(|e|e.to_string())?;
     }
-    let tmp=path.with_extension("EXE.tmp");
-    if tmp.exists(){return Err(format!("Temporary patch file already exists: {}",tmp.display()));}
-    {
-        use std::io::Write;
-        let mut f=fs::OpenOptions::new().write(true).create_new(true).open(&tmp).map_err(|e|e.to_string())?;
-        if let Err(e)=f.write_all(&patched).and_then(|_|f.sync_all()) {
-            let _=fs::remove_file(&tmp);return Err(e.to_string());
-        }
-    }
-    // Windows rename cannot replace an existing EXE. In a staged installation
-    // this operation is safe; on an existing installation, original .bak survives.
-    let retired=path.with_extension("EXE.old.tmp");
-    if retired.exists(){let _=fs::remove_file(&tmp);return Err("Temporary old EXE already exists; refusing".into());}
-    fs::rename(path,&retired).map_err(|e|format!("Cannot move original aside: {e}"))?;
-    if let Err(e)=fs::rename(&tmp,path){
-        let restore=fs::rename(&retired,path);
-        return Err(format!("Cannot install patched exe: {e}; original restore: {restore:?}; original backup: {}",backup.display()));
-    }
-    let _=fs::remove_file(&retired);
+    replace_exe(path,&patched)?;
     verify_exe(path)?;
     Ok(match stage {
         Edition::Original => "Speed, no-CD, startup video and CDDA bridge applied",
@@ -193,6 +205,41 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
         Edition::NoCdOnly => "Startup video and CDDA bridge added to existing no-CD installation",
         Edition::IntroOnly => "CDDA bridge added to existing speed/no-CD/intro installation",
     })
+}
+
+// The original JE 0x2F at raw offset 0x63FB branches to the intro
+// function epilogue at raw 0x642C. Its patched NOPs enable the intro;
+// JMP 0x2F skips it unconditionally without affecting other AVI playback.
+const SKIP_INTRO_OFFSET:usize=0x63fb;
+const INTRO_PLAY_BYTES:[u8;2]=[0x90,0x90];
+const INTRO_SKIP_BYTES:[u8;2]=[0xeb,0x2f];
+
+/// Applies the [Video] SkipIntro setting before the game starts. Both
+/// exact SHA-256 executable variants are supported and the retail backup
+/// remains untouched. No game assets, IQ data or cyber.ini are modified.
+pub fn set_skip_intro(path:&Path,skip:bool)->Result<&'static str,String>{
+    verify_exe(path)?;
+    let original=fs::read(path).map_err(|e|e.to_string())?;
+    let old_hash=digest(&original);
+    let (from,to,expected_hash)=if skip {
+        (INTRO_PLAY_BYTES,INTRO_SKIP_BYTES,PATCHED_SKIP_INTRO)
+    }else{
+        (INTRO_SKIP_BYTES,INTRO_PLAY_BYTES,PATCHED)
+    };
+    if (skip && old_hash==PATCHED_SKIP_INTRO)||(!skip && old_hash==PATCHED){
+        return Ok(if skip {"Startup intro already disabled"}else{"Startup intro already enabled"});
+    }
+    if original[SKIP_INTRO_OFFSET..SKIP_INTRO_OFFSET+2]!=from {
+        return Err("Unexpected intro bytes; refusing to modify CYBER.EXE".into());
+    }
+    let mut updated=original;
+    updated[SKIP_INTRO_OFFSET..SKIP_INTRO_OFFSET+2].copy_from_slice(&to);
+    if digest(&updated)!=expected_hash {
+        return Err("Startup intro checksum mismatch; CYBER.EXE unchanged".into());
+    }
+    replace_exe(path,&updated)?;
+    verify_exe(path)?;
+    Ok(if skip {"Startup intro disabled by CyberGladiatorsFix.ini"}else{"Startup intro enabled by CyberGladiatorsFix.ini"})
 }
 
 #[cfg(test)]
@@ -207,7 +254,7 @@ mod tests {
         }
     }
     #[test] fn known_hashes_are_all_distinct(){
-        let values=[ORIGINAL,SPEED_ONLY,NO_CD_ONLY,INTRO_ONLY,PATCHED];
+        let values=[ORIGINAL,SPEED_ONLY,NO_CD_ONLY,INTRO_ONLY,PATCHED,PATCHED_SKIP_INTRO];
         for (i,a) in values.iter().enumerate(){
             for b in values.iter().skip(i+1){assert_ne!(a,b);}
         }
@@ -303,5 +350,11 @@ mod tests {
         let err=patch_bytes(&mut data,Edition::NoCdOnly).unwrap_err();
         assert!(err.contains("intro"));
         assert_eq!(data,unchanged);
+    }    #[test] fn intro_skip_branch_targets_existing_epilogue(){
+        assert_eq!(SKIP_INTRO_OFFSET+2+0x2f,0x642c);
+        assert_eq!(INTRO_SKIP_BYTES,[0xeb,0x2f]);
+        assert_eq!(INTRO_PLAY_BYTES,[0x90,0x90]);
+        assert_ne!(PATCHED,PATCHED_SKIP_INTRO);
     }
+
 }
