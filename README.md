@@ -55,7 +55,7 @@ Version 0.2.4 refused to enable CDDA on an existing installation when the game f
 
 The v0.2.5 patcher accepts the archived project-owned DLL hashes from versions v0.2.1 through v0.2.4 (plus the separately distributed development builds) for replacement, while continuing to **refuse unrecognized or modified DLLs**. Each replaced DLL is preserved in `CyberGladiatorsCDDA.dll.previous-<first12sha256>.bak` to avoid overwriting the previous `.previous.bak` saved by an earlier upgrade. Staging is verified before publication, with a rollback attempt if a rename fails.
 
-**Test:** replace both launcher and x86 DLL from the same v0.2.5 ZIP; in `CyberGladiatorsFix/CyberGladiatorsFix.ini` retain `SkipIntro=1` and set `[Audio] EnableCDDA=1`. Then launch using `CyberGladiatorsFix.exe --launch --trace`. If the game crashes, attach `CyberGladiatorsFix-WineTrace.log` and `CyberGladiatorsCDDA.log` (if created). Success with `EnableCDDA=0` only proves the original WinMM import works in trace mode; the actual FLAC playback still needs gameplay validation.
+**Test:** replace both launcher and x86 DLL from the same v0.2.5 ZIP; in `CyberGladiatorsFix/CyberGladiatorsFix.ini` retain `SkipIntro=1` and set `[Audio] EnableCDDA=1`. Then launch using `CyberGladiatorsFix.exe --launch --trace`. If the game crashes, attach `CyberGladiatorsFix-WineTrace.log` and `CyberGladiatorsCDDA.log` (if created). With `--launch --trace` and `EnableCDDA=1`, in-game CDDA music playback has now been confirmed under Wine on the USA edition (user test, v0.2.5). Pause/resume, individual track transitions, and native Windows still need separate validation.
 
 ## Capturing startup failure details (v0.2.4)
 
@@ -71,7 +71,7 @@ Normal `--launch` remains identical to earlier versions, with the ScorchedPlanet
 
 ## Diagnosing startup without the experimental CDDA bridge (v0.2.3)
 
-The `CyberGladiatorsFix.ini` file is **text** (never edit the game's 32-byte binary `cyber.ini`). On new installs, CDDA is now disabled by default because its Wine compatibility is not yet established:
+The `CyberGladiatorsFix.ini` file is **text** (never edit the game's 32-byte binary `cyber.ini`). On new installs, CDDA remains disabled by default while wider compatibility is being evaluated (basic playback has been confirmed under Wine on the USA edition):
 
 ```ini
 [Video]
@@ -122,8 +122,8 @@ Install the **official nGlide** from [Zeus Software](https://www.zeus-software.c
 - **USA edition identified using the provided CUE/BIN Track 01:** `CyberGladiators (USA).cue` + 133,217,280-byte `Track 01.bin`, MODE1/2352, volume `CYBER`, 56,640 sectors.
 - The CD contains 760 files; its **CYBER/** tree contains **342 game files totaling 47,954,511 bytes (45.73 MiB)**. Install excludes 418 other CD files (setup/DirectX/demos and non-game content).
 - Known USA profile requires the exact retail `CYBER.EXE`, `GRAPHICS/SHELL.FNT` and `SPLASH.AVI` hashes from this disc. The original binary SHA-256 matches the previously supplied `CYBER.EXE`.
-- The supplied CUE declares 15 tracks: **Track 01 data** and **Tracks 02–15 CD audio**. The 14 audio BIN files were deliberately omitted in the supplied test fixture. When present, the installer extracts them losslessly as FLAC using a pure Rust encoder (no ffmpeg/flac executable required). Missing audio BIN files are reported and skipped without preventing extraction of the game data. No proprietary game audio is bundled. **The experimental x86 CDDA bridge now connects these FLACs to the game's MCI commands; gameplay listening tests are still required.**
-- All 56,640 raw MODE1 sectors were checked for sync and mode; all 342 game files were read and hashed from the data track; a local extraction and 8-byte binary patch simulation succeeded. **Rust compilation and Windows/Wine gameplay are not yet validated.**
+- The supplied CUE declares 15 tracks: **Track 01 data** and **Tracks 02–15 CD audio**. The 14 audio BIN files were deliberately omitted in the supplied test fixture. When present, the installer extracts them losslessly as FLAC using a pure Rust encoder (no ffmpeg/flac executable required). Missing audio BIN files are reported and skipped without preventing extraction of the game data. No proprietary game audio is bundled. **The experimental x86 CDDA bridge now connects these FLACs to the game's MCI commands; in-game music playback was confirmed under Wine with v0.2.5.**
+- All 56,640 raw MODE1 sectors were checked for sync and mode; all 342 game files were read and hashed from the data track; a local extraction and 8-byte binary patch simulation succeeded. **Rust CI builds and unit tests pass; the user has validated game launch under Wine, maximum graphics settings, and in-game CDDA playback with v0.2.5. Native Windows has not yet been validated.**
 
 ## CUE/BIN input layout
 
@@ -157,18 +157,18 @@ be tested against the retail audio yet. An absent audio BIN is clearly reported 
 skipped; a present, damaged BIN is rejected. An ISO without a CUE sheet is not
 accepted. A data BIN is always required.
 
-**Experimental audio playback (v0.2.0):** the project builds `CyberGladiatorsCDDA.dll` as a separate Windows **x86** Rust DLL (while `CyberGladiatorsFix.exe` remains **x64**). The bridge intercepts only CD-audio `mciSendCommandA` messages: `MCI_OPEN` for type `cdaudio`, `MCI_SET` TMSF, `MCI_PLAY` (track numbers 02–15), `MCI_STOP`, `MCI_PAUSE`, `MCI_RESUME`, `MCI_CLOSE`, and basic status/seek. It decodes only locally extracted lossless FLACs into 44.1 kHz/16-bit/stereo PCM and plays through Windows `waveOut` from a worker thread. The other 14 WinMM imports, including `mciSendStringA` for AVI, are delegated to the original system WinMM module. The bridge writes `CyberGladiatorsCDDA.log` beside the game with track/decoder/device errors. **No actual gameplay playback has yet been validated on Wine or Windows.**
+**Experimental audio playback (v0.2.0):** the project builds `CyberGladiatorsCDDA.dll` as a separate Windows **x86** Rust DLL (while `CyberGladiatorsFix.exe` remains **x64**). The bridge intercepts only CD-audio `mciSendCommandA` messages: `MCI_OPEN` for type `cdaudio`, `MCI_SET` TMSF, `MCI_PLAY` (track numbers 02–15), `MCI_STOP`, `MCI_PAUSE`, `MCI_RESUME`, `MCI_CLOSE`, and basic status/seek. It decodes only locally extracted lossless FLACs into 44.1 kHz/16-bit/stereo PCM and plays through Windows `waveOut` from a worker thread. The other 14 WinMM imports, including `mciSendStringA` for AVI, are delegated to the original system WinMM module. The bridge writes `CyberGladiatorsCDDA.log` beside the game with track/decoder/device errors. **The user confirmed CDDA music plays during gameplay under Wine with v0.2.5 (USA edition, `--launch --trace`). Native Windows and pause/resume/track transitions have not been validated separately.**
 
 **v0.2.2 fixes a startup hang in the first CDDA build.** The v0.2.1 x86 DLL accidentally exported 14 WinMM forwarding functions as 2-byte `EB FE` self-loops, including the `mciSendStringA` AVI function. The bridge now loads the real system-directory `winmm.dll` by its absolute Windows path, resolves non-CDDA APIs via `GetProcAddress` and forwards them with the original 32-bit calling convention. Windows x86 regression tests exercise `mmioSeek` and `mciSendStringA` through the real system DLL, detecting the previous infinite loop. A new installer run recognizes the two known broken DLL SHA-256 versions, backs up an existing broken DLL as `CyberGladiatorsCDDA.dll.previous.bak` and installs the newly bundled DLL. It refuses to overwrite unknown files. An unmodified game may still need compatibility work; playback under Wine/Windows must be confirmed.
 
 **Upgrade existing installs:** extract **both** `CyberGladiatorsFix.exe` and `CyberGladiatorsCDDA.dll` from the **same latest ZIP** next to the patcher, replacing the older copies, then run the patcher **without arguments** once to upgrade the game folder's DLL. Do **not** re-extract the CD or delete `IQ/` files. After upgrading, use `CyberGladiatorsFix.exe --launch`, which reads `[Video] SkipIntro` from `CyberGladiatorsFix.ini`. The older bridge is rejected by `--verify` until upgraded.
 
-The project-owned DLL is **not** a global `winmm.dll` replacement and must not be installed into the Windows/Wine system directories. It is supplied with the patcher by the Windows CI artifact and installed only beside the game. No original music files are bundled; only extracted tracks can play. The CDDA implementation remains experimental pending playback, pause/resume and track-transition tests.
+The project-owned DLL is **not** a global `winmm.dll` replacement and must not be installed into the Windows/Wine system directories. It is supplied with the patcher by the Windows CI artifact and installed only beside the game. No original music files are bundled; only extracted tracks can play. Basic CDDA music playback under Wine is validated with v0.2.5; pause/resume, track transitions, and native Windows remain to be tested.
 
 ## Known limitations / investigation
 
-1. A Wine report confirmed the game starts without asking for the CD and gameplay speed appears normal after v0.1.3. The CDDA bridge has not been tested in the running game yet; track playback, pause/resume and transitions still need validation.
-2. The original startup AVI was absent and graphics settings were below maximum. The v0.1.4 video/graphics changes target both issues and **are awaiting gameplay confirmation under Wine**; Cinepak MCI/VfW codec support remains a separate dependency.
+1. A Wine report confirmed the game starts without asking for the CD and gameplay speed appears normal after v0.1.3. CDDA music playback in the running game is confirmed under Wine with v0.2.5; pause/resume, track transitions and native Windows still need validation.
+2. The original startup AVI was absent and graphics settings were below maximum. The graphics maximum settings have been confirmed in-game under Wine. Intro AVI playback and its Cinepak/MCI compatibility remain separate outstanding questions.
 3. `--verify` audits extracted files against the **local installation manifest** created from the user's disc; this is an integrity check, not an independently authenticated retail-release database. Different executable editions are refused.
 4. The latest Wine install log reports conversion of all 14 tracks. The experimental CDDA player currently decodes whole individual tracks in a background thread (with a 12-minute bound) and streams PCM with a four-buffer waveOut queue. It does not yet implement physical CDDA emulation beyond the game's observed MCI call pattern or advanced notify behavior. Pregaps before INDEX 01 are excluded. This is not a complete bit-perfect CD image/archive.
 5. No executable, game assets, disc images or proprietary nGlide binaries are shipped in this source project.
@@ -184,7 +184,7 @@ cargo test --target x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 ```
 
-The source project includes Windows GitHub Actions compilation and unit tests for **both** architectures, plus installer CLI smoke tests. The user confirmed the game launched without a CD at apparently normal speed, and all 14 FLAC tracks were extracted. The new CDDA DLL, video transition and first-launch graphics settings still require end-to-end Wine/Windows validation.
+The source project includes Windows GitHub Actions compilation and unit tests for **both** architectures, plus installer CLI smoke tests. The user confirmed the game launched without a CD at apparently normal speed, and all 14 FLAC tracks were extracted. CDDA music playback and maximum graphics settings have now been confirmed in-game under Wine; the AVI video transition, CDDA pause/resume/track changes, and native Windows behavior still require testing.
 
 ## Credits and reference
 
