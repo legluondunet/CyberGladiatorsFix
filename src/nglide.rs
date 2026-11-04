@@ -118,7 +118,7 @@ mod process_config_tests {
             .copied().flatten(),Some(std::ffi::OsStr::new("0")));
         assert_eq!(n.len(),d.len());
         for (key,val) in n.iter(){
-            if **key!=std::ffi::OsStr::new("NGLIDE_BACKEND"){
+            if key.to_string_lossy()!="NGLIDE_BACKEND"{
                 assert_eq!(d.get(key),Some(val));
             }
         }
