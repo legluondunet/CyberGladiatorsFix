@@ -160,6 +160,37 @@ fn prior_version_backup(game:&Path,hash:&str)->std::path::PathBuf {
     // .previous.bak created when v0.2.1 was updated, and never overwrites it.
     game.join(format!("CyberGladiatorsCDDA.dll.previous-{}.bak",&hash[..12]))
 }
+/// Fail safely with the exact path that needs inspection. A .tmp file may
+/// be the only recoverable copy of an interrupted upgrade: never remove it
+/// automatically just to make a later attempt succeed.
+fn require_vacant(path:&Path,role:&str)->Result<(),String>{
+    match fs::symlink_metadata(path){
+        Ok(_)=>Err(format!("{role} already exists at {}. Preserve and inspect this file; refusing overwrite",path.display())),
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(()),
+        Err(e)=>Err(format!("Cannot inspect {role} at {}: {e}",path.display())),
+    }
+}
+/// A previously completed upgrade may already have saved the *same* old DLL
+/// under its stable hash-qualified filename. Reuse only when it is a normal,
+/// valid x86 DLL with the full expected SHA-256, never merely a hash prefix.
+/// In that case use a short-lived rollback path for this transaction.
+fn existing_backup_matches(path:&Path,expected:&str)->Result<bool,String>{
+    match fs::symlink_metadata(path){
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(false),
+        Err(e)=>Err(format!("Cannot inspect existing CDDA backup at {}: {e}",path.display())),
+        Ok(meta)=>{
+            if !meta.is_file()||meta.file_type().is_symlink(){
+                return Err(format!("CDDA backup path is not a regular file: {}. Refusing overwrite",path.display()));
+            }
+            check(path).map_err(|e|format!("Existing CDDA backup at {} is invalid: {e}. Refusing overwrite",path.display()))?;
+            let actual=digest(path)?;
+            if actual!=expected{
+                return Err(format!("CDDA backup at {} has unexpected SHA-256 (expected {expected}; actual {actual}). Refusing overwrite",path.display()));
+            }
+            Ok(true)
+        }
+    }
+}
 pub fn verify(game:&Path)->Result<(),String>{
     let path=game.join(DLL_NAME);
     check(&path)?;
@@ -229,21 +260,41 @@ pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),S
     // a unique hash-qualified backup; never overwrite previous backups.
     let staged=game.join("CyberGladiatorsCDDA.dll.updating.tmp");
     let backup=prior_version_backup(game,&existing);
-    if staged.exists()||staged.is_symlink()||backup.exists()||backup.is_symlink(){
-        return Err("CDDA upgrade staging/backup path already exists; refusing overwrite".into());
-    }
+    require_vacant(&staged,"CDDA upgrade staging file")?;
+    let reuse_backup=existing_backup_matches(&backup,&existing)?;
+    // A matching archived copy already preserves the exact old DLL. Avoid
+    // deleting or overwriting it: temporarily retire the *installed* copy,
+    // and remove only the temporary duplicate after successful publication.
+    let rollback=game.join("CyberGladiatorsCDDA.dll.rollback.tmp");
+    if reuse_backup {require_vacant(&rollback,"CDDA upgrade rollback file")?;}
+    let retired=if reuse_backup{&rollback}else{&backup};
     install_new(&source,&staged,&wanted)?;
-    if let Err(e)=fs::rename(&target,&backup){
+    if let Err(e)=fs::rename(&target,retired){
         let _=fs::remove_file(&staged);
-        return Err(format!("Cannot preserve old CDDA DLL: {e}"));
+        return Err(format!("Cannot preserve currently installed CDDA DLL at {} to {}: {e}",target.display(),retired.display()));
     }
     if let Err(e)=fs::rename(&staged,&target){
-        let restored=fs::rename(&backup,&target);
+        let restored=fs::rename(retired,&target);
         let _=fs::remove_file(&staged);
-        return Err(format!("Cannot install new CDDA DLL: {e}; restore={restored:?}"));
+        return Err(format!("Cannot install new CDDA DLL at {}: {e}; restore from {}: {restored:?}",target.display(),retired.display()));
     }
-    verify(game)?;
-    record_receipt(game,&wanted)?;
+    // Receipt write or final validation may fail independently of DLL copy.
+    // In that case roll back, preserving the original SHA-qualified backup.
+    if let Err(e)=verify(game).and_then(|_|record_receipt(game,&wanted)){
+        let removed=fs::remove_file(&target);
+        let restored=if removed.is_ok(){fs::rename(retired,&target)}
+            else{Err(std::io::Error::other("cannot remove new DLL to restore prior version"))};
+        return Err(format!("CDDA upgrade validation/receipt failed: {e}; remove new DLL={removed:?}; restore prior version from {}={restored:?}",retired.display()));
+    }
+    if reuse_backup {
+        // This duplicate was created by *this* transaction; the original
+        // version is still safely preserved in the verified backup file.
+        if let Err(e)=fs::remove_file(&rollback){
+            crate::show(&format!("CDDA_UPGRADE_WARNING installed new DLL, but temporary duplicate at {} could not be removed: {e}; preserve it for review",rollback.display()),root);
+        }else{
+            crate::show(&format!("CDDA_UPGRADE reused verified existing backup at {} (SHA-256 {existing}); no archived backup overwritten",backup.display()),root);
+        }
+    }
     Ok(())
 }
 #[cfg(test)]
@@ -309,6 +360,43 @@ mod tests {
         assert_ne!(a,b);
         assert!(a.to_string_lossy().contains("567e74873301"));
         assert_ne!(a,game.join("CyberGladiatorsCDDA.dll.previous.bak"));
+    }
+    #[test]
+    fn refuses_colliding_staging_file_with_its_exact_path(){
+        let dir=std::env::temp_dir().join(format!("cyber-cdda-collision-{}",std::process::id()));
+        let _=fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let staged=dir.join("CyberGladiatorsCDDA.dll.updating.tmp");
+        assert!(require_vacant(&staged,"CDDA upgrade staging file").is_ok());
+        fs::write(&staged,b"preserve").unwrap();
+        let err=require_vacant(&staged,"CDDA upgrade staging file").unwrap_err();
+        assert!(err.contains(&staged.display().to_string()));
+        assert_eq!(fs::read(&staged).unwrap(),b"preserve");
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn matching_old_dll_backup_is_reused_without_overwriting_it(){
+        let dir=std::env::temp_dir().join(format!("cyber-cdda-archived-{}",std::process::id()));
+        let _=fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let backup=dir.join("previous.bak");
+        assert!(!existing_backup_matches(&backup,"0123456789").unwrap());
+        // Minimal valid PE32 x86 DLL header, matching our 4-KiB verifier.
+        let mut data=vec![0u8;4096];
+        data[0..2].copy_from_slice(b"MZ");
+        data[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
+        data[0x84..0x86].copy_from_slice(&0x014cu16.to_le_bytes());
+        data[0x96..0x98].copy_from_slice(&0x2000u16.to_le_bytes());
+        data[0x98..0x9a].copy_from_slice(&0x010bu16.to_le_bytes());
+        fs::write(&backup,&data).unwrap();
+        let hash=digest(&backup).unwrap();
+        assert!(existing_backup_matches(&backup,&hash).unwrap());
+        let mismatch=existing_backup_matches(&backup,&"0".repeat(64)).unwrap_err();
+        assert!(mismatch.contains(&backup.display().to_string()));
+        assert!(mismatch.contains(&hash));
+        assert_eq!(fs::read(&backup).unwrap(),data);
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn never_auto_overwrites_unknown_dll(){
