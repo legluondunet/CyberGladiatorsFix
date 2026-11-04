@@ -92,9 +92,16 @@ fn game_dir()->PathBuf {
         .unwrap_or_else(||PathBuf::from("."))
 }
 fn log(message:&str){
-    let path=game_dir().join("CyberGladiatorsCDDA.log");
-    if let Ok(mut f)=OpenOptions::new().append(true).create(true).open(path) {
-        let _=writeln!(f,"{message}");
+    // Launcher overrides this path with its own adjacent session log. If
+    // CYBER.EXE was started directly (without the launcher), still use the
+    // conventional parent of the game folder; never create a CDDA-only log.
+    let path=std::env::var_os("CYBER_LOG_FILE").map(PathBuf::from)
+        .unwrap_or_else(||{
+            let game=game_dir();
+            game.parent().unwrap_or(&game).join("CyberGladiatorsFix.log")
+        });
+    if let Ok(mut f)=OpenOptions::new().append(true).create(true).open(path){
+        let _=writeln!(f,"[CDDA] {message}");
     }
 }
 // WinMM exports can be called before the first video or CD track opens.
@@ -105,15 +112,14 @@ fn mark_trace_session_once(){
     if std::env::var("CYBER_GLIDE_TRACE").as_deref()!=Ok("1"){return;}
     TRACE_SESSION.get_or_init(||{
         let pid=std::process::id();
-        let exe=std::env::current_exe().map(|p|p.display().to_string())
-            .unwrap_or_else(|e|format!("unknown ({e})"));
+        let exe=std::env::current_exe().ok().and_then(|p|p.file_name().map(|v|v.to_string_lossy().to_string()))
+            .unwrap_or_else(||"unknown".into());
         let delay=std::env::var("CYBER_VIDEO_CLOSE_DELAY_MS")
             .unwrap_or_else(|_|"0".to_owned());
         let no_op=std::env::var("CYBER_GLIDE_PASSTHRU_NOOP")
             .unwrap_or_else(|_|"0".to_owned());
         log(&format!(
-            "TRACE_SESSION BEGIN pid={pid} exe={exe} video_delay_ms={delay} passthru_noop={no_op} bridge_log={}",
-            game_dir().join("CyberGladiatorsCDDA.log").display()
+            "TRACE_SESSION BEGIN pid={pid} exe={exe} video_delay_ms={delay} passthru_noop={no_op} bridge_log=CyberGladiatorsFix.log"
         ));
     });
 }
