@@ -278,6 +278,11 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
                 // to the game's working directory for unequivocal provenance.
                 let log_dir=dxvk_log_dir.ok_or("DXVK log directory missing for DirectX9 experiment")?;
                 cmd.env("DXVK_LOG_PATH",log_dir);
+                // D7VK (DirectDraw/D3D7) uses its own logging variables
+                // in current GE-Proton builds. Capture its trace in the
+                // SAME per-run temporary directory as DXVK's D3D9 trace.
+                cmd.env("D7VK_LOG_PATH",log_dir);
+                cmd.env("D7VK_LOG_LEVEL","info");
                 cmd.env("DXVK_HUD","version,devinfo,fps");
                 cmd.env("DXVK_LOG_LEVEL","info");
                 if dxvk_defer_surface {
@@ -319,7 +324,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             Ok(_)=>"other",Err(_)=>"unset",
         };
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; NGLIDE_REFRESH={}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if desktop_refresh{"1 (by desktop)"}else{"2 (60 Hz)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"unique directory beside game"}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+timestamp,+pid,+tid,+seh,+loaddll; D7VK_LOG_PATH=same_privately_captured_directory_as_DXVK; NGLIDE_BACKEND={} {}; NGLIDE_REFRESH={}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if desktop_refresh{"1 (by desktop)"}else{"2 (60 Hz)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"unique temporary directory"}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace in session log: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
