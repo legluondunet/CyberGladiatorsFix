@@ -253,9 +253,13 @@ pub fn after_video_close(){
     if !enabled(){return;}
     if unsafe{GetModuleHandleA(std::ptr::null())} as usize != EXPECTED_IMAGE_BASE {return;}
     window_snapshot("immediately after MCI close");
+    // Dense, read-only sampling for the first 500 ms, where the last
+    // reproducible trace shows DirectDraw objects disappearing and the game
+    // window thread exiting. No hooks are installed on COM or Glide here.
     thread::spawn(||{
         let start=Instant::now();
-        for delay in [100u64,500,1500,4000,8000] {
+        for delay in [10u64,25,50,75,100,125,150,200,250,300,350,400,450,500,
+                      750,1000,1500,4000,8000] {
             let target=Duration::from_millis(delay);
             if let Some(remaining)=target.checked_sub(start.elapsed()){
                 thread::sleep(remaining);
