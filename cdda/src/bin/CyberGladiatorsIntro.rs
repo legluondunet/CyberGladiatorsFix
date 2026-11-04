@@ -210,7 +210,10 @@ fn play()->Result<(),String>{
     // No detached Wine/MCI popup. Create the MCI video as a child of the
     // full-screen host; give the same HWND to MCI as its drawing destination.
     // The AVI decoder remains in this short-lived process, never CYBER.EXE.
-    mci("open avivideo")?;
+    // Do not open a second, unparented "avivideo" device. Unlike the
+    // original game's two-device sequence, this isolated helper only needs
+    // the file device explicitly parented to our fullscreen host. Opening
+    // an unparented device may allocate an unwanted default video window.
     let run=(||->Result<(),String>{
         mci(&format!(
             "open splash4.avi type avivideo alias movie parent {} style child",host.hwnd as usize
@@ -223,6 +226,11 @@ fn play()->Result<(),String>{
             let rect=fit_aspect(host.w,host.h,video_w,video_h)?;
             println!("INTRO_FULLSCREEN destination=x:{} y:{} w:{} h:{} source={}x{} aspect=preserved",rect.x,rect.y,rect.w,rect.h,video_w,video_h);
             mci(&format!("put movie destination at {} {} {} {}",rect.x,rect.y,rect.w,rect.h))?;
+            // Read-only confirmation of the driver's actual destination.
+            // Do not turn a missing MCI query into a playback failure.
+            if let Ok(applied)=mci("where movie destination"){
+                println!("INTRO_FULLSCREEN applied_destination={applied:?}");
+            }
             mci("play movie window")?;
             let began=Instant::now();
             let mut last_mode=String::new();
@@ -251,7 +259,6 @@ fn play()->Result<(),String>{
         let _=mci("close movie");
         playback
     })();
-    let _=mci("close avivideo");
     // FullscreenHost is dropped here. Even if video failed, the helper
     // exits before CYBER.EXE starts. No persistent desktop/mode changes.
     run
