@@ -99,7 +99,7 @@ Close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
 CyberGladiatorsCDDA.dll must be beside this installer. The bridge writes
-CyberGladiatorsFix.log next to the game. No game or nGlide files bundled.
+CyberGladiatorsFix.log beside the launcher. No game or nGlide files bundled.
 Unrecognized CD editions/executables are refused rather than modified.
 ";
 fn show(s:&str,root:&Path){
