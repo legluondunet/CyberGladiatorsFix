@@ -56,6 +56,7 @@ unsafe extern "system" {
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn GetWindowRect(hwnd:*mut c_void,rect:*mut Rect)->i32;
     fn SetForegroundWindow(hwnd:*mut c_void)->i32;
+    fn SetWindowPos(hwnd:*mut c_void,after:*mut c_void,x:i32,y:i32,w:i32,h:i32,flags:u32)->i32;
 }
 unsafe extern "system" fn find_game_window(hwnd:*mut c_void,param:isize)->i32{
     let query=&mut *(param as *mut WindowSearch);
@@ -127,10 +128,16 @@ impl IntroHandoff {
             thread::sleep(Duration::from_millis(40));
         }
         if let Some(hwnd)=target {
+            // Raise the game above the patcher's console in the *normal*
+            // Z-order while the helper's TOPMOST curtain still masks both.
+            // Do not make the game topmost or resize its nGlide window.
+            const SWP_NOSIZE_NOMOVE_NOACTIVATE_SHOW:u32=0x0001|0x0002|0x0010|0x0040;
+            let raised=unsafe{SetWindowPos(hwnd,std::ptr::null_mut(),0,0,0,0,
+                SWP_NOSIZE_NOMOVE_NOACTIVATE_SHOW)}!=0;
             let focused=unsafe{SetForegroundWindow(hwnd)}!=0;
             crate::show(&format!(
-                "INTRO_HANDOFF WINDOW_READY pid={pid} hwnd={} focus_requested={} elapsed_ms={}",
-                hwnd as usize,focused,started.elapsed().as_millis()
+                "INTRO_HANDOFF WINDOW_READY pid={pid} hwnd={} z_order_raised={} focus_requested={} elapsed_ms={}",
+                hwnd as usize,raised,focused,started.elapsed().as_millis()
             ),root);
         }
         let release=self.staged.handoff_dir().join("intro.release");
