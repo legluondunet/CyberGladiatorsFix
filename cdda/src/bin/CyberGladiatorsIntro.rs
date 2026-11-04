@@ -48,6 +48,11 @@ const SW_SHOW:i32=5;
 const SWP_SHOWWINDOW:u32=0x0040;
 const WM_DESTROY:u32=0x0002;
 const WM_QUIT:u32=0x0012;
+const WM_KEYDOWN:u32=0x0100;
+const VK_CONTROL:i32=0x11;
+const VK_MENU:i32=0x12;
+const VK_LWIN:i32=0x5B;
+const VK_RWIN:i32=0x5C;
 const BLACK_BRUSH:i32=4;
 
 #[link(name="winmm")]
@@ -81,6 +86,8 @@ unsafe extern "system" {
     fn UpdateWindow(window:Handle)->i32;
     fn SetWindowPos(window:Handle,insert_after:Handle,x:i32,y:i32,w:i32,h:i32,flags:u32)->i32;
     fn SetForegroundWindow(window:Handle)->i32;
+    fn GetForegroundWindow()->Handle;
+    fn GetAsyncKeyState(virtual_key:i32)->i16;
     fn PeekMessageA(message:*mut Message,window:Handle,first:u32,last:u32,remove:u32)->i32;
     fn TranslateMessage(message:*const Message)->i32;
     fn DispatchMessageA(message:*const Message)->isize;
@@ -191,12 +198,62 @@ fn mci(command:&str)->Result<String,String>{
     }
     Ok(text)
 }
-fn pump_messages()->Result<(),String>{
+/// Accept any ordinary keyboard key (Esc, Return, Space, letters, arrows,
+/// function keys, ...), but not standalone Ctrl/Shift/Alt/Win. Do not
+/// treat system shortcuts (e.g. Alt+Tab) as a request to skip the AVI.
+fn is_skip_key(vk:u32)->bool{
+    (0x08..=0xFE).contains(&vk)
+        && !matches!(vk,0x10..=0x12|0x5B|0x5C|0xA0..=0xA5)
+}
+fn key_down(vk:i32)->bool{unsafe{GetAsyncKeyState(vk)}<0}
+fn system_shortcut_held()->bool{
+    [VK_CONTROL,VK_MENU,VK_LWIN,VK_RWIN].into_iter().any(key_down)
+}
+fn is_first_keydown(message:u32,vk:usize,lparam:isize)->bool{
+    // Bit 30 is set on auto-repeat. A key already held before playback
+    // must not cause an automatic skip as MCI finishes initializing.
+    message==WM_KEYDOWN && is_skip_key(vk as u32) && (lparam & (1isize<<30))==0
+}
+fn owns_foreground(host:Handle)->bool{
+    // Never steal a key press intended for a different application when
+    // the user Alt+Tabs away from our borderless helper.
+    unsafe{GetForegroundWindow()==host}
+}
+#[derive(Debug,Clone,Copy)]
+struct SkipKey { vk:u32, source:&'static str }
+struct KeyboardEdges { down:[bool;256] }
+impl KeyboardEdges {
+    fn new()->Self{
+        let mut result=Self{down:[false;256]};
+        result.sample(false);
+        result
+    }
+    fn sample(&mut self,active:bool)->Option<SkipKey>{
+        // GetAsyncKeyState catches keys delivered to the MCI child's own
+        // thread, even when they are absent from our thread's PeekMessage.
+        let shortcut=system_shortcut_held();
+        let mut first=None;
+        for vk in 0x08..=0xFE {
+            let pressed=key_down(vk);
+            if active && !shortcut && pressed && !self.down[vk as usize]
+                && is_skip_key(vk as u32) && first.is_none(){
+                first=Some(SkipKey{vk:vk as u32,source:"async_edge"});
+            }
+            self.down[vk as usize]=pressed;
+        }
+        first
+    }
+}
+fn pump_messages(host:Handle,accept_skip:bool)->Result<Option<SkipKey>,String>{
     loop {
         let mut msg=std::mem::MaybeUninit::<Message>::uninit();
-        if unsafe{PeekMessageA(msg.as_mut_ptr(),ptr::null_mut(),0,0,1)}==0{return Ok(());}
+        if unsafe{PeekMessageA(msg.as_mut_ptr(),ptr::null_mut(),0,0,1)}==0{return Ok(None);}
         let msg=unsafe{msg.assume_init()};
         if msg.message==WM_QUIT{return Err("Video player received WM_QUIT".into());}
+        if accept_skip && owns_foreground(host) && !system_shortcut_held()
+            && is_first_keydown(msg.message,msg.wparam,msg.lparam){
+            return Ok(Some(SkipKey{vk:msg.wparam as u32,source:"window_message"}));
+        }
         unsafe{TranslateMessage(&msg);DispatchMessageA(&msg);}
     }
 }
@@ -231,15 +288,36 @@ fn play()->Result<(),String>{
             if let Ok(applied)=mci("where movie destination"){
                 println!("INTRO_FULLSCREEN applied_destination={applied:?}");
             }
+            // Drop any keyboard messages left over from window creation.
+            // Also snapshot held keys; a press *after* playback starts is
+            // required. Repeat messages cannot skip a video by themselves.
+            pump_messages(host.hwnd,false)?;
+            let mut keyboard=KeyboardEdges::new();
             mci("play movie window")?;
             let began=Instant::now();
             let mut last_mode=String::new();
             let mut seen_playing=false;
+            let mut last_status=Instant::now()-Duration::from_millis(100);
             loop {
-                pump_messages()?;
+                let pressed=pump_messages(host.hwnd,true)?
+                    .or_else(||keyboard.sample(owns_foreground(host.hwnd)));
+                if let Some(key)=pressed {
+                    println!("INTRO_VIDEO SKIPPED key_vk=0x{:02X} source={} elapsed_ms={}",key.vk,key.source,began.elapsed().as_millis());
+                    // A skip is normal successful playback completion, not
+                    // an error. Close MCI below before launching CYBER.EXE.
+                    if let Err(e)=mci("stop movie"){
+                        println!("INTRO_VIDEO STOP_WARNING {e}");
+                    }
+                    return Ok(());
+                }
                 if began.elapsed()>Duration::from_secs(90){
                     return Err("External AVI playback exceeded 90 seconds".into());
                 }
+                if last_status.elapsed()<Duration::from_millis(100){
+                    thread::sleep(Duration::from_millis(15));
+                    continue;
+                }
+                last_status=Instant::now();
                 let mode=mci("status movie mode")?;
                 if mode!=last_mode{
                     println!("INTRO_VIDEO mode={mode:?} elapsed_ms={}",began.elapsed().as_millis());
@@ -253,11 +331,13 @@ fn play()->Result<(),String>{
                     println!("INTRO_VIDEO COMPLETE elapsed_ms={} observed_playing={seen_playing}",began.elapsed().as_millis());
                     return Ok(());
                 }
-                thread::sleep(Duration::from_millis(100));
+                thread::sleep(Duration::from_millis(15));
             }
         })();
-        let _=mci("close movie");
-        playback
+        let closed=mci("close movie");
+        // Closing MCI must succeed whether the video ended naturally or
+        // via a key: a game must never start with a live video device.
+        playback.and(closed.map(|_|()))
     })();
     // FullscreenHost is dropped here. Even if video failed, the helper
     // exits before CYBER.EXE starts. No persistent desktop/mode changes.
@@ -291,6 +371,19 @@ mod tests {
         assert_eq!(parse_source_rect("0 0 640 480").unwrap(),(640,480));
         assert!(parse_source_rect("640x480").is_err());
         assert!(parse_source_rect("0 0 -1 480").is_err());
+    }
+    #[test]
+    fn ordinary_keys_skip_but_modifiers_and_mouse_do_not(){
+        for key in [0x1B,0x0D,0x20,0x41,0x25,0x70,0x08,0x30]{
+            assert!(is_skip_key(key),"virtual key {key:X} should skip");
+            assert!(is_first_keydown(WM_KEYDOWN,key as usize,0));
+            assert!(!is_first_keydown(WM_KEYDOWN,key as usize,1isize<<30));
+        }
+        for key in [0x01,0x02,0x10,0x11,0x12,0x5B,0x5C,0xA0,0xA1,0xA2,0xA3,0xA4,0xA5]{
+            assert!(!is_skip_key(key),"virtual key {key:X} must not skip");
+        }
+        assert!(!is_first_keydown(0x0101,0x20,0));
+        assert!(!is_first_keydown(0x0104,0x20,0));
     }
     #[test]
     fn win32_message_layout_is_complete_on_x86(){
