@@ -1,6 +1,6 @@
 [package]
 name = "cyber-gladiators-fix"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
 rust-version = "1.95"
 description = "Windows CUE/BIN installer with timing/no-CD/intro fixes and experimental x86 CDDA FLAC music bridge"
