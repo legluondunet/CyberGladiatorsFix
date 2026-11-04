@@ -44,6 +44,33 @@ With that setting, the launcher still validates the original game executable and
 
 The original USA CD image was used to extract `iq01.dat` read-only; its SHA-256 matches the install manifest. A clean replacement is available from that source, but the launcher itself never automatically restores or overwrites a changed IQ file. This avoids losing any possibly meaningful game state.
 
+## Primary DXVK startup-video fix candidate: isolated AVI player (experimental)
+
+**Root-cause isolation:** The game successfully renders under nGlide DirectX9 → DXVK when `[Video] SkipIntro=1` (user-confirmed, including extended gameplay and CDDA). With `SkipIntro=0`, closing the game's internal `splash4.avi` playback is consistently followed by first-chance stack overflow `0xC00000FD` in DXVK's `d3d9.dll` at RVA `0xBA1E8`, roughly 200 ms later. The same failure persists with no diagnostic Glide hook, at both 60 Hz and desktop 120 Hz, and with the prior deferred-surface experiment. The most useful remaining hypothesis is **graphics/DirectDraw state shared by the MCIAVI video and the game within one process**, not general DXVK incompatibility.
+
+**New opt-in workaround, not yet user-validated:** The PR bundles a tiny *x86 Windows* `CyberGladiatorsIntro.exe`, built from source under `cdda/src/bin/` as part of the same Windows Actions artifact. It plays the untouched `splash4.avi` using the existing system/Wine Video-for-Windows MCI driver in **its own process**. After MCI reports completion and its process exits, the x64 patcher starts the x86 game with the already known, hash-checked `SkipIntro=1` runtime patch and the known working nGlide DirectX9/DXVK path. The separate text INI retains `SkipIntro=0`; after game termination, the launcher restores the known `SkipIntro=0` executable bytes (even after a nonzero game exit, unless the launcher itself is forcibly killed). This avoids in-process AVI/Glide handoff while **retaining the video for the user**. All other game videos remain unchanged.
+
+To test, use the **three files from the same Windows Actions build** — `CyberGladiatorsFix.exe`, `CyberGladiatorsCDDA.dll`, `CyberGladiatorsIntro.exe` — all in the patcher directory. With DXVK enabled and `PROTON_USE_WINED3D` not set in the Lutris runner, set the game-local plain text `CyberGladiatorsFix/CyberGladiatorsFix.ini` as follows:
+
+```ini
+[Video]
+SkipIntro=0
+[Audio]
+EnableCDDA=1
+[Integrity]
+AllowModifiedIQ=1
+```
+
+`AllowModifiedIQ=1` is only needed if the game's IQ records have already changed; it does **not** relax the strict `--verify` command and is independent of video handling. Always back up any changed files before using the override. Then run:
+
+```powershell
+CyberGladiatorsFix.exe --launch --trace --external-intro
+```
+
+The helper writes `CyberGladiatorsIntro.log`; the patcher reports `INTRO_EXTERNAL started`, `INTRO_EXTERNAL exit_status`, `INTRO_EXTERNAL GAME_STARTED`, `INTRO_EXTERNAL RESTORED`, plus existing DXVK evidence and traces. It refuses a missing/invalid x86 helper, unexpected INI settings, MCI errors or a timeout instead of silently skipping an unplayable intro. It waits no longer than 100 seconds and never starts the game until the helper exits successfully. On normal launch, **the game continues to use its original in-process intro**. The experiment does not bundle nGlide, DXVK or codecs, and never edits any `IQ/` asset or the CD manifest.
+
+**Test expectations:** Confirm (1) the AVI is visibly played in the helper's window, (2) the helper closes, (3) the 3D menu loads with DXVK and FLAC CDDA, and (4) closing the game restores the in-game intro state. Successful compilation/CI tests establish only build validity; this user-facing playback sequence needs testing under GE-Proton and eventually Windows.
+
 ## Controlled DXVK compatibility tests (2026-11-04)
 
 The user requested a DXVK solution rather than requiring WineD3D. The nGlide author's official configuration table documents `NGLIDE_BACKEND=0` (automatic), `1` (DirectX) and `2` (Vulkan). **nGlide DirectX9 and nGlide Vulkan are different renderers**. When DXVK is correctly installed and enabled in Wine, nGlide's DirectX9 path should use DXVK's `d3d9.dll`; the native Vulkan path does not use DXVK for this translation.
