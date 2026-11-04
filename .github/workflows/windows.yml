@@ -1,4 +1,4 @@
-name: Windows - x64 installer + x86 CDDA bridge
+name: Windows - single self-contained x64 launcher
 
 on:
   push:
@@ -63,29 +63,33 @@ jobs:
             }
           } finally { Pop-Location }
 
-      - name: Stage Windows launcher, CDDA DLL and isolated x86 intro player
+      - name: Verify bundled x86 components and temporary intro lifecycle
+        shell: pwsh
+        run: |
+          & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --check-bundle
+          if ($LASTEXITCODE -ne 0) { throw "Embedded x86 runtime verification failed" }
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsCDDA.dll") {
+            throw "Unexpected external CDDA DLL in the user distribution folder"
+          }
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsIntro.exe") {
+            throw "Unexpected external intro EXE in the user distribution folder"
+          }
+
+      - name: Stage the single distributable Windows EXE
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe dist/
-          Copy-Item cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsCDDA.dll dist/
-          Copy-Item cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsIntro.exe dist/
-          Copy-Item CyberGladiatorsFix-Wine.sh dist/
-          $player = (Get-Item dist/CyberGladiatorsIntro.exe).Length
-          if ($player -lt 4096) { throw "Isolated intro player unexpectedly small" }
-          Write-Host "x86 intro player bytes: $player"
-          $dll = (Get-Item dist/CyberGladiatorsCDDA.dll).Length
-          if ($dll -lt 4096) { throw "CDDA DLL unexpectedly small" }
-          Write-Host "CDDA DLL bytes: $dll"
-          $dumpbin = Get-ChildItem 'C:/Program Files/Microsoft Visual Studio' -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match 'Hostx64[\\/]x86' } | Select-Object -First 1
-          if ($dumpbin) { & $dumpbin.FullName /exports dist/CyberGladiatorsCDDA.dll }
-          else { Write-Host "dumpbin not on PATH; architecture verified by unit tests" }
+          $files = @(Get-ChildItem dist -File)
+          if ($files.Count -ne 1 -or $files[0].Name -ne "CyberGladiatorsFix.exe") {
+            throw "Distribution must contain exactly one executable"
+          }
+          Write-Host "Self-contained x64 launcher: $($files[0].Length) bytes, with embedded verified x86 DLL and AVI helper"
 
-      - name: Upload Windows x64 installer and x86 CDDA DLL
+      - name: Upload self-contained Windows x64 EXE
         uses: actions/upload-artifact@v4
         with:
-          name: CyberGladiatorsFix-Windows-x64
+          name: CyberGladiatorsFix-Windows-x64-OneFile
           path: dist/
           if-no-files-found: error
           retention-days: 30
