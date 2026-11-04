@@ -204,7 +204,7 @@ pub fn after_video_close(){
     window_snapshot("immediately after MCI close");
     thread::spawn(||{
         let start=Instant::now();
-        for delay in [100u64,500,1500,4000] {
+        for delay in [100u64,500,1500,4000,8000] {
             let target=Duration::from_millis(delay);
             if let Some(remaining)=target.checked_sub(start.elapsed()){
                 thread::sleep(remaining);
