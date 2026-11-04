@@ -42,9 +42,10 @@ and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
 CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1;
 [Audio] EnableCDDA=0 (safe system WinMM) or 1 (experimental FLAC bridge).
 The --launch command reads SkipIntro and EnableCDDA before starting the game;
---launch --trace captures Wine exceptions and DLL loads in CyberGladiatorsFix-WineTrace.log
-beside this launcher, with NGLIDE_BACKEND=0 (auto) instead of forced Vulkan.
-close the game before manually changing saved settings.
+Both --launch and --launch --trace now use NGLIDE_BACKEND=0 (automatic).
+--launch --trace additionally captures Wine exceptions and DLL loads in
+CyberGladiatorsFix-WineTrace.log beside this launcher.
+Close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
 CyberGladiatorsCDDA.dll must be beside this installer. The bridge writes
