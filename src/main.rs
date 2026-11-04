@@ -27,6 +27,7 @@ Usage:
   CyberGladiatorsFix.exe --upgrade-cdda
   CyberGladiatorsFix.exe --max-graphics
   CyberGladiatorsFix.exe --launch [--3dfx-logo|--trace]\n  CyberGladiatorsFix.exe --launch --trace --passthru-noop
+  CyberGladiatorsFix.exe --launch --trace --no-glide-hook
   CyberGladiatorsFix.exe --launch --trace --video-delay=100|250|500|1000
   CyberGladiatorsFix.exe --help
   CyberGladiatorsFix.exe --version
@@ -49,6 +50,10 @@ Both --launch and --launch --trace now use NGLIDE_BACKEND=0 (automatic).
 CyberGladiatorsFix-WineTrace.log beside this launcher.
 --launch --trace --passthru-noop tests bypassing only grSstPassthruMode(1)
 after the intro AVI, using an in-memory diagnostic hook; no files are patched.
+--launch --trace --no-glide-hook preserves AVI, window and crash telemetry
+but leaves the game's Glide function pointer unchanged. Requires
+SkipIntro=0 and EnableCDDA=1. Compare with --launch --trace to isolate
+effects of the diagnostic Glide hook.
 --launch --trace --video-delay=N waits N milliseconds after native WinMM
 closes the opening AVI and BEFORE the game can restore Glide; only
 100, 250, 500 or 1000 are allowed. Requires SkipIntro=0 and EnableCDDA=1.
@@ -110,6 +115,16 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let mut child=verify::launch(root,false,true,false)?;
             show(&format!("Started CYBER.EXE diagnostic mode (PID {}); nGlide backend AUTO, Wine trace at {}",
                 child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()),root);
+            return wait_diagnostic(child,root);
+        },
+        [one,two,three] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--trace")
+            && three.to_str()==Some("--no-glide-hook")=>{
+            let child=verify::launch_with_options(root,false,true,false,0,true)?;
+            show(&format!(
+                "Started CYBER.EXE native Glide control (no probe, PID {}); Wine trace at {}",
+                child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()
+            ),root);
             return wait_diagnostic(child,root);
         },
         [one,two,three] if one.to_str()==Some("--launch")
@@ -203,5 +218,6 @@ mod diagnostics_tests {
         assert!(HELP.contains("--launch --trace --passthru-noop"));
         assert!(HELP.contains("--upgrade-cdda"));
         assert!(HELP.contains("--video-delay=100|250|500|1000"));
+        assert!(HELP.contains("--no-glide-hook"));
     }
 }
