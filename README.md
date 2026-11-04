@@ -79,6 +79,18 @@ The original installer never silently overwrites an unrecognized 32-bit DLL, a m
 
 **Do not remove or modify any `IQ/` original game data files** to resolve integrity errors. Preserve their current contents and inspect the mismatch in the log.
 
+### DXVK native-intro root-cause investigation (developer only)
+
+The normal `--launch` path retains the isolated AVI playback workaround. To investigate **why the original 1996 in-process AVI → nGlide Direct3D9/DXVK transition crashes**, use the explicit diagnostic command, not the external video workaround:
+
+```sh
+WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --dxvk-rootcause
+```
+
+This **deliberately exercises the known potentially crashing path**: `[Video] SkipIntro=0`, `[Audio] EnableCDDA=1`, native game `splash4.avi`, forced nGlide DirectX9/DXVK, no Glide-pointer hook, no black curtain and no speculative DXVK configuration tweak. It refuses other INI states instead of altering user preferences. The launcher captures Wine exception messages, DXVK's fresh D3D9 log, exact first-chance fault module/RVA, and, if the original thread memory is still available, the instruction bytes and **heuristic** return-address candidates from the exhausted x86 stack. Those samples are not a validated call stack or proof of a DXVK bug. All collected text goes to **the same** `CyberGladiatorsFix.log` beside the launcher. The user's game and `IQ/` data are not changed by the instrumentation.
+
+The original observations are: with `SkipIntro=1`, D3D9/DXVK works; with the in-game AVI enabled, an exception `0xC00000FD` occurs about 200 ms after MCI `close movie` / `close avivideo` in the GE-Proton DXVK x86 `d3d9.dll` at RVA `0xBA1E8`. The issue persists with the optional Glide observer disabled and with desktop refresh-rate selection. It has **not** yet been established whether the recursive call originates in DXVK, nGlide, or Wine's video/window interaction. If the stack sampling is unavailable or ambiguous, obtain a true first-chance `bt` using WineDbg with the same runner, or analyze the exact loaded x86 `d3d9.dll` build rather than guessing a function from its RVA.
+
 ## One diagnostic log
 
 Every invocation (except `--help` and `--version`) creates a fresh `CyberGladiatorsFix.log` **next to `CyberGladiatorsFix.exe`**. The header includes version/commit, timestamp, runtime (Windows or Wine), CPU, RAM, Win32 GPU/display size/refresh, the configured intro/CDDA/IQ policy, internal game graphics settings and effective nGlide options. Where supplied by the optional shell wrapper, it includes Linux distribution/kernel. During play, the log receives video, CDDA and exit messages; `--trace` additionally appends Wine information and collected DXVK D3D9 logs.
