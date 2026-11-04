@@ -96,6 +96,18 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
     patch::set_skip_intro(&exe,skip)?;
     verify(root)?;
     if logo{nglide::check_logo(&game)?;}
+    if passthru_noop {
+        let hash=cdda::matching_installed_hash(root,&game)?;
+        // Log the actual game-folder INI, not a similarly named file beside
+        // the patcher. The previous cumulative test lacked this distinction.
+        crate::show(&format!(
+            "PASS-THROUGH A/B PREREQUISITES: game_ini={} SkipIntro={} EnableCDDA={}; bundled and installed CDDA DLL SHA-256={} (identical); trace=1 no-op=1",
+            game.join("CyberGladiatorsFix.ini").display(),
+            if skip{1}else{0},
+            if enable_cdda{1}else{0},
+            hash
+        ),root);
+    }
     let mut cmd=Command::new(game.join("cyber.exe"));
     cmd.current_dir(&game);
     if trace {
