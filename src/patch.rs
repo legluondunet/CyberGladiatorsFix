@@ -62,6 +62,9 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
     }
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
+    if hash==SPEED_ONLY {
+        return Err("Existing CYBER.EXE has speed fix only. Run CyberGladiatorsFix.exe without arguments once to upgrade with the no-CD check".into());
+    }
     if hash!=PATCHED {return Err(format!("Unsupported or unpatched CYBER.EXE: SHA-256 {hash}; expected {PATCHED}"));}
     let backup=backup_path(path);
     let backup_meta=fs::symlink_metadata(&backup)
