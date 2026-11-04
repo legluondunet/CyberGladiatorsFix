@@ -39,16 +39,28 @@ fn enabled()->bool{
 }
 fn report(message:&str){crate::log(&format!("GLIDE_RESTORE {message}"));}
 
-/// Exact ABI of _grSstPassthruMode@4. Do not alter the mode or the return
-/// behavior: this observer only brackets the existing nGlide call.
+/// Exact ABI of _grSstPassthruMode@4. The default trace always delegates
+/// to the original export without modifying arguments or return behavior.
+/// An explicitly requested *diagnostic-only* A/B test can omit solely the
+/// mode=1 call made after AVI cleanup (no on-disk patch).
 unsafe extern "system" fn passthru_probe(mode:i32) {
     report(&format!("PASSTHRU BEGIN mode={mode} (0=VGA, 1=3dfx)"));
-    let original=ORIGINAL.load(Ordering::Acquire);
-    if original!=0{
-        let actual:unsafe extern "system" fn(i32)=std::mem::transmute(original);
-        actual(mode);
+    if should_bypass(mode,experimental_bypass_enabled()){
+        report("PASSTHRU BYPASSED mode=1 (diagnostic A/B test)");
+    } else {
+        let original=ORIGINAL.load(Ordering::Acquire);
+        if original!=0{
+            let actual:unsafe extern "system" fn(i32)=std::mem::transmute(original);
+            actual(mode);
+        }
     }
     report(&format!("PASSTHRU END mode={mode}"));
+}
+fn experimental_bypass_enabled()->bool {
+    enabled() && std::env::var("CYBER_GLIDE_PASSTHRU_NOOP").is_ok_and(|v|v=="1")
+}
+fn should_bypass(mode:i32,requested:bool)->bool{
+    mode==1 && requested
 }
 
 /// Hook exactly one verified game-owned pointer; never change glide.dll,
@@ -96,7 +108,13 @@ pub fn maybe_install(){
     if !enabled(){return;}
     let installed=*INSTALLED.get_or_init(||{
         match install(){
-            Ok(())=>{report("pass-through call boundary tracing active");true},
+            Ok(())=>{
+                report("pass-through call boundary tracing active");
+                if experimental_bypass_enabled(){
+                    report("experimental mode=1 pass-through NO-OP enabled (trace-only)");
+                }
+                true
+            },
             Err(e)=>{report(&format!("pass-through tracing unavailable: {e}"));false},
         }
     });
@@ -147,6 +165,14 @@ mod tests{
         assert_eq!(EXPECTED_IMAGE_BASE+PASSTHRU_WRAPPER_RVA,0x0043_519d);
         assert_eq!(EXPECTED_IMAGE_BASE+PASSTHRU_SLOT_RVA,0x0044_ab4c);
         assert_eq!(EXPECTED_IMAGE_BASE+MAIN_WINDOW_RVA,0x0052_8018);
+    }
+    #[test]
+    fn experimental_bypass_only_affects_mode_one(){
+        assert!(!should_bypass(0,true));
+        assert!(should_bypass(1,true));
+        assert!(!should_bypass(1,false));
+        assert!(!should_bypass(2,true));
+        assert!(!should_bypass(-1,true));
     }
     #[test]
     fn tracing_is_disabled_unless_opted_in(){
