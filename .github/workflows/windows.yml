@@ -52,7 +52,10 @@ jobs:
           $dll = (Get-Item dist/CyberGladiatorsCDDA.dll).Length
           if ($dll -lt 4096) { throw "CDDA DLL unexpectedly small" }
           Write-Host "CDDA DLL bytes: $dll"
-          dumpbin /exports dist/CyberGladiatorsCDDA.dll
+          $dumpbin = Get-ChildItem 'C:/Program Files/Microsoft Visual Studio' -Recurse -Filter dumpbin.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match 'Hostx64[\\/]x86' } | Select-Object -First 1
+          if ($dumpbin) { & $dumpbin.FullName /exports dist/CyberGladiatorsCDDA.dll }
+          else { Write-Host "dumpbin not on PATH; architecture verified by unit tests" }
 
       - name: Upload Windows x64 installer and x86 CDDA DLL
         uses: actions/upload-artifact@v4
