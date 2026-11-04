@@ -56,6 +56,9 @@ extern "system" {
     fn GetModuleHandleExA(flags:u32,name:*const u8,module:*mut *mut c_void)->i32;
     fn GetModuleHandleA(name:*const u8)->*mut c_void;
     fn GetModuleFileNameA(module:*mut c_void,name:*mut u8,size:u32)->u32;
+    fn GetCurrentProcess()->*mut c_void;
+    fn ReadProcessMemory(process:*mut c_void,address:*const c_void,
+        output:*mut c_void,size:usize,read:*mut usize)->i32;
 }
 fn interesting(code:u32)->bool {
     matches!(code,0xc000_0005|0xc000_00fd|0xc000_001d|0xc000_0094|0xc000_0409)
@@ -156,6 +159,95 @@ pub fn d3d9_identity(stage:&str){
         module as usize
     ));
 }
+// All potentially expensive work is strictly outside the VEH: our sampler
+// has its own healthy stack. A stack overflow may already have destroyed
+// the failing thread's stack; all reads fail safely through the Win32 API.
+fn read_memory(address:usize,output:&mut [u8])->usize{
+    if address<0x10000||output.is_empty(){return 0;}
+    let mut read=0usize;
+    let ok=unsafe{ReadProcessMemory(
+        GetCurrentProcess(),address as *const c_void,
+        output.as_mut_ptr().cast(),output.len(),&mut read)};
+    if ok!=0{read.min(output.len())}else{0}
+}
+fn candidate_module_rva(address:usize)->Option<String>{
+    if address<0x10000 {return None;}
+    let mut module=std::ptr::null_mut();
+    if unsafe{GetModuleHandleExA(FROM_ADDRESS|UNCHANGED_REFCOUNT,
+        address as *const u8,&mut module)}==0||module.is_null(){return None;}
+    let mut name=[0u8;512];
+    let len=unsafe{GetModuleFileNameA(module,name.as_mut_ptr(),name.len() as u32)} as usize;
+    if len==0||len>=name.len(){return None;}
+    let path=String::from_utf8_lossy(&name[..len]);
+    let basename=path.rsplit(['\\','/']).next().unwrap_or("unknown");
+    let relevant=["d3d9.dll","glide.dll","cyber.exe","ddraw.dll",
+        "winmm.dll","user32.dll","ntdll.dll","gdi32.dll","dxgi.dll"];
+    if !relevant.iter().any(|n|basename.eq_ignore_ascii_case(n)){return None;}
+    Some(format!("{basename}+0x{:x}",address.saturating_sub(module as usize)))
+}
+fn exception_forensics(eip:usize,esp:usize,ebp:usize){
+    // Record exact machine code *at* the faulting instruction, not a guess
+    // about the DXVK symbol or cause. Reading can fail if the process is
+    // already tearing down its DLLs.
+    let mut bytes=[0u8;64];
+    let n=read_memory(eip,&mut bytes);
+    if n>0 {
+        let hex=bytes[..n].iter().map(|byte|format!("{byte:02x}"))
+            .collect::<Vec<_>>().join(" ");
+        crate::log(&format!(
+            "DXVK_FAULT_CODE eip={} sampled_bytes={n} hex={hex} (read_only, not_symbolized)",
+            candidate_module_rva(eip).unwrap_or_else(||format!("{eip:#x}"))
+        ));
+    }else{
+        crate::log("DXVK_FAULT_CODE unavailable (faulting code already unmapped)");
+    }
+    // Sample a bounded region of the *faulting thread's* stack using
+    // ReadProcessMemory. Raw stack data can include private game/user data,
+    // so log ONLY recognizable module+RVA address candidates, never the
+    // contents of arbitrary stack words. This is a heuristic snapshot,
+    // not a validated unwind or proof of recursive call frames.
+    const MAX_WORDS:usize=128;
+    let mut stack=[0u8;MAX_WORDS*4];
+    let mut n=read_memory(esp,&mut stack);
+    if n==0{
+        // A stack-overflow ESP can sit at a guard page boundary. A second
+        // bounded probe above it may still recover a small readable range.
+        n=read_memory(esp.saturating_add(128),&mut stack);
+    }
+    let mut candidates=Vec::new();
+    for (i,word) in stack[..n-n%4].chunks_exact(4).enumerate() {
+        let address=u32::from_le_bytes(word.try_into().unwrap()) as usize;
+        if let Some(module)=candidate_module_rva(address) {
+            candidates.push(format!("slot={i}:{module}"));
+            if candidates.len()>=36{break;}
+        }
+    }
+    crate::log(&format!(
+        "DXVK_STACK_CANDIDATES exception_esp={esp:#x} bytes_sampled={n} module_addresses={} [{}] heuristic_only_not_backtrace=1",
+        candidates.len(),candidates.join(", ")
+    ));
+    // When available, an x86 EBP-chain can provide more useful return
+    // addresses than raw stack words. Optimized DXVK can omit EBP frames,
+    // so absence of a chain is inconclusive.
+    let mut frame=ebp;
+    let mut chain=Vec::new();
+    for _ in 0..20{
+        if frame<0x10000 {break;}
+        let mut pair=[0u8;8];
+        if read_memory(frame,&mut pair)!=pair.len(){break;}
+        let next=u32::from_le_bytes(pair[..4].try_into().unwrap()) as usize;
+        let ret=u32::from_le_bytes(pair[4..].try_into().unwrap()) as usize;
+        if let Some(name)=candidate_module_rva(ret){
+            chain.push(name);
+        }
+        if next<=frame || next-frame>0x100000{break;}
+        frame=next;
+    }
+    crate::log(&format!(
+        "DXVK_EBP_CHAIN starting_ebp={ebp:#x} probable_returns={} [{}] optimized_code_may_omit_ebp=1",
+        chain.len(),chain.join(" <- ")
+    ));
+}
 /// Called by the existing, read-only AVI-close sampler on a different thread.
 /// Do not log from the vectored exception callback: stack may be exhausted.
 pub fn snapshot(stage:&str){
@@ -176,6 +268,9 @@ pub fn snapshot(stage:&str){
         "EXCEPTION_CAPTURE stage={stage:?} first_chance_code={code:#010x} tid={thread} instruction={address:#x} module=[{}] context_eip={eip:#x} context_esp={esp:#x} context_ebp={ebp:#x} access={access} observer_only=1",
         resolve_module(address)
     ));
+    if code==STACK_OVERFLOW {
+        exception_forensics(eip as usize,esp as usize,ebp as usize);
+    }
 }
 pub fn maybe_install(){
     if std::env::var("CYBER_GLIDE_TRACE").as_deref()!=Ok("1"){return;}
