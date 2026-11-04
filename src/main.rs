@@ -162,7 +162,8 @@ fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
 }
 /// One shared implementation for normal and trace isolated-intro launch.
-/// This is the same successful video/DXVK workaround from the user's tests.
+/// The isolated AVI/DXVK approach is user-confirmed; the new black
+/// curtain handoff is pending visual validation under Wine.
 fn isolated_intro_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     // The AVI helper closes MCI and keeps its original black fullscreen
     // window on screen while the separate DXVK game initializes. A single
