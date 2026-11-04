@@ -75,6 +75,20 @@ fn parse_video_delay(arg:&str)->Option<u64>{
     let number=arg.strip_prefix("--video-delay=")?.parse::<u64>().ok()?;
     matches!(number,100|250|500|1000).then_some(number)
 }
+fn wait_diagnostic(mut child:std::process::Child,root:&Path)->Result<(),String>{
+    let pid=child.id();
+    let start=std::time::Instant::now();
+    let status=child.wait().map_err(|e|e.to_string())?;
+    show(&format!(
+        "DIAGNOSTIC_EXIT pid={pid} exit_status={status} elapsed_ms={} expected_bridge_log={}",
+        start.elapsed().as_millis(),
+        root.join(install::DIR).join("CyberGladiatorsCDDA.log").display()
+    ),root);
+    if !status.success(){
+        return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));
+    }
+    Ok(())
+}
 fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
     match args{
@@ -96,9 +110,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let mut child=verify::launch(root,false,true,false)?;
             show(&format!("Started CYBER.EXE diagnostic mode (PID {}); nGlide backend AUTO, Wine trace at {}",
                 child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()),root);
-            let status=child.wait().map_err(|e|e.to_string())?;
-            if !status.success(){return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));}
-            return Ok(());
+            return wait_diagnostic(child,root);
         },
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
@@ -109,18 +121,14 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
                 "Started CYBER.EXE video-close delay experiment ({delay} ms, PID {}); Wine trace at {}",
                 child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()
             ),root);
-            let status=child.wait().map_err(|e|e.to_string())?;
-            if !status.success(){return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));}
-            return Ok(());
+            return wait_diagnostic(child,root);
         },
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace") && three.to_str()==Some("--passthru-noop")=>{
             let mut child=verify::launch(root,false,true,true)?;
             show(&format!("Started CYBER.EXE diagnostic pass-through NO-OP mode (PID {}); Wine trace at {}",
                 child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()),root);
-            let status=child.wait().map_err(|e|e.to_string())?;
-            if !status.success(){return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));}
-            return Ok(());
+            return wait_diagnostic(child,root);
         },
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>{
             let mut child=verify::launch(root,true,false,false)?;
