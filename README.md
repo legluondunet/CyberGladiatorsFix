@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.5 (CDDA bridge update fix for existing installations).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.6 (nGlide auto backend for normal Wine launches).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -65,9 +65,9 @@ If `--launch` still exits with `0xC0000028` (STATUS_BAD_STACK), this status alon
 .\CyberGladiatorsFix.exe --launch --trace
 ```
 
-This diagnostic launch still verifies the exact known game executable, keeps the original game assets and `IQ/` files untouched, and respects `[Video] SkipIntro` and `[Audio] EnableCDDA`. **Only in trace mode**, it changes `NGLIDE_BACKEND` to `0` (automatic), instead of requiring Vulkan just because `vulkan-1.dll` loads. The game is launched with `WINEDEBUG=+seh,+loaddll` and child stdout/stderr are written to `CyberGladiatorsFix-WineTrace.log` beside the patcher. The trace file is replaced on each diagnostic run. Other nGlide settings remain unchanged. This helps separate graphics-backend issues from the original Win32 stack/exception problem; it does **not** claim to fix the crash. If the crash persists, share the Wine trace for analysis. On native Windows the Wine debug variable is ignored, but the launcher's stdout/stderr capture still works.
+This diagnostic launch still verifies the exact known game executable, keeps the original game assets and `IQ/` files untouched, and respects `[Video] SkipIntro` and `[Audio] EnableCDDA`. **Both normal and trace launches** now use `NGLIDE_BACKEND=0` (automatic) in v0.2.6. Previous builds forced Vulkan in normal mode whenever `vulkan-1.dll` loaded, even when Vulkan graphics initialization failed. The game is launched with `WINEDEBUG=+seh,+loaddll` and child stdout/stderr are written to `CyberGladiatorsFix-WineTrace.log` beside the patcher. The trace file is replaced on each diagnostic run. Other nGlide settings remain unchanged. This helps separate graphics-backend issues from the original Win32 stack/exception problem; it does **not** claim to fix the crash. If the crash persists, share the Wine trace for analysis. On native Windows the Wine debug variable is ignored, but the launcher's stdout/stderr capture still works.
 
-Normal `--launch` remains identical to earlier versions, with the ScorchedPlanetFix-style per-game Vulkan selection.
+**From v0.2.6**, normal `--launch` uses the same automatic nGlide backend as `--trace`, without setting `WINEDEBUG` or capturing diagnostics. Other nGlide settings are unchanged. The successful trace-mode comparison points to Vulkan backend selection as the likely cause of the startup issue; a no-trace v0.2.6 gameplay test is required for confirmation.
 
 ## Diagnosing startup without the experimental CDDA bridge (v0.2.3)
 
@@ -107,9 +107,15 @@ CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in t
 
 On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
 
+## Normal startup graphics compatibility (v0.2.6)
+
+Under Wine, the user confirmed that `CyberGladiatorsFix.exe --launch --trace` starts Cyber Gladiators and plays CDDA music at maximum graphics, while `CyberGladiatorsFix.exe --launch` from v0.2.5 does not start. The principal process-setting difference was `NGLIDE_BACKEND`: normal launch forced Vulkan (`2`) whenever a Vulkan loader was available; trace used nGlide automatic backend (`0`). **This suggests a backend incompatibility, but the previous trace mode also enabled Wine debug logging, so Vulkan has not been isolated as the sole cause.**
+
+From v0.2.6, both launch paths select `NGLIDE_BACKEND=0`. The ordinary `--launch` path still has **no** `WINEDEBUG` logging and does not redirect child output; `--launch --trace` remains available for deeper diagnostics. No game asset or binary patch changes are needed. Test `--launch` with `[Audio] EnableCDDA=1` to validate the no-trace startup behavior. ScorchedPlanetFix retains its own independent Vulkan selection.
+
 ## nGlide
 
-The launcher uses the same **process-local** nGlide settings as ScorchedPlanetFix, without editing the Windows/Wine registry: `NGLIDE_BACKEND=2` (Vulkan) if `vulkan-1.dll` can be loaded, otherwise `0` (automatic); `NGLIDE_RESOLUTION=1` (desktop), `NGLIDE_ASPECT=1` (correction), `NGLIDE_REFRESH=2` (60 Hz), `NGLIDE_VSYNC=1` (enabled), `NGLIDE_GAMMA=5` (gamma 1.0), and `NGLIDE_SPLASH=0` unless `--3dfx-logo` is explicitly requested. A loadable Vulkan DLL does not guarantee a working GPU driver. These parameters affect Glide rendering only; the game's AVI playback uses a separate MCI/Video-for-Windows path.
+The launcher applies process-local nGlide settings without editing the Windows/Wine registry: **`NGLIDE_BACKEND=0` (automatic, on normal and trace launches)**, `NGLIDE_RESOLUTION=1` (desktop), `NGLIDE_ASPECT=1` (correction), `NGLIDE_REFRESH=2` (60 Hz), `NGLIDE_VSYNC=1` (enabled), `NGLIDE_GAMMA=5` (gamma 1.0), and `NGLIDE_SPLASH=0` unless `--3dfx-logo` is explicitly requested. All settings other than the backend are unchanged from ScorchedPlanetFix. Forcing Vulkan based on `vulkan-1.dll` availability previously correlated with a Wine startup failure; the automatic renderer fixed the problem in `--trace` mode. Normal-mode success must still be confirmed with v0.2.6. These parameters affect Glide rendering only; AVI playback uses a separate MCI/Video-for-Windows path.
 
 Install the **official nGlide** from [Zeus Software](https://www.zeus-software.com/downloads/nglide). The patcher can copy an already-installed 32-bit `glide.dll` from next to the patcher or from Windows `SysWOW64` into **CyberGladiatorsFix/**. It does not bundle, download or install proprietary DLLs. A historical CD `GLIDE.DLL` is explicitly excluded, so that it cannot replace the modern wrapper.
 
