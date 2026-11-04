@@ -88,20 +88,20 @@ pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,vi
 }
 /// Opt-in comparison of nGlide Direct3D9 (DXVK under a configured Wine prefix)
 /// versus nGlide's direct Vulkan renderer. Never assume D3D9 implies DXVK.
-pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_dialog:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_dialog)
+pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool)->Result<Child,String>{
+    launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface)
 }
-fn validate_renderer_test(backend:Option<&str>,dxvk_dialog:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
-    if backend.is_some_and(|b|!matches!(b,"1"|"2")) || (dxvk_dialog && backend!=Some("1")){
-        return Err("Invalid rendering experiment: nGlide backend must be 1 (DirectX) or 2 (Vulkan); dialog mode requires DirectX".into());
+fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
+    if backend.is_some_and(|b|!matches!(b,"1"|"2")) || (dxvk_defer_surface && backend!=Some("1")){
+        return Err("Invalid rendering experiment: nGlide backend must be 1 (DirectX) or 2 (Vulkan); deferred surface creation requires DirectX".into());
     }
     if backend.is_some() && (!trace||!no_glide_hook||logo||passthru_noop||video_delay_ms!=0){
         return Err("Renderer experiments require trace mode with the diagnostic Glide hook disabled".into());
     }
     Ok(())
 }
-fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_dialog:bool)->Result<Child,String>{
-    validate_renderer_test(backend_override,dxvk_dialog,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool)->Result<Child,String>{
+    validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
     if no_glide_hook && (!trace||logo||passthru_noop||video_delay_ms!=0){
         return Err("--no-glide-hook requires --launch --trace without other experiments".into());
     }
@@ -171,10 +171,11 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
                 // DLL implements DXVK; do not mistake a D3D9 selection for it.
                 cmd.env("DXVK_HUD","version,devinfo,fps");
                 cmd.env("DXVK_LOG_LEVEL","info");
-                if dxvk_dialog {
-                    // Experimental DXVK fullscreen/swapchain compatibility.
-                    // No persistent dxvk.conf or global registry change.
-                    cmd.env("DXVK_CONFIG","d3d9.enableDialogMode = True");
+                if dxvk_defer_surface {
+                    // Current DXVK option for games that begin rendering through
+                    // another graphics API. Defer creating the VkSurface
+                    // until the first D3D9 present. No persistent changes.
+                    cmd.env("DXVK_CONFIG","d3d9.deferSurfaceCreation = True");
                 }
             }
         }
@@ -207,7 +208,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             Ok(_)=>"other",Err(_)=>"unset",
         };
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; DXVK_DIALOG_MODE={dxvk_dialog}; DXVK_DIAGNOSTICS={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
