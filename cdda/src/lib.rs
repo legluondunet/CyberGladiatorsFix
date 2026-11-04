@@ -8,6 +8,7 @@
 mod player;
 mod video_trace;
 mod glide_trace;
+mod exception_trace;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
@@ -343,6 +344,7 @@ pub unsafe extern "system" fn mciSendStringA(
     };
     if let Some(ref text)=command {
         if text.trim().eq_ignore_ascii_case("open avivideo"){
+            exception_trace::maybe_install();
             glide_trace::maybe_install();
         }
         if let Some(entry)=video_trace::before(text){log(&entry);}
