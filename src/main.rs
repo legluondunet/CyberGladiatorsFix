@@ -80,6 +80,17 @@ fn parse_video_delay(arg:&str)->Option<u64>{
     let number=arg.strip_prefix("--video-delay=")?.parse::<u64>().ok()?;
     matches!(number,100|250|500|1000).then_some(number)
 }
+fn wait_game(mut child:std::process::Child,root:&Path)->Result<(),String>{
+    let pid=child.id();
+    let start=std::time::Instant::now();
+    let status=child.wait().map_err(|e|e.to_string())?;
+    show(&format!(
+        "GAME_EXIT pid={pid} exit_status={status} elapsed_ms={}",
+        start.elapsed().as_millis()
+    ),root);
+    if !status.success(){return Err(format!("Game exited with status {status}"));}
+    Ok(())
+}
 fn wait_diagnostic(mut child:std::process::Child,root:&Path)->Result<(),String>{
     let pid=child.id();
     let start=std::time::Instant::now();
@@ -107,9 +118,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--launch")=>{
             let mut child=verify::launch(root,false,false,false)?;
             show(&format!("Started CYBER.EXE (PID {})",child.id()),root);
-            let status=child.wait().map_err(|e|e.to_string())?;
-            if !status.success(){return Err(format!("Game exited with status {status}"));}
-            return Ok(());
+            return wait_game(child,root);
         },
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>{
             let mut child=verify::launch(root,false,true,false)?;
@@ -148,9 +157,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>{
             let mut child=verify::launch(root,true,false,false)?;
             show(&format!("Started CYBER.EXE with 3dfx splash (PID {})",child.id()),root);
-            let status=child.wait().map_err(|e|e.to_string())?;
-            if !status.success(){return Err(format!("Game exited with status {status}"));}
-            return Ok(());
+            return wait_game(child,root);
         },
         _=>{},
     }
