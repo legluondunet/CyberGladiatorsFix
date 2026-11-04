@@ -13,6 +13,7 @@ mod patch;
 mod verify;
 mod intro;
 mod diagnostics;
+mod bundle;
 
 use std::ffi::OsString;
 use std::fs;
@@ -201,27 +202,66 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
         }
     }
 }
+/// The normal user launch keeps the intro in an isolated x86 process.
+fn user_launch(root:&Path,trace:bool)->Result<(),String>{
+    let game=root.join(install::DIR);
+    settings::ensure(&game)?;
+    if !settings::read(&game)?{
+        return isolated_intro_launch(root,trace);
+    }
+    show("INTRO skipped by user's [Video] SkipIntro=1; launching game without AVI",root);
+    let child=verify::launch(root,false,trace,false)?;
+    show(&format!("GAME_STARTED pid={} intro_skipped=1 trace={trace}",child.id()),root);
+    if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
+}
+/// One shared implementation for normal and trace isolated-intro launch.
+/// This is the same successful video/DXVK workaround from the user's tests.
+fn isolated_intro_launch(root:&Path,trace:bool)->Result<(),String>{
+    intro::play_before_game(root)?;
+    let exe=root.join(install::DIR).join("cyber.exe");
+    let launched=verify::launch_after_external_intro(root,trace);
+    let (child,dxvk_logs)=match launched{
+        Ok(pair)=>pair,
+        Err(e)=>{
+            // Attempt to restore the recognized original intro patch if
+            // game creation failed after applying the skip override.
+            let _=patch::set_skip_intro(&exe,false);
+            return Err(e);
+        }
+    };
+    show(&format!(
+        "INTRO_EXTERNAL GAME_STARTED pid={} runtime_intro_skip=1 trace={} renderer=nGlide-D3D9 (DXVK when configured)",
+        child.id(),trace
+    ),root);
+    let result=if trace{wait_diagnostic(child,root)}else{wait_game(child,root)};
+    report_dxvk_evidence(root,dxvk_logs);
+    let restore=patch::set_skip_intro(&exe,false);
+    match &restore{
+        Ok(_)=>show("INTRO_EXTERNAL RESTORED original in-game intro patch; user INI unchanged",root),
+        Err(e)=>show(&format!("INTRO_EXTERNAL RESTORE_FAILED: {e}; next launch will reapply INI"),root),
+    }
+    restore?;
+    result
+}
 fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
     match args{
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
+        [one] if one.to_str()==Some("--check-bundle")=>{
+            let report=bundle::describe()?;
+            show(&report,root);
+            return Ok(());
+        },
         [one] if one.to_str()==Some("--verify")=>{let r=verify::verify(root)?;show(&r,root);return Ok(());},
         [one] if one.to_str()==Some("--max-graphics")=>{
             let r=graphics::maximize_saved(&root.join(install::DIR))?;
             show(&r,root);return Ok(());
         },
-        [one] if one.to_str()==Some("--launch")=>{
-            let mut child=verify::launch(root,false,false,false)?;
-            show(&format!("Started CYBER.EXE (PID {})",child.id()),root);
-            return wait_game(child,root);
-        },
-        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>{
-            let mut child=verify::launch(root,false,true,false)?;
-            show(&format!("Started CYBER.EXE diagnostic mode (PID {}); nGlide backend AUTO, Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix.log").display()),root);
-            return wait_diagnostic(child,root);
-        },
+        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false),
+        [one] if one.to_str()==Some("--trace")=>return user_launch(root,true),
+        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>
+            return user_launch(root,true),
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
             && three.to_str()==Some("--no-glide-hook")=>{
@@ -234,36 +274,8 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
-            && three.to_str()==Some("--external-intro")=>{
-            // Isolate 1996 MCIAVI and DXVK in different Wine processes.
-            // This is an explicit experiment, never a normal-launch default.
-            intro::play_before_game(root)?;
-            let exe=root.join(install::DIR).join("cyber.exe");
-            let launched=verify::launch_after_external_intro(root);
-            let (child,dxvk_log_dir)=match launched {
-                Ok(pair)=>pair,
-                Err(e)=>{
-                    // Recover the exact known in-game intro state if a
-                    // failed game spawn left its runtime switch enabled.
-                    let _=patch::set_skip_intro(&exe,false);
-                    return Err(e);
-                }
-            };
-            show(&format!(
-                "INTRO_EXTERNAL GAME_STARTED pid={} skip_internal_avi=1 in-process nGlide/DXVK (game INI retains SkipIntro=0); DXVK log folder={}",
-                child.id(),
-                dxvk_log_dir.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"missing".into())
-            ),root);
-            let game_result=wait_diagnostic(child,root);
-            report_dxvk_evidence(root,dxvk_log_dir);
-            let restored=patch::set_skip_intro(&exe,false);
-            match restored {
-                Ok(_) => show("INTRO_EXTERNAL RESTORED in-game intro patch to SkipIntro=0 after game exit; game INI was unchanged",root),
-                Err(ref e) => show(&format!("INTRO_EXTERNAL RESTORE_FAILED: {e}; next normal launch will reapply the INI setting"),root),
-            }
-            restored?;
-            return game_result;
-        },
+            && three.to_str()==Some("--external-intro")=>
+            return isolated_intro_launch(root,true),
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
             && matches!(three.to_str(),Some("--nglide-d3d9"|"--dxvk-defer-surface"|"--dxvk-desktop-refresh"|"--nglide-vulkan"))=>{
