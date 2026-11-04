@@ -335,6 +335,7 @@ pub unsafe extern "system" fn mciSendStringA(
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
         if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
             glide_trace::after_video_close();
+            glide_trace::maybe_delay_after_video_close();
         }
     }
     result
