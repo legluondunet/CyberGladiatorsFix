@@ -6,6 +6,7 @@
 //! it is never installed as a system-wide winmm.dll.
 #![cfg(windows)]
 mod player;
+mod video_trace;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
@@ -300,7 +301,37 @@ macro_rules! forward_winmm {
 }
 // The 1996 game's 15 WinMM imports: forward 14 unchanged; intercept CD
 // commands only in mciSendCommandA. The full x86 ABI is preserved.
-forward_winmm!(mciSendStringA(cmd:*const c_char,out:*mut c_char,len:u32,hwnd:Handle)->u32, MCIERR_UNSUPPORTED_FUNCTION);
+/// Forward the original AVI MCI function unchanged. Read-only telemetry
+/// determines whether the black screen occurs inside "status movie mode"
+/// polling, MCI "close movie", or the subsequent renderer restore.
+#[no_mangle]
+pub unsafe extern "system" fn mciSendStringA(
+    cmd:*const c_char,out:*mut c_char,len:u32,hwnd:Handle
+)->u32 {
+    let Some(address)=system_proc(b"mciSendStringA\0") else {
+        return MCIERR_UNSUPPORTED_FUNCTION;
+    };
+    let native:unsafe extern "system" fn(*const c_char,*mut c_char,u32,Handle)->u32=
+        std::mem::transmute(address);
+    // Game MCI command strings are valid NUL-terminated ANSI strings.
+    let command=if cmd.is_null(){None}else{
+        CStr::from_ptr(cmd).to_str().ok().map(str::to_owned)
+    };
+    if let Some(ref text)=command {
+        if let Some(entry)=video_trace::before(text){log(&entry);}
+    }
+    let result=native(cmd,out,len,hwnd);
+    if let Some(ref text)=command{
+        let reply=if result==0 && !out.is_null() && len>0 {
+            // Bounds-check against the actual WinMM output buffer length.
+            let bytes=std::slice::from_raw_parts(out as *const u8,(len as usize).min(256));
+            let end=bytes.iter().position(|&b|b==0).unwrap_or(bytes.len());
+            String::from_utf8_lossy(&bytes[..end]).into_owned()
+        }else{String::new()};
+        if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
+    }
+    result
+}
 forward_winmm!(joyGetPosEx(id:u32,info:*mut c_void)->u32, 1);
 forward_winmm!(joyGetDevCapsA(id:usize,caps:*mut c_void,size:u32)->u32, 1);
 forward_winmm!(mmioSetInfo(h:Handle,info:*mut c_void,flags:u32)->u32, 1);
