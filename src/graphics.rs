@@ -60,6 +60,24 @@ fn maximize_bytes(data:&mut [u8])->Result<bool,String>{
     Ok(true)
 }
 
+/// Read only the two binary CYBER.INI fields whose meanings were verified.
+/// Never interpret, log or change the other six unknown DWORDs.
+pub fn describe_saved(game:&Path)->Result<String,String>{
+    let path=game.join("cyber.ini");
+    let m=fs::symlink_metadata(&path).map_err(|e|format!("CYBER.INI unavailable: {e}"))?;
+    if !m.is_file()||m.file_type().is_symlink()||m.len()!=SIZE as u64 {
+        return Err("CYBER.INI format is not the recognized 32-byte regular file".into());
+    }
+    let data=fs::read(&path).map_err(|e|format!("Cannot read CYBER.INI: {e}"))?;
+    let screen=u32_at(&data,RESOLUTION_OFFSET);
+    let detail=u32_at(&data,DETAIL_OFFSET);
+    if screen>5||detail>3{
+        return Err("CYBER.INI screen/detail fields are outside verified ranges".into());
+    }
+    let resolution=match screen {0|1=>"640x480",2|3=>"512x384",4|5=>"384x288",_=>unreachable!()};
+    Ok(format!("CYBER.INI internal_resolution={} (index={screen}) graphics_detail={detail}/3",resolution))
+}
+
 /// Only touch a validated existing preferences file. The game generates
 /// CYBER.INI when settings are saved on exit. Do not fabricate unrelated
 /// control or input settings for users who have not launched it yet.
@@ -119,6 +137,18 @@ pub fn maximize_saved(game:&Path)->Result<String,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reports_only_verified_cyber_ini_fields(){
+        let game=std::env::temp_dir().join(format!("cyber-display-settings-{}",std::process::id()));
+        let _=fs::remove_dir_all(&game);
+        fs::create_dir_all(&game).unwrap();
+        create_defaults(&game).unwrap();
+        let text=describe_saved(&game).unwrap();
+        assert!(text.contains("640x480"));
+        assert!(text.contains("graphics_detail=3/3"));
+        assert!(!text.contains("private"));
+        fs::remove_dir_all(game).unwrap();
+    }
     #[test]
     fn generated_defaults_match_valid_usa_ini_layout(){
         let template=default_bytes();
