@@ -1,9 +1,9 @@
 [package]
 name = "cyber-gladiators-fix"
-version = "0.1.5"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.95"
-description = "Windows CUE/BIN installer, timing/no-CD/intro fixes, graphics settings and launcher for CyberGladiators (1996)"
+description = "Windows CUE/BIN installer with timing/no-CD/intro fixes and experimental x86 CDDA FLAC music bridge"
 license = "GPL-3.0-or-later"
 authors = ["legluondunet assisted by ChatGPT (OpenAI)"]
 publish = false
