@@ -107,6 +107,10 @@ fn install()->Result<(),String>{
 pub fn maybe_install(){
     if !enabled(){return;}
     let installed=*INSTALLED.get_or_init(||{
+        report(&format!(
+            "diagnostic environment present: trace=1 passthru_noop={}",
+            if experimental_bypass_enabled(){1}else{0}
+        ));
         match install(){
             Ok(())=>{
                 report("pass-through call boundary tracing active");
