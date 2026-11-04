@@ -21,6 +21,9 @@ const GWL_EXSTYLE:i32=-20;
 static INSTALLED:OnceLock<bool>=OnceLock::new();
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
 static GAME_WINDOW_THREAD:AtomicU32=AtomicU32::new(0);
+// State 0: never entered; 1: inside passthrough; 2: returned to our hook.
+static PASSTHRU_STATE:AtomicU32=AtomicU32::new(0);
+static PASSTHRU_THREAD:AtomicU32=AtomicU32::new(0);
 const THREAD_QUERY_INFORMATION:u32=0x0040;
 const SYNCHRONIZE:u32=0x0010_0000;
 const WAIT_OBJECT_0:u32=0;
@@ -31,6 +34,7 @@ extern "system" {
     fn GetProcAddress(module:*mut c_void,name:*const u8)->*mut c_void;
     fn VirtualProtect(addr:*mut c_void,bytes:usize,new_protection:u32,old:*mut u32)->i32;
     fn GetCurrentProcessId()->u32;
+    fn GetCurrentThreadId()->u32;
     fn OpenThread(access:u32,inherit:i32,thread_id:u32)->*mut c_void;
     fn GetExitCodeThread(thread:*mut c_void,code:*mut u32)->i32;
     fn WaitForSingleObject(handle:*mut c_void,timeout_ms:u32)->u32;
@@ -93,7 +97,10 @@ fn report(message:&str){crate::log(&format!("GLIDE_RESTORE {message}"));}
 /// An explicitly requested *diagnostic-only* A/B test can omit solely the
 /// mode=1 call made after AVI cleanup (no on-disk patch).
 unsafe extern "system" fn passthru_probe(mode:i32) {
-    report(&format!("PASSTHRU BEGIN mode={mode} (0=VGA, 1=3dfx)"));
+    let tid=unsafe{GetCurrentThreadId()};
+    PASSTHRU_THREAD.store(tid,Ordering::Release);
+    PASSTHRU_STATE.store(1,Ordering::Release);
+    report(&format!("PASSTHRU BEGIN mode={mode} tid={tid} (0=VGA, 1=3dfx)"));
     if should_bypass(mode,experimental_bypass_enabled()){
         report("PASSTHRU BYPASSED mode=1 (diagnostic A/B test)");
     } else {
@@ -103,7 +110,8 @@ unsafe extern "system" fn passthru_probe(mode:i32) {
             actual(mode);
         }
     }
-    report(&format!("PASSTHRU END mode={mode}"));
+    PASSTHRU_STATE.store(2,Ordering::Release);
+    report(&format!("PASSTHRU END mode={mode} tid={tid}"));
 }
 fn experimental_bypass_enabled()->bool {
     enabled() && std::env::var("CYBER_GLIDE_PASSTHRU_NOOP").is_ok_and(|v|v=="1")
@@ -207,6 +215,9 @@ fn game_thread_snapshot(stage:&str) {
     }
 }
 fn window_snapshot(stage:&str) {
+    let state=PASSTHRU_STATE.load(Ordering::Acquire);
+    let tid=PASSTHRU_THREAD.load(Ordering::Acquire);
+    report(&format!("PASSTHRU_STATE {stage} state={state} calling_tid={tid} (0=not-called,1=in-call-or-no-return,2=returned)"));
     unsafe {
         let hwnd=std::ptr::read_volatile((EXPECTED_IMAGE_BASE+MAIN_WINDOW_RVA) as *const usize)
             as *mut c_void;
