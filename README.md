@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.2 (WinMM forwarder hang fix + safe DLL upgrade).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.3 (safe native-WinMM fallback for startup diagnostics).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -48,6 +48,22 @@ Without arguments, looks for exactly one `.cue` in the current working directory
 **Fresh installs:** `cyber.ini` is created during extraction with maximum internal graphics settings. Both `CyberGladiatorsFix.exe` (Windows x64) and `CyberGladiatorsCDDA.dll` (Windows x86) must be extracted from the same GitHub Actions ZIP beside each other. The patcher copies the DLL into the game directory. **Existing installs:** put the two build files beside the existing patcher and rerun `CyberGladiatorsFix.exe` without arguments once to install the DLL and upgrade the original retail EXE; no CUE/BIN re-extraction is required. Use `--max-graphics` for older installations if desired; this backs up `cyber.ini` as `cyber.ini.bak`. The original `cyber.exe.bak` and all game `IQ/` data are preserved.
 
 `--launch` verifies first, starts CYBER.EXE in the game directory and waits for exit. Configures nGlide locally for the game, without editing global registry. Optional `--3dfx-logo` requires a separately supplied `3DfxSpl.dll`.
+
+## Diagnosing startup without the experimental CDDA bridge (v0.2.3)
+
+The `CyberGladiatorsFix.ini` file is **text** (never edit the game's 32-byte binary `cyber.ini`). On new installs, CDDA is now disabled by default because its Wine compatibility is not yet established:
+
+```ini
+[Video]
+SkipIntro=1
+
+[Audio]
+EnableCDDA=0
+```
+
+`[Audio] EnableCDDA=0` selects the original **WINMM.dll** import, without loading `CyberGladiatorsCDDA.dll`; the CDDA bridge is not required. `EnableCDDA=1` opts in to the experimental FLAC bridge and automatically installs/upgrades the x86 DLL from beside the patcher on the next `--launch`. Older text INIs without `[Audio]` also default to disabled. This allows controlled back-to-back comparison without re-extracting the CD or touching any `IQ/` files. Both options can be changed between launches, and every one of the four combinations (intro on/off, CDDA on/off) is accepted only if its exact `CYBER.EXE` SHA-256 matches.
+
+After editing `CyberGladiatorsFix.ini`, launch with `CyberGladiatorsFix.exe --launch`. Test first with `EnableCDDA=0`. If `CYBER.EXE` still exits with `0xC0000028`, the problem is **not exclusively** the CDDA import: this exit status was observed in earlier logs before the CDDA version was installed. Investigate nGlide, Wine, video initialization and collect a Wine backtrace. Re-enable only for testing after the base game starts.
 
 ## Skipping only the opening video
 
@@ -125,7 +141,7 @@ accepted. A data BIN is always required.
 
 **v0.2.2 fixes a startup hang in the first CDDA build.** The v0.2.1 x86 DLL accidentally exported 14 WinMM forwarding functions as 2-byte `EB FE` self-loops, including the `mciSendStringA` AVI function. The bridge now loads the real system-directory `winmm.dll` by its absolute Windows path, resolves non-CDDA APIs via `GetProcAddress` and forwards them with the original 32-bit calling convention. Windows x86 regression tests exercise `mmioSeek` and `mciSendStringA` through the real system DLL, detecting the previous infinite loop. A new installer run recognizes the two known broken DLL SHA-256 versions, backs up an existing broken DLL as `CyberGladiatorsCDDA.dll.previous.bak` and installs the newly bundled DLL. It refuses to overwrite unknown files. An unmodified game may still need compatibility work; playback under Wine/Windows must be confirmed.
 
-**Upgrade existing installs:** extract **both** `CyberGladiatorsFix.exe` and `CyberGladiatorsCDDA.dll` from the **same v0.2.2 ZIP** next to the patcher, replacing the older copies, then run the patcher **without arguments** once to upgrade the game folder's DLL. Do **not** re-extract the CD or delete `IQ/` files. After upgrading, use `CyberGladiatorsFix.exe --launch`, which reads `[Video] SkipIntro` from `CyberGladiatorsFix.ini`. The older bridge is rejected by `--verify` until upgraded.
+**Upgrade existing installs:** extract **both** `CyberGladiatorsFix.exe` and `CyberGladiatorsCDDA.dll` from the **same latest ZIP** next to the patcher, replacing the older copies, then run the patcher **without arguments** once to upgrade the game folder's DLL. Do **not** re-extract the CD or delete `IQ/` files. After upgrading, use `CyberGladiatorsFix.exe --launch`, which reads `[Video] SkipIntro` from `CyberGladiatorsFix.ini`. The older bridge is rejected by `--verify` until upgraded.
 
 The project-owned DLL is **not** a global `winmm.dll` replacement and must not be installed into the Windows/Wine system directories. It is supplied with the patcher by the Windows CI artifact and installed only beside the game. No original music files are bundled; only extracted tracks can play. The CDDA implementation remains experimental pending playback, pause/resume and track-transition tests.
 
