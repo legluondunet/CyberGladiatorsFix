@@ -25,7 +25,7 @@ Usage:
   CyberGladiatorsFix.exe <disc.cue>
   CyberGladiatorsFix.exe --verify
   CyberGladiatorsFix.exe --max-graphics
-  CyberGladiatorsFix.exe --launch [--3dfx-logo]
+  CyberGladiatorsFix.exe --launch [--3dfx-logo|--trace]
   CyberGladiatorsFix.exe --help
   CyberGladiatorsFix.exe --version
 
@@ -41,7 +41,9 @@ speed/no-CD/intro patches; never re-extract the game or FLACs. Keep cyber.exe.ba
 and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
 CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1;
 [Audio] EnableCDDA=0 (safe system WinMM) or 1 (experimental FLAC bridge).
-The --launch command reads SkipIntro before starting the game;
+The --launch command reads SkipIntro and EnableCDDA before starting the game;
+--launch --trace captures Wine exceptions and DLL loads in CyberGladiatorsFix-WineTrace.log
+beside this launcher, with NGLIDE_BACKEND=0 (auto) instead of forced Vulkan.
 close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
@@ -71,14 +73,22 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             show(&r,root);return Ok(());
         },
         [one] if one.to_str()==Some("--launch")=>{
-            let mut child=verify::launch(root,false)?;
+            let mut child=verify::launch(root,false,false)?;
             show(&format!("Started CYBER.EXE (PID {})",child.id()),root);
             let status=child.wait().map_err(|e|e.to_string())?;
             if !status.success(){return Err(format!("Game exited with status {status}"));}
             return Ok(());
         },
+        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>{
+            let mut child=verify::launch(root,false,true)?;
+            show(&format!("Started CYBER.EXE diagnostic mode (PID {}); nGlide backend AUTO, Wine trace at {}",
+                child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()),root);
+            let status=child.wait().map_err(|e|e.to_string())?;
+            if !status.success(){return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));}
+            return Ok(());
+        },
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>{
-            let mut child=verify::launch(root,true)?;
+            let mut child=verify::launch(root,true,false)?;
             show(&format!("Started CYBER.EXE with 3dfx splash (PID {})",child.id()),root);
             let status=child.wait().map_err(|e|e.to_string())?;
             if !status.success(){return Err(format!("Game exited with status {status}"));}
@@ -122,5 +132,16 @@ fn main(){
     if let Err(e)=dispatch(&args,&root){
         show(&format!("{NAME}: ERROR: {e}"),&root);
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod diagnostics_tests {
+    use super::*;
+    #[test]
+    fn help_mentions_debug_trace_command(){
+        assert!(HELP.contains("--launch [--3dfx-logo|--trace]"));
+        assert!(HELP.contains("CyberGladiatorsFix-WineTrace.log"));
+        assert!(HELP.contains("NGLIDE_BACKEND=0"));
     }
 }
