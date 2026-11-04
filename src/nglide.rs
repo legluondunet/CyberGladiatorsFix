@@ -80,6 +80,12 @@ pub fn configure(command:&mut Command,logo:bool){
     let backend=if has_vulkan_loader(){"2"}else{"0"};
     configure_with_backend(command,logo,backend);
 }
+/// Diagnostic-only backend: let nGlide select a renderer automatically,
+/// rather than forcing Vulkan merely because vulkan-1.dll is loadable.
+/// All other per-game settings stay identical.
+pub fn configure_diagnostic(command:&mut Command,logo:bool){
+    configure_with_backend(command,logo,"0");
+}
 
 #[cfg(test)]
 mod process_config_tests {
@@ -99,6 +105,23 @@ mod process_config_tests {
             ("NGLIDE_SPLASH","0"),
         ]{assert_eq!(env_value(&command,key),Some(OsStr::new(value)));}
         assert_eq!(command.get_envs().count(),7);
+    }
+    #[test]
+    fn trace_mode_forces_auto_backend_only(){
+        let mut normal=Command::new("cyber.exe");
+        configure_with_backend(&mut normal,false,"2");
+        let mut trace=Command::new("cyber.exe");
+        configure_diagnostic(&mut trace,false);
+        let n=normal.get_envs().collect::<std::collections::BTreeMap<_,_>>();
+        let d=trace.get_envs().collect::<std::collections::BTreeMap<_,_>>();
+        assert_eq!(d.get(std::ffi::OsStr::new("NGLIDE_BACKEND"))
+            .copied().flatten(),Some(std::ffi::OsStr::new("0")));
+        assert_eq!(n.len(),d.len());
+        for (key,val) in n.iter(){
+            if **key!=std::ffi::OsStr::new("NGLIDE_BACKEND"){
+                assert_eq!(d.get(key),Some(val));
+            }
+        }
     }
     #[test]
     fn auto_fallback_and_opt_in_logo(){
