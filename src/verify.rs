@@ -34,7 +34,7 @@ const RETAIL_IQ_SIZE:u64=3_696;
 fn mutable_iq_data(name:&str,expected_size:u64)->bool{
     let b=name.as_bytes();
     b.len()==11 && b.starts_with(b"iq/iq") && b[5].is_ascii_digit() &&
-        b[6].is_ascii_digit() && b[7..]==*b".dat" &&
+        b[6].is_ascii_digit() && &b[7..]==b".dat" &&
         expected_size==RETAIL_IQ_SIZE
 }
 
