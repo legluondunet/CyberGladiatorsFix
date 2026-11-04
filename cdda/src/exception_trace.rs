@@ -54,6 +54,7 @@ extern "system" {
     fn GetCurrentThreadId()->u32;
     fn GetLastError()->u32;
     fn GetModuleHandleExA(flags:u32,name:*const u8,module:*mut *mut c_void)->i32;
+    fn GetModuleHandleA(name:*const u8)->*mut c_void;
     fn GetModuleFileNameA(module:*mut c_void,name:*mut u8,size:u32)->u32;
 }
 fn interesting(code:u32)->bool {
@@ -110,6 +111,51 @@ fn resolve_module(address:usize)->String {
     }else{String::from("path_unavailable")};
     format!("{path} base={:#x} rva={:#x}",module as usize,address.saturating_sub(module as usize))
 }
+/// A minimal in-memory PE identity snapshot of the D3D9 implementation
+/// actually mapped in the x86 game process. This is read-only: never load a
+/// missing module, touch the Windows registry, patch a DLL or run code in it.
+///
+/// Path and PE timestamp/size only *fingerprint* an image for comparison;
+/// they must not be presented as proof that it is DXVK. Use DXVK's own
+/// app_d3d9.log / HUD for positive DXVK identification.
+fn pe_identity(image:&[u8])->Option<(u16,u32,u32)>{
+    if image.len()<0x100 || image.get(..2)?!=b"MZ" {return None;}
+    let offset=u32::from_le_bytes(image.get(0x3c..0x40)?.try_into().ok()?) as usize;
+    if offset>0x800 || offset.checked_add(0x54)?>image.len(){return None;}
+    if image.get(offset..offset+4)?!=b"PE\\0\\0"{return None;}
+    let machine=u16::from_le_bytes(image.get(offset+4..offset+6)?.try_into().ok()?);
+    let timestamp=u32::from_le_bytes(image.get(offset+8..offset+12)?.try_into().ok()?);
+    let size_image=u32::from_le_bytes(image.get(offset+0x50..offset+0x54)?.try_into().ok()?);
+    Some((machine,timestamp,size_image))
+}
+pub fn d3d9_identity(stage:&str){
+    if std::env::var("CYBER_GLIDE_TRACE").as_deref()!=Ok("1"){return;}
+    let module=unsafe{GetModuleHandleA(c"d3d9.dll".as_ptr() as *const u8)};
+    if module.is_null(){
+        crate::log(&format!("D3D9_IDENTITY stage={stage:?} loaded=0"));
+        return;
+    }
+    let mut name=[0u8;1024];
+    let len=unsafe{GetModuleFileNameA(module,name.as_mut_ptr(),name.len() as u32)} as usize;
+    let path=if len>0&&len<name.len(){
+        String::from_utf8_lossy(&name[..len]).into_owned()
+    }else{String::from("path_unavailable")};
+    // Loaded PE images map their header on the first 4-KiB page.
+    // This observer reads only that mapped page, with strict bounds checks
+    // for all PE offsets. Called from the normal trace thread, never from
+    // the exhausted-stack vectored exception callback.
+    let header=unsafe{std::slice::from_raw_parts(module as *const u8,4096)};
+    let details=match pe_identity(header){
+        Some((machine,timestamp,size_image))=>format!(
+            "machine={machine:#06x} timestamp={timestamp:#010x} size_of_image={size_image:#x}"
+        ),
+        None=>String::from("pe_header_unavailable"),
+    };
+    crate::log(&format!(
+        "D3D9_IDENTITY stage={stage:?} loaded=1 base={:#x} path={path:?} {details} (fingerprint_only_not_dxvk_proof)",
+        module as usize
+    ));
+}
 /// Called by the existing, read-only AVI-close sampler on a different thread.
 /// Do not log from the vectored exception callback: stack may be exhausted.
 pub fn snapshot(stage:&str){
@@ -147,6 +193,20 @@ pub fn maybe_install(){
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pe_identity_is_bounds_checked_and_reports_stable_image_metadata(){
+        let mut data=[0u8;4096];
+        data[..2].copy_from_slice(b"MZ");
+        data[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
+        data[0x80..0x84].copy_from_slice(b"PE\\0\\0");
+        data[0x84..0x86].copy_from_slice(&0x14cu16.to_le_bytes());
+        data[0x88..0x8c].copy_from_slice(&0x11223344u32.to_le_bytes());
+        data[0xd0..0xd4].copy_from_slice(&0x00200000u32.to_le_bytes());
+        assert_eq!(pe_identity(&data),Some((0x14c,0x11223344,0x00200000)));
+        data[0x3c..0x40].copy_from_slice(&0x7ffu32.to_le_bytes());
+        assert!(pe_identity(&data).is_none());
+        assert!(pe_identity(&data[..16]).is_none());
+    }
     #[test]
     fn only_relevant_exceptions_are_captured(){
         assert!(interesting(ACCESS_VIOLATION));
