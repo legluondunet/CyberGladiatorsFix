@@ -102,15 +102,23 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
     if let Ok(entries)=fs::read_dir(&dir) {
         for entry in entries.flatten(){
             let name=entry.file_name().to_string_lossy().to_string();
-            if name.to_ascii_lowercase().ends_with("_d3d9.log")
+            // GE-Proton can load D7VK for the AVI's DirectDraw path and
+            // DXVK for nGlide D3D9 within the same old Win32 process.
+            // Preserve independently produced logs for BOTH providers.
+            let lower=name.to_ascii_lowercase();
+            if (lower.ends_with("_d3d9.log")||lower.ends_with("_ddraw.log")
+                ||lower.ends_with("_d3d7.log"))
                 && entry.file_type().is_ok_and(|kind|kind.is_file()){
                 logs.push(entry.path());
             }
         }
     }
-    if logs.is_empty(){
+    let has_d3d9=logs.iter().any(|p|p.file_name().is_some_and(|n|
+        n.to_string_lossy().to_ascii_lowercase().ends_with("_d3d9.log")));
+    if !has_d3d9 {
         show("DXVK_EVIDENCE UNCONFIRMED: no fresh *_d3d9.log in the temporary trace folder; renderer selection alone does not prove DXVK loaded",root);
-    } else {
+    }
+    if !logs.is_empty() {
         logs.sort();
         let mut all_ok=true;
         for path in logs {
@@ -119,8 +127,16 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
                 Ok(meta) if meta.len()<=2*1024*1024=>{
                     match fs::read(&path) {
                         Ok(bytes)=>{
-                            show(&format!("DXVK_EVIDENCE DLL_LOADED: {} ({} bytes); DXVK text follows in this session log",label,bytes.len()),root);
-                            diagnostics::log(root,"DXVK",&String::from_utf8_lossy(&bytes));
+                            let is_d3d9=label.to_ascii_lowercase().ends_with("_d3d9.log");
+                            if is_d3d9 {
+                                show(&format!("DXVK_EVIDENCE D3D9_LOG_FOUND: {} ({} bytes); direct renderer version evidence follows",label,bytes.len()),root);
+                                diagnostics::log(root,"DXVK_D3D9",&String::from_utf8_lossy(&bytes));
+                            }else{
+                                // The presence of a ddraw.log is not, alone,
+                                // positive identification of D7VK.
+                                show(&format!("VIDEO_PROVIDER_EVIDENCE DDRAW_OR_D3D7_LOG_FOUND: {} ({} bytes); verify provider/version in contents",label,bytes.len()),root);
+                                diagnostics::log(root,"LEGACY_DDRAW",&String::from_utf8_lossy(&bytes));
+                            }
                         },
                         Err(e)=>{
                             all_ok=false;
