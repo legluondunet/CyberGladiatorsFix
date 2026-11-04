@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! SHA-256-gated, byte-exact retail speed fix and no-CD check for CYBER.EXE.
+//! SHA-256-gated retail timing, no-CD and startup-intro fixes for CYBER.EXE.
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 
 pub const ORIGINAL: &str = "226a04a745addbfe77709aa7ec56bf5c17792c524b31882da7653e1973775624";
 pub const SPEED_ONLY: &str = "520d516a572f3287458337e8cef1231b5645f59e3952b3f568a2aab8f71af832";
-pub const PATCHED: &str = "d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9";
+pub const NO_CD_ONLY: &str = "d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9";
+pub const PATCHED: &str = "d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6";
 pub const LEN: usize = 351_776;
 const CHANGES: [(usize, [u8;4], [u8;4]); 2] = [
     (0x3116, [0xc4,0xff,0xff,0xff], [0x0e,0x30,0x04,0x00]),
@@ -23,25 +24,53 @@ const CD_CHECK: (usize, [u8;5], [u8;5]) = (
     [0xb8,0x01,0x00,0x00,0x00],
 );
 
-/// Validate all byte preimages before changing anything.
-fn patch_bytes(data: &mut [u8], already_speed_fixed: bool) -> Result<(),String> {
+// On the USA executable, startup video is skipped when the obsolete Sierra
+// installer did not write [Config] CDROM to sierra.ini. Both AVI files are
+// already installed locally; bypass that obsolete INI gate, and choose the
+// included 640x480 SPLASH4.AVI rather than the 320x240 fallback.
+//
+// Raw offsets 0x63FB = VA 0x406DFB: JE return -> NOP NOP
+//             0x640F = VA 0x406E0F: JL low-resolution AVI -> NOP NOP
+// These edits do NOT supply the Windows Cinepak/VfW MCI codec; if Wine
+// cannot decode Cinepak, the AVI may still fail to play.
+const INTRO_GATES: [(usize,[u8;2],[u8;2]);2] = [
+    (0x63fb,[0x74,0x2f],[0x90,0x90]),
+    (0x640f,[0x7c,0x0c],[0x90,0x90]),
+];
+
+#[derive(Copy,Clone,PartialEq,Eq,Debug)]
+enum Edition { Original, SpeedOnly, NoCdOnly }
+
+/// All instruction preimages are checked before mutating any bytes.
+fn patch_bytes(data: &mut [u8], stage: Edition) -> Result<(),String> {
     if data.len()!=LEN {return Err(format!("Unexpected CYBER.EXE size: {}",data.len()));}
     for (offset,original,speed) in CHANGES {
-        let expected=if already_speed_fixed {speed} else {original};
+        let expected=if stage==Edition::Original {original} else {speed};
         if data[offset..offset+4]!=expected || data[offset-1]!=0xe8 {
             return Err(format!("Unexpected timing instructions at 0x{offset:X}; patch refused"));
         }
     }
     let (cd_offset, cd_old, cd_new)=CD_CHECK;
-    if data[cd_offset..cd_offset+5]!=cd_old {
+    let expected=if stage==Edition::NoCdOnly {cd_new} else {cd_old};
+    if data[cd_offset..cd_offset+5]!=expected {
         return Err(format!("Unexpected CD-check instructions at 0x{cd_offset:X}; patch refused"));
     }
-    if !already_speed_fixed {
+    for (offset,old,_) in INTRO_GATES {
+        if data[offset..offset+2]!=old {
+            return Err(format!("Unexpected intro instructions at 0x{offset:X}; patch refused"));
+        }
+    }
+    if stage==Edition::Original {
         for (offset,_,replacement) in CHANGES {
             data[offset..offset+4].copy_from_slice(&replacement);
         }
     }
-    data[cd_offset..cd_offset+5].copy_from_slice(&cd_new);
+    if stage!=Edition::NoCdOnly {
+        data[cd_offset..cd_offset+5].copy_from_slice(&cd_new);
+    }
+    for (offset,_,new) in INTRO_GATES {
+        data[offset..offset+2].copy_from_slice(&new);
+    }
     Ok(())
 }
 
@@ -62,8 +91,8 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
     }
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
-    if hash==SPEED_ONLY {
-        return Err("Existing CYBER.EXE has speed fix only. Run CyberGladiatorsFix.exe without arguments once to upgrade with the no-CD check".into());
+    if hash==SPEED_ONLY || hash==NO_CD_ONLY {
+        return Err("Existing CYBER.EXE needs the v0.1.4 intro-video upgrade. Run CyberGladiatorsFix.exe without arguments once; no re-extraction needed".into());
     }
     if hash!=PATCHED {return Err(format!("Unsupported or unpatched CYBER.EXE: SHA-256 {hash}; expected {PATCHED}"));}
     let backup=backup_path(path);
@@ -86,12 +115,14 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
     if hash==PATCHED {verify_exe(path)?;return Ok("Already patched (verified)");}
-    let already_speed_fixed=hash==SPEED_ONLY;
-    if (hash!=ORIGINAL && !already_speed_fixed) || data.len()!=LEN {
-        return Err(format!("Unsupported CYBER.EXE: SHA-256 {hash} ({} bytes). Executable unchanged.",data.len()));
-    }
+    let stage=match hash {
+        ORIGINAL=>Edition::Original,
+        SPEED_ONLY=>Edition::SpeedOnly,
+        NO_CD_ONLY=>Edition::NoCdOnly,
+        _=>return Err(format!("Unsupported CYBER.EXE: SHA-256 {hash} ({} bytes). Executable unchanged.",data.len())),
+    };
     let mut patched=data.clone();
-    patch_bytes(&mut patched,already_speed_fixed)?;
+    patch_bytes(&mut patched,stage)?;
     if digest(&patched)!=PATCHED {return Err("Internal checksum mismatch: patch refused".into());}
     let backup=backup_path(path);
     if backup.exists() {
@@ -100,8 +131,8 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
         // An existing speed-only installation must already have the retail
         // original backup; it is unsafe to back up the speed-patched bytes
         // under a name that claims to contain the untouched original.
-        if already_speed_fixed {
-            return Err("Original CYBER.EXE.bak missing; cannot upgrade speed-only installation safely".into());
+        if stage!=Edition::Original {
+            return Err("Original CYBER.EXE.bak missing; cannot upgrade an existing installation safely".into());
         }
         // create_new never overwrites user files; sync backup before touching exe.
         use std::io::Write;
@@ -130,10 +161,10 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     }
     let _=fs::remove_file(&retired);
     verify_exe(path)?;
-    Ok(if already_speed_fixed {
-        "No-CD check added to existing speed fix"
-    } else {
-        "Speed + no-CD check applied (QueryPerformanceCounter -> GetTickCount)"
+    Ok(match stage {
+        Edition::Original => "Speed, no-CD and startup video fixes applied",
+        Edition::SpeedOnly => "No-CD and startup video fixes added to existing speed fix",
+        Edition::NoCdOnly => "Startup video fix added to existing no-CD installation",
     })
 }
 
@@ -148,16 +179,22 @@ mod tests {
             assert_eq!(target,0x446b28);
         }
     }
-    #[test] fn original_hash_is_distinct(){
-        assert_ne!(ORIGINAL,SPEED_ONLY);
-        assert_ne!(SPEED_ONLY,PATCHED);
-        assert_ne!(ORIGINAL,PATCHED);
+    #[test] fn known_hashes_are_all_distinct(){
+        let values=[ORIGINAL,SPEED_ONLY,NO_CD_ONLY,PATCHED];
+        for (i,a) in values.iter().enumerate(){
+            for b in values.iter().skip(i+1){assert_ne!(a,b);}
+        }
     }
     #[test] fn cd_check_patch_skips_volume_label_probe(){
-        // CODE section RVA/offset mapping: VA 0x405416 => raw offset 0x4A16.
         assert_eq!(0x401000 + CD_CHECK.0 - 0x600,0x405416);
         assert_eq!(CD_CHECK.1,[0xe8,0x4f,0xff,0xff,0xff]);
-        assert_eq!(CD_CHECK.2,[0xb8,0x01,0x00,0x00,0x00]); // mov eax,1
+        assert_eq!(CD_CHECK.2,[0xb8,0x01,0x00,0x00,0x00]);
+    }
+    #[test] fn intro_gate_offsets_match_disassembled_branches(){
+        assert_eq!(0x401000 + INTRO_GATES[0].0 - 0x600,0x406dfb);
+        assert_eq!(0x401000 + INTRO_GATES[1].0 - 0x600,0x406e0f);
+        assert_eq!(INTRO_GATES[0].1,[0x74,0x2f]);
+        assert_eq!(INTRO_GATES[1].1,[0x7c,0x0c]);
     }
     fn synthetic_original()->Vec<u8>{
         let mut data=vec![0u8;LEN];
@@ -166,28 +203,58 @@ mod tests {
             data[offset..offset+4].copy_from_slice(&old);
         }
         data[CD_CHECK.0..CD_CHECK.0+5].copy_from_slice(&CD_CHECK.1);
+        for (offset,old,_) in INTRO_GATES {
+            data[offset..offset+2].copy_from_slice(&old);
+        }
+        data
+    }
+    fn prepare_stage(stage:Edition)->Vec<u8>{
+        let mut data=synthetic_original();
+        if stage!=Edition::Original {
+            for (offset,_,new) in CHANGES {data[offset..offset+4].copy_from_slice(&new);}
+        }
+        if stage==Edition::NoCdOnly {
+            data[CD_CHECK.0..CD_CHECK.0+5].copy_from_slice(&CD_CHECK.2);
+        }
         data
     }
     #[test] fn patches_original_in_one_pass(){
-        let mut data=synthetic_original();
-        patch_bytes(&mut data,false).unwrap();
+        let mut data=prepare_stage(Edition::Original);
+        patch_bytes(&mut data,Edition::Original).unwrap();
         for (offset,_,new) in CHANGES {assert_eq!(&data[offset..offset+4],&new);}
         assert_eq!(&data[CD_CHECK.0..CD_CHECK.0+5],&CD_CHECK.2);
+        for (offset,_,new) in INTRO_GATES {assert_eq!(&data[offset..offset+2],&new);}
     }
     #[test] fn upgrades_speed_only_without_touching_timing_patches(){
-        let mut data=synthetic_original();
-        for (offset,_,new) in CHANGES {data[offset..offset+4].copy_from_slice(&new);}
+        let mut data=prepare_stage(Edition::SpeedOnly);
         let speed_before=data[0x3110..0x3130].to_vec();
-        patch_bytes(&mut data,true).unwrap();
+        patch_bytes(&mut data,Edition::SpeedOnly).unwrap();
         assert_eq!(&data[0x3110..0x3130],speed_before.as_slice());
         assert_eq!(&data[CD_CHECK.0..CD_CHECK.0+5],&CD_CHECK.2);
     }
+    #[test] fn upgrades_no_cd_only_without_touching_existing_patches(){
+        let mut data=prepare_stage(Edition::NoCdOnly);
+        let old_timing=data[0x3110..0x3130].to_vec();
+        let old_cd=data[CD_CHECK.0..CD_CHECK.0+5].to_vec();
+        patch_bytes(&mut data,Edition::NoCdOnly).unwrap();
+        assert_eq!(&data[0x3110..0x3130],old_timing.as_slice());
+        assert_eq!(&data[CD_CHECK.0..CD_CHECK.0+5],old_cd.as_slice());
+        for (offset,_,new) in INTRO_GATES {assert_eq!(&data[offset..offset+2],&new);}
+    }
     #[test] fn refuses_unexpected_cd_check_without_partial_mutation(){
-        let mut data=synthetic_original();
+        let mut data=prepare_stage(Edition::Original);
         data[CD_CHECK.0]=0x90;
         let unchanged=data.clone();
-        let err=patch_bytes(&mut data,false).unwrap_err();
+        let err=patch_bytes(&mut data,Edition::Original).unwrap_err();
         assert!(err.contains("CD-check"));
+        assert_eq!(data,unchanged);
+    }
+    #[test] fn refuses_unexpected_intro_branch_without_partial_mutation(){
+        let mut data=prepare_stage(Edition::NoCdOnly);
+        data[INTRO_GATES[0].0]=0x90;
+        let unchanged=data.clone();
+        let err=patch_bytes(&mut data,Edition::NoCdOnly).unwrap_err();
+        assert!(err.contains("intro"));
         assert_eq!(data,unchanged);
     }
 }
