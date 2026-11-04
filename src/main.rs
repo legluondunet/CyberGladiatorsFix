@@ -59,7 +59,7 @@ Make a backup of changed IQ files before enabling this option.
 The --launch command reads SkipIntro and EnableCDDA before starting the game;
 Both --launch and --launch --trace now use NGLIDE_BACKEND=0 (automatic).
 --launch --trace additionally captures Wine exceptions and DLL loads in
-CyberGladiatorsFix-WineTrace.log beside this launcher.
+CyberGladiatorsFix.log beside this launcher.
 --launch --trace --passthru-noop tests bypassing only grSstPassthruMode(1)
 after the intro AVI, using an in-memory diagnostic hook; no files are patched.
 --launch --trace --no-glide-hook preserves AVI, window and crash telemetry
@@ -82,7 +82,7 @@ bytes are restored after the game exits. No other videos are changed.
 Requires CyberGladiatorsIntro.exe from the same Windows build, an
 installed Wine Video-for-Windows/Cinepak decoder, EnableCDDA=1,
 SkipIntro=0, DXVK enabled, and PROTON_USE_WINED3D unset.
-The intro player writes CyberGladiatorsIntro.log and fails closed.
+The intro player writes CyberGladiatorsFix.log and fails closed.
 --launch --trace --dxvk-desktop-refresh keeps DirectX9 / DXVK but
 asks nGlide for the desktop refresh rate instead of forcing 60 Hz.
 This tests 60/120 Hz mode switches seen in the provided DXVK log.
@@ -99,7 +99,7 @@ Close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
 CyberGladiatorsCDDA.dll must be beside this installer. The bridge writes
-CyberGladiatorsCDDA.log next to the game. No game or nGlide files bundled.
+CyberGladiatorsFix.log next to the game. No game or nGlide files bundled.
 Unrecognized CD editions/executables are refused rather than modified.
 ";
 fn show(s:&str,root:&Path){
@@ -134,29 +134,70 @@ fn wait_diagnostic(mut child:std::process::Child,root:&Path)->Result<(),String>{
     show(&format!(
         "DIAGNOSTIC_EXIT pid={pid} exit_status={status} elapsed_ms={} expected_bridge_log={}",
         start.elapsed().as_millis(),
-        root.join(install::DIR).join("CyberGladiatorsCDDA.log").display()
+        root.join(install::DIR).join("CyberGladiatorsFix.log").display()
     ),root);
     if !status.success(){
-        return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));
+        return Err(format!("Game exited with status {status}; see CyberGladiatorsFix.log"));
     }
     Ok(())
 }
 fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
-    if let Some(dir)=dxvk_log_dir {
-        let mut logs=Vec::new();
-        if let Ok(entries)=fs::read_dir(&dir) {
-            for entry in entries.flatten(){
-                let name=entry.file_name().to_string_lossy().to_string();
-                if name.to_ascii_lowercase().ends_with("_d3d9.log")
-                    && entry.file_type().is_ok_and(|kind|kind.is_file()) {
-                    logs.push(name);
+    let Some(dir)=dxvk_log_dir else{return;};
+    // DXVK produces its own diagnostic files. They live outside the game
+    // tree for just this run, and are folded into the ONE session log.
+    if dir.is_symlink() {
+        show("DXVK_EVIDENCE WARNING: temporary trace folder is a symlink; not reading or removing",root);
+        return;
+    }
+    let mut logs=Vec::new();
+    if let Ok(entries)=fs::read_dir(&dir) {
+        for entry in entries.flatten(){
+            let name=entry.file_name().to_string_lossy().to_string();
+            if name.to_ascii_lowercase().ends_with("_d3d9.log")
+                && entry.file_type().is_ok_and(|kind|kind.is_file()){
+                logs.push(entry.path());
+            }
+        }
+    }
+    if logs.is_empty(){
+        show("DXVK_EVIDENCE UNCONFIRMED: no fresh *_d3d9.log in the temporary trace folder; renderer selection alone does not prove DXVK loaded",root);
+    } else {
+        logs.sort();
+        let mut all_ok=true;
+        for path in logs {
+            let label=path.file_name().unwrap_or_default().to_string_lossy();
+            match fs::metadata(&path){
+                Ok(meta) if meta.len()<=2*1024*1024=>{
+                    match fs::read(&path) {
+                        Ok(bytes)=>{
+                            show(&format!("DXVK_EVIDENCE DLL_LOADED: {} ({} bytes); DXVK text follows in this session log",label,bytes.len()),root);
+                            diagnostics::log(root,"DXVK",&String::from_utf8_lossy(&bytes));
+                        },
+                        Err(e)=>{
+                            all_ok=false;
+                            show(&format!("DXVK_EVIDENCE WARNING: cannot read {}: {e}; preserving temporary files",label),root);
+                        }
+                    }
+                },
+                Ok(meta)=>{
+                    all_ok=false;
+                    show(&format!("DXVK_EVIDENCE WARNING: {} is too large ({} bytes) to import automatically; preserving temporary files",label,meta.len()),root);
+                },
+                Err(e)=>{
+                    all_ok=false;
+                    show(&format!("DXVK_EVIDENCE WARNING: cannot inspect {}: {e}",label),root);
                 }
             }
         }
-        if logs.is_empty() {
-            show(&format!("DXVK_EVIDENCE UNCONFIRMED: no new *_d3d9.log in {}; an inherited environment value does not prove DXVK loaded",dir.display()),root);
-        }else{
-            show(&format!("DXVK_EVIDENCE DLL_LOADED: fresh D3D9 log(s) {:?} in {}; inspect contents for DXVK version and initialization. This does NOT prove gameplay works",logs,dir.display()),root);
+        if !all_ok{return;}
+    }
+    // Avoid unbounded accumulation of diagnostics inside the user's game.
+    // Only remove the fresh per-launch temporary directory we created.
+    let safe_name=dir.file_name().is_some_and(|name|
+        name.to_string_lossy().starts_with("CyberGladiatorsFix-DXVKTrace-"));
+    if safe_name && dir.parent()==Some(std::env::temp_dir().as_path()){
+        if let Err(e)=fs::remove_dir_all(&dir){
+            show(&format!("DXVK_EVIDENCE WARNING: could not clean temporary DXVK traces: {e}"),root);
         }
     }
 }
@@ -178,7 +219,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>{
             let mut child=verify::launch(root,false,true,false)?;
             show(&format!("Started CYBER.EXE diagnostic mode (PID {}); nGlide backend AUTO, Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()),root);
+                child.id(),root.join("CyberGladiatorsFix.log").display()),root);
             return wait_diagnostic(child,root);
         },
         [one,two,three] if one.to_str()==Some("--launch")
@@ -187,7 +228,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let child=verify::launch_with_options(root,false,true,false,0,true)?;
             show(&format!(
                 "Started CYBER.EXE native Glide control (no probe, PID {}); Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()
+                child.id(),root.join("CyberGladiatorsFix.log").display()
             ),root);
             return wait_diagnostic(child,root);
         },
@@ -236,7 +277,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let (child,dxvk_log_dir)=verify::launch_renderer_ab(root,backend,dialog,desktop_refresh)?;
             show(&format!(
                 "Started CYBER.EXE {label} (no Glide probe, PID {}); renderer={} NGLIDE_REFRESH={} DXVK_DEFER_SURFACE={} Wine trace at {}; isolated DXVK log folder={}",
-                child.id(),backend,if desktop_refresh{"1 (desktop)"}else{"2 (60 Hz)"},dialog,root.join("CyberGladiatorsFix-WineTrace.log").display(),
+                child.id(),backend,if desktop_refresh{"1 (desktop)"}else{"2 (60 Hz)"},dialog,root.join("CyberGladiatorsFix.log").display(),
                 dxvk_log_dir.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"not applicable (native Vulkan)".into())
             ),root);
             let result=wait_diagnostic(child,root);
@@ -250,7 +291,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let mut child=verify::launch_with_video_delay(root,false,true,false,delay)?;
             show(&format!(
                 "Started CYBER.EXE video-close delay experiment ({delay} ms, PID {}); Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()
+                child.id(),root.join("CyberGladiatorsFix.log").display()
             ),root);
             return wait_diagnostic(child,root);
         },
@@ -258,7 +299,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             && two.to_str()==Some("--trace") && three.to_str()==Some("--passthru-noop")=>{
             let mut child=verify::launch(root,false,true,true)?;
             show(&format!("Started CYBER.EXE diagnostic pass-through NO-OP mode (PID {}); Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()),root);
+                child.id(),root.join("CyberGladiatorsFix.log").display()),root);
             return wait_diagnostic(child,root);
         },
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>{
@@ -337,7 +378,7 @@ mod diagnostics_tests {
     #[test]
     fn help_mentions_debug_trace_command(){
         assert!(HELP.contains("--launch [--3dfx-logo|--trace]"));
-        assert!(HELP.contains("CyberGladiatorsFix-WineTrace.log"));
+        assert!(HELP.contains("CyberGladiatorsFix.log"));
         assert!(HELP.contains("NGLIDE_BACKEND=0"));
         assert!(HELP.contains("--launch --trace --passthru-noop"));
         assert!(HELP.contains("--upgrade-cdda"));
