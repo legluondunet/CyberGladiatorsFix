@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.1.2 (lossless CD audio extraction).** Windows console CUE/BIN installer, FLAC audio extraction, speed fix, verifier and game launcher for CyberGladiators (1996).
+**v0.1.3 (no-CD startup check).** Windows console CUE/BIN installer, lossless FLAC audio extraction, speed + no-CD check, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -14,11 +14,13 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 **Known retail CYBER.EXE** (the user-provided executable):
 
 - 351,776 bytes, SHA-256 `226a04a745addbfe77709aa7ec56bf5c17792c524b31882da7653e1973775624`.
-- Patched SHA-256 `520d516a572f3287458337e8cef1231b5645f59e3952b3f568a2aab8f71af832`.
+- Previous speed-only patched SHA-256 `520d516a572f3287458337e8cef1231b5645f59e3952b3f568a2aab8f71af832` (supported for upgrade).
+- Current speed + no-CD patched SHA-256 `d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9`.
 - `CYBER.EXE.bak` contains the unchanged original.
 - At file offset `0x3116`: relative call displacement `c4 ff ff ff` -> `0e 30 04 00`.
 - At file offset `0x3125`: `b5 ff ff ff` -> `ff 2f 04 00`.
 - Both calls now target the existing `GetTickCount` import trampoline at virtual address `0x00446B28` rather than the old `QueryPerformanceCounter`-based routine.
+- **No-CD startup check:** at raw offset `0x4A16` (VA `0x00405416`), original `e8 4f ff ff ff` (CALL CD-volume check) becomes `b8 01 00 00 00` (`MOV EAX,1`). This skips the original first-CD-drive volume label test for `CYBER`; it does **not** provide CDDA emulation or replace other potentially CD-dependent code. Only the verified USA executable may be patched.
 - These offsets **must not** be used with unrecognized releases. Unknown hashes are refused and logged.
 
 ## CLI
@@ -32,9 +34,11 @@ CyberGladiatorsFix.exe --help
 CyberGladiatorsFix.exe --version
 ```
 
-Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it verifies or applies the exact speed patch and attempts to install the user's nGlide DLL.
+Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it verifies or applies the exact speed + no-CD patch (including upgrading the previously speed-patched executable, if its original `.bak` is intact) and attempts to install the user's nGlide DLL.
 
 `--verify` checks known patched executable identity, original `.bak` identity, installer-recorded SHA-256 values for extracted resources, and presence of a 32-bit `glide.dll`.
+
+**Existing installs:** first run `CyberGladiatorsFix.exe` **without arguments** once to upgrade the current `cyber.exe` from the previous speed-only patch to the new speed + no-CD patch; no CUE/BIN re-extraction is needed. Keep `cyber.exe.bak` untouched. Then run `CyberGladiatorsFix.exe --launch`.
 
 `--launch` verifies first, starts CYBER.EXE in the game directory and waits for exit. Configures nGlide locally for the game, without editing global registry. Optional `--3dfx-logo` requires a separately supplied `3DfxSpl.dll`.
 
@@ -92,10 +96,10 @@ is a graphics wrapper and does not automatically supply FLAC playback.
 
 ## Known limitations / investigation
 
-1. **CD check is not yet bypassed.** CyberGladiators may require the original CD mounted for game data; a previously documented game behavior looks at the first optical drive. Portable launch without a CD is NOT validated and should not be promised.
-2. Game startup, nGlide behavior and animation speed have not been tested yet on Windows or Wine.
+1. **The known CD startup check is bypassed** by replacing one validated call in the original USA executable. Actual game startup/playability *without a mounted CD* still requires validation on Wine/Windows. Other CD-dependent functions may remain.
+2. A Wine test confirmed installation of 342 game resources, all 14 FLAC tracks, and the speed fix with nGlide; the older patched game then stopped at the insert-CD dialog. Gameplay and the new no-CD patch are **not yet validated**.
 3. `--verify` audits extracted files against the **local installation manifest** created from the user's disc; this is an integrity check, not an independently authenticated retail-release database. Different executable editions are refused.
-4. CD audio/multitrack music is absent from the supplied files, so real retail audio extraction and CDDA playback are not yet validated. Available audio tracks are converted to bit-exact 44.1 kHz 16-bit stereo FLAC (no resampling); pregaps before INDEX 01 are excluded. This is not a complete bit-perfect CD image/archive.
+4. The latest Wine install log reports conversion of 14 audio tracks to FLAC. Their playback in the game is **not** integrated: 44.1 kHz 16-bit stereo PCM is converted losslessly, pregaps before INDEX 01 are excluded, and native CDDA requests may still need handling. This is not a complete bit-perfect CD image/archive.
 5. No executable, game assets, disc images or proprietary nGlide binaries are shipped in this source project.
 
 ## Build
@@ -112,5 +116,5 @@ The source project includes a Windows GitHub Actions workflow. CI compilation, u
 ## Credits and reference
 
 - Project architecture based on [ScorchedPlanetFix](https://github.com/legluondunet/ScorchedPlanetFix) by the same author.
-- **Original speed fix credit:** Aqrit ([Bitpatch.com — CyberGladiators Speed Fix](https://bitpatch.com/cybergladiators.html)). The original analysis and the two `CYBER.EXE` hexadecimal substitutions are by Aqrit; CyberGladiatorsFix incorporates them with SHA-256 executable verification and an automatic backup. The patch is also documented by [SierraVault](https://mirror.sierravault.net/1996-cybergladiators).
+- **Original speed fix credit:** Aqrit ([Bitpatch.com — CyberGladiators Speed Fix](https://bitpatch.com/cybergladiators.html)). The original analysis and the two `CYBER.EXE` hexadecimal substitutions are by Aqrit; CyberGladiatorsFix incorporates them with SHA-256 executable verification, an automatic backup and a separate no-CD startup-check patch. The patch is also documented by [SierraVault](https://mirror.sierravault.net/1996-cybergladiators).
 - nGlide: © Zeus Software; download separately at official site.
