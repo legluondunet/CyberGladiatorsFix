@@ -43,6 +43,26 @@ jobs:
           & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --help
           if ($LASTEXITCODE -ne 0) { throw "Help smoke test failed" }
 
+      - name: Smoke test one session log and system probe
+        shell: pwsh
+        run: |
+          Push-Location target/x86_64-pc-windows-msvc/release
+          try {
+            & "./CyberGladiatorsFix.exe" --verify
+            if ($LASTEXITCODE -eq 0) { throw "Verify unexpectedly succeeded without a game installation" }
+            if (!(Test-Path "CyberGladiatorsFix.log")) { throw "Missing unified session log" }
+            $content = Get-Content -Raw "CyberGladiatorsFix.log"
+            foreach ($expected in @("[SESSION] BEGIN", "[SYSTEM]", "[HOST]", "[RUNTIME]", "[CONFIG]", "[SESSION] END failure", "DISPLAY=", "Win32_OS=")) {
+              if (!$content.Contains($expected)) { throw "Session log missing $expected" }
+            }
+            $before = (Get-Item "CyberGladiatorsFix.log").LastWriteTimeUtc
+            & "./CyberGladiatorsFix.exe" --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Help smoke test failed" }
+            if ((Get-Item "CyberGladiatorsFix.log").LastWriteTimeUtc -ne $before) {
+              throw "Help unexpectedly reset the previous session log"
+            }
+          } finally { Pop-Location }
+
       - name: Stage Windows launcher, CDDA DLL and isolated x86 intro player
         shell: pwsh
         run: |
