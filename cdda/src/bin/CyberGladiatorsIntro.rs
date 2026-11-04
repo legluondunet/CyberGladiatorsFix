@@ -84,6 +84,7 @@ fn play()->Result<(),String>{
             mci("play movie window")?;
             let began=Instant::now();
             let mut last_mode=String::new();
+            let mut seen_playing=false;
             loop {
                 pump_messages()?;
                 if began.elapsed()>Duration::from_secs(90) {
@@ -91,8 +92,15 @@ fn play()->Result<(),String>{
                 }
                 let mode=mci("status movie mode")?;
                 if mode!=last_mode {println!("INTRO_VIDEO mode={mode:?} elapsed_ms={}",began.elapsed().as_millis());last_mode=mode.clone();}
+                if mode.eq_ignore_ascii_case("playing") {seen_playing=true;}
                 if mode.eq_ignore_ascii_case("stopped") {
-                    println!("INTRO_VIDEO COMPLETE elapsed_ms={}",began.elapsed().as_millis());
+                    // A codec failure may report immediate 'stopped' even
+                    // though open/play returned MCI success. Do not launch
+                    // the game and claim the movie completed in that case.
+                    if !seen_playing && began.elapsed()<Duration::from_millis(500){
+                        return Err("AVI stopped immediately before playback was observed; check the Wine Cinepak codec".into());
+                    }
+                    println!("INTRO_VIDEO COMPLETE elapsed_ms={} observed_playing={seen_playing}",began.elapsed().as_millis());
                     return Ok(());
                 }
                 thread::sleep(Duration::from_millis(100));
