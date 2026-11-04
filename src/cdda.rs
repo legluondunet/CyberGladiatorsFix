@@ -2,6 +2,7 @@
 //! Place the separately built, project-owned x86 CDDA bridge alongside
 //! CYBER.EXE, never in the Wine or Windows system directories.
 use std::fs::{self,File,OpenOptions};
+use std::borrow::Cow;
 use std::io::{Read,Write};
 use std::path::Path;
 use sha2::{Digest,Sha256};
@@ -67,6 +68,31 @@ const KNOWN_RELEASED_BRIDGES:[&str;24]=[
     "3d816b5f213a328ccb5b4a3a278c8650c1f304d6d91df555901f975faf1ea90a", // v0.2.12, verified ZIP (matches user log)
     "451f7fc3715ac39428779943e24ac823de42eef31d2e80077ad2899269e4066c", // preceding first-party test DLL; bundled/installed equality confirmed by diagnostic log
 ];
+/// In normal builds the exact DLL is compiled into CyberGladiatorsFix.exe.
+/// Unit tests retain a file-backed fixture to exercise upgrade and rollback.
+fn source_bytes(root:&Path)->Result<Cow<'static,[u8]>,String>{
+    #[cfg(test)]
+    {Ok(Cow::Owned(fs::read(root.join(DLL_NAME)).map_err(|e|format!("Cannot read test DLL: {e}"))?))}
+    #[cfg(not(test))]
+    {
+        let _=root;
+        crate::bundle::verify()?;
+        Ok(Cow::Borrowed(crate::bundle::CDDA_DLL))
+    }
+}
+fn validate_bytes(bytes:&[u8])->Result<(),String>{
+    if !(4096..=16*1024*1024).contains(&bytes.len())||&bytes[..2]!=b"MZ"{
+        return Err("Bundled CDDA DLL is missing a valid DOS header or has an invalid size".into());
+    }
+    let o=u32::from_le_bytes(bytes[0x3c..0x40].try_into().unwrap()) as usize;
+    if o.checked_add(26).is_none_or(|v|v>bytes.len())||&bytes[o..o+4]!=b"PE\0\0"||
+       u16::from_le_bytes(bytes[o+4..o+6].try_into().unwrap())!=0x14c||
+       u16::from_le_bytes(bytes[o+22..o+24].try_into().unwrap())&0x2000==0||
+       u16::from_le_bytes(bytes[o+24..o+26].try_into().unwrap())!=0x10b{
+        return Err("Bundled CDDA module must be a PE32 x86 DLL".into());
+    }
+    Ok(())
+}
 fn digest(path:&Path)->Result<String,String>{
     let bytes=fs::read(path).map_err(|e|format!("Cannot hash {}: {e}",path.display()))?;
     Ok(format!("{:x}",Sha256::digest(bytes)))
@@ -82,16 +108,16 @@ fn has_noop_capability(bytes:&[u8])->bool{
 /// x86 DLLs must be byte-identical. Otherwise an older installed proxy can
 /// silently execute the non-NOOP nGlide function and invalidate the test.
 pub fn matching_installed_hash(root:&Path,game:&Path)->Result<String,String>{
-    let source=root.join(DLL_NAME);
+    let source=source_bytes(root)?;
     let installed=game.join(DLL_NAME);
-    check(&source)?;
+    validate_bytes(&source)?;
     check(&installed)?;
-    if !has_noop_capability(&fs::read(&source).map_err(|e|e.to_string())?){
+    if !has_noop_capability(&source){
         return Err(format!(
             "Diagnostic cancelled: x86 {DLL_NAME} beside the patcher does not contain the pass-through NO-OP capability. Use both files from the same current Windows ZIP; no CD extraction is needed."
         ));
     }
-    let expected=digest(&source)?;
+    let expected=format!("{:x}",Sha256::digest(&source));
     let actual=digest(&installed)?;
     if actual!=expected{
         return Err(format!(
@@ -201,12 +227,11 @@ pub fn verify(game:&Path)->Result<(),String>{
     }
     Ok(())
 }
-fn install_new(source:&Path,target:&Path,expected:&str)->Result<(),String>{
-    let mut input=File::open(source).map_err(|e|e.to_string())?;
+fn install_new(source:&[u8],target:&Path,expected:&str)->Result<(),String>{
+    validate_bytes(source)?;
     let mut output=OpenOptions::new().write(true).create_new(true).open(target)
         .map_err(|e|format!("Cannot create {}: {e}",target.display()))?;
-    if let Err(e)=std::io::copy(&mut input,&mut output)
-        .and_then(|_|output.flush()).and_then(|_|output.sync_all()){
+    if let Err(e)=output.write_all(source).and_then(|_|output.flush()).and_then(|_|output.sync_all()){
         drop(output);let _=fs::remove_file(target);
         return Err(format!("Copy CDDA bridge: {e}"));
     }
@@ -224,11 +249,9 @@ pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
     try_install_with_consent(root,game,false)
 }
 pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),String>{
-    let source=root.join(DLL_NAME);
-    check(&source).map_err(|e|format!(
-        "{e}. Copy the x86 {DLL_NAME} from the same latest ZIP beside CyberGladiatorsFix.exe."
-    ))?;
-    let wanted=digest(&source)?;
+    let source=source_bytes(root)?;
+    validate_bytes(&source)?;
+    let wanted=format!("{:x}",Sha256::digest(&source));
     if broken(&wanted){
         return Err(format!(
             "The {DLL_NAME} beside the patcher is from the broken v0.2.0/v0.2.1 build; replace BOTH files with the new ZIP before upgrading."
