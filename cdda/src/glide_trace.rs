@@ -217,6 +217,9 @@ fn game_thread_snapshot(stage:&str) {
     }
 }
 fn window_snapshot(stage:&str) {
+    // Resolve crash address and CPU registers from a healthy thread,
+    // not in the exhausted-stack exception handler.
+    crate::exception_trace::snapshot(stage);
     let state=PASSTHRU_STATE.load(Ordering::Acquire);
     let tid=PASSTHRU_THREAD.load(Ordering::Acquire);
     report(&format!("PASSTHRU_STATE {stage} state={state} calling_tid={tid} (0=not-called,1=in-call-or-no-return,2=returned)"));
