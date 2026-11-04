@@ -241,9 +241,17 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }
     let mut cmd=Command::new(game.join("cyber.exe"));
     cmd.current_dir(&game);
-    // Prevent ambient environment variables from changing regular launches.
-    cmd.env_remove("CYBER_VIDEO_CLOSE_DELAY_MS");
-    cmd.env_remove("CYBER_GLIDE_HOOK_DISABLED");
+    // Never emit an extra DXVK *_d3d9.log beside game files during normal
+    // gameplay. DXVK documents LOG_PATH=none to disable file creation.
+    // Explicit diagnostic renderer runs override it with a private temp
+    // path, then fold their logs into CyberGladiatorsFix.log on exit.
+    cmd.env("DXVK_LOG_PATH","none");
+    // The user's inherited shell environment must not accidentally activate
+    // our invasive 1996 transition probes in the ordinary game path.
+    for key in ["CYBER_VIDEO_CLOSE_DELAY_MS","CYBER_GLIDE_HOOK_DISABLED",
+        "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP"]{
+        cmd.env_remove(key);
+    }
     if trace {
         // Diagnoses graphics/exception handling without modifying game bytes
         // or the Wine prefix. The trace is opt-in, stored beside the patcher,
