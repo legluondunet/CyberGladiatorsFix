@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.3 (safe native-WinMM fallback for startup diagnostics).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.4 (Wine exception tracing and nGlide auto-backend diagnostics).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -48,6 +48,18 @@ Without arguments, looks for exactly one `.cue` in the current working directory
 **Fresh installs:** `cyber.ini` is created during extraction with maximum internal graphics settings. Both `CyberGladiatorsFix.exe` (Windows x64) and `CyberGladiatorsCDDA.dll` (Windows x86) must be extracted from the same GitHub Actions ZIP beside each other. The patcher copies the DLL into the game directory. **Existing installs:** put the two build files beside the existing patcher and rerun `CyberGladiatorsFix.exe` without arguments once to install the DLL and upgrade the original retail EXE; no CUE/BIN re-extraction is required. Use `--max-graphics` for older installations if desired; this backs up `cyber.ini` as `cyber.ini.bak`. The original `cyber.exe.bak` and all game `IQ/` data are preserved.
 
 `--launch` verifies first, starts CYBER.EXE in the game directory and waits for exit. Configures nGlide locally for the game, without editing global registry. Optional `--3dfx-logo` requires a separately supplied `3DfxSpl.dll`.
+
+## Capturing startup failure details (v0.2.4)
+
+If `--launch` still exits with `0xC0000028` (STATUS_BAD_STACK), this status alone is insufficient to locate the underlying exception. Use:
+
+```powershell
+.\CyberGladiatorsFix.exe --launch --trace
+```
+
+This diagnostic launch still verifies the exact known game executable, keeps the original game assets and `IQ/` files untouched, and respects `[Video] SkipIntro` and `[Audio] EnableCDDA`. **Only in trace mode**, it changes `NGLIDE_BACKEND` to `0` (automatic), instead of requiring Vulkan just because `vulkan-1.dll` loads. The game is launched with `WINEDEBUG=+seh,+loaddll` and child stdout/stderr are written to `CyberGladiatorsFix-WineTrace.log` beside the patcher. The trace file is replaced on each diagnostic run. Other nGlide settings remain unchanged. This helps separate graphics-backend issues from the original Win32 stack/exception problem; it does **not** claim to fix the crash. If the crash persists, share the Wine trace for analysis. On native Windows the Wine debug variable is ignored, but the launcher's stdout/stderr capture still works.
+
+Normal `--launch` remains identical to earlier versions, with the ScorchedPlanetFix-style per-game Vulkan selection.
 
 ## Diagnosing startup without the experimental CDDA bridge (v0.2.3)
 
