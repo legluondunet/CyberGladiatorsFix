@@ -12,7 +12,7 @@ CyberGladiatorsFix can:
 
 - Install a verified **US retail CUE/BIN** data track, preserving the original CD resources and creating a backed-up, validated `CYBER.EXE` with compatibility/no-CD patches.
 - Extract CD-audio tracks as lossless `TrackNN.flac` files and emulate legacy CD-audio MCI via a 32-bit WinMM forwarding DLL (optional).
-- Start the original game's **640×480 Cinepak introduction** in a separate, borderless fullscreen window. It plays at the screen's size while preserving **4:3 aspect ratio**. **Esc, Enter, Space or any ordinary key** skips the movie. The player exits before the game starts, preventing the old in-process video-to-DXVK stack overflow.
+- Start the original game's **640×480 Cinepak introduction** in a separate, borderless fullscreen window. It plays at the screen's size while preserving **4:3 aspect ratio**. **Esc, Enter, Space or any ordinary key** skips the movie. The AVI device closes before the game initializes DXVK. A temporary black fullscreen curtain masks the terminal/desktop until the game's visible window is detected, then disappears. This new seamless handoff still requires field validation under Wine.
 - Start the game with nGlide Direct3D9, which uses DXVK when correctly installed in Wine/Proton. On native Windows it uses the platform's Direct3D9 provider.
 - Store **all launcher, video, CDDA, Wine, and collected DXVK diagnostics in one `CyberGladiatorsFix.log` beside the launcher**, with a fresh header describing the relevant effective user/hardware/game configuration.
 
