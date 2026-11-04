@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.7 (diagnose black screen after intro video).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.8 (diagnose legacy 3dfx pass-through restore after intro).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -106,6 +106,18 @@ The USA CD ships with both `CYBER/SPLASH.AVI` (320×240, Cinepak video, 22.05-kH
 CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in the game directory. Reverse engineering confirmed two four-byte little-endian fields at offsets `0x10` (internal screen-size index: `0` = 640×480 maximum) and `0x14` (detail index: `3` = maximum of 0–3). `--max-graphics` updates only those two fields, preserves the other 24 bytes and backs up the original once. The internal 640×480 image can be upscaled by nGlide; the option does not add native widescreen rendering.
 
 On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
+
+## Tracing the VGA-to-3dfx switch after video (v0.2.8)
+
+**Confirmed under Wine:** a full, uninterrupted 40-second `SPLASH4.AVI` ends normally: `status movie mode` returns `stopped`, then `close movie` and `close avivideo` both return success. The screen is still black, and **Alt+Tab does not recover it**. An early input interruption is therefore not the only reproduction. The game menu and 14-track CDDA playback work when `SkipIntro=1`.
+
+Reverse engineering of the exact USA `CYBER.EXE` reveals a Voodoo1-specific VGA/3dfx pass-through transition. `0x00403547` calls `0x0043519D` with `EAX=1`, which delegates to dynamically loaded `_grSstPassthruMode@4` from `glide.dll` (stored in the game's original `0x0044AB4C` pointer). The original 3dfx Glide 2.x programming guide explicitly recommends this function for introductory video clips: it switched physical display output between VGA video and Voodoo's separate 3D frame buffer. This *could* be incompatible with an emulated nGlide graphics surface under Wine, but the cause is not proven.
+
+The v0.2.8 diagnostic DLL adds an **opt-in, temporary in-memory probe** only with `CyberGladiatorsFix.exe --launch --trace` and `[Audio] EnableCDDA=1`. When the real game's code and `glide.dll` export pointer match verified known addresses, the probe wraps that one function pointer to record `GLIDE_RESTORE PASSTHRU BEGIN mode=1` and `GLIDE_RESTORE PASSTHRU END mode=1` in `CyberGladiatorsCDDA.log`. It also observes the game's window style and visibility just after the video closes and at 100, 500, 1500 and 4000 ms. No existing graphics calls are skipped or altered; it does not change the on-disk EXE, Wine prefix, DLL on disk or any `IQ/` files. If a pointer or code signature does not match, it refuses the hook but continues the original video and MCI diagnostics.
+
+To reproduce, set `SkipIntro=0`, `EnableCDDA=1`, run `CyberGladiatorsFix.exe --launch --trace`, let the AVI end naturally without pressing keys, and provide **`CyberGladiatorsCDDA.log`**. If `PASSTHRU BEGIN` has no corresponding `END`, the nGlide call has not returned; if both appear, the hang is later in graphics/window restoration. If neither appears, the game may be hung before that call or the opt-in probe refused to attach. The 1996 window-style changes are not assumed to be safe until tested. Leave `SkipIntro=1` for regular gameplay in the meantime.
+
+An independent test worth trying after the screen goes black is **Alt+Enter**: unlike Alt+Tab, nGlide documents this as its full-screen/windowed mode toggle, so it can exercise the renderer's own display reinitialization. Avoid changing the system-wide nGlide configuration during this focused diagnosis.
 
 ## Investigating black screen after SPLASH4.AVI (v0.2.7)
 
