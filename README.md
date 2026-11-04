@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.1.4 (startup intro and graphics settings).** Windows CUE/BIN installer, lossless FLAC extraction, timing + no-CD + startup-video fixes, safe graphics settings tool, verifier and game launcher for CyberGladiators (1996).
+**v0.1.5 (automatic graphics preferences).** Windows CUE/BIN installer, lossless FLAC extraction, timing + no-CD + startup-video fixes, safe graphics settings tool, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -37,11 +37,11 @@ CyberGladiatorsFix.exe --help
 CyberGladiatorsFix.exe --version
 ```
 
-Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it upgrades known prior speed/no-CD patches (including v0.1.3) with the intro fix, provided `cyber.exe.bak` is intact, and attempts to install the user's nGlide DLL. No game resources or FLAC tracks are re-extracted.
+Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher, creates a 32-byte `cyber.ini` with the maximum 640×480 internal image size and 3/3 details, and extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it upgrades known prior speed/no-CD patches (including v0.1.3) with the intro fix, provided `cyber.exe.bak` is intact, and attempts to install the user's nGlide DLL. No game resources or FLAC tracks are re-extracted.
 
 `--verify` checks known patched executable identity, original `.bak` identity, installer-recorded SHA-256 values for extracted resources, and presence of a 32-bit `glide.dll`.
 
-**Existing installs:** first run `CyberGladiatorsFix.exe` **without arguments** once to upgrade the current executable (speed + no-CD) with the intro fix. Keep `cyber.exe.bak` untouched. To maximize the saved graphics settings, first **exit the game normally**, then run `CyberGladiatorsFix.exe --max-graphics`, followed by `--launch`. This command only edits the two validated fields in an existing 32-byte binary `cyber.ini` and preserves `cyber.ini.bak`. It refuses missing/unknown formats rather than inventing settings for an unplayed game.
+**Fresh installs:** `cyber.ini` is now created during extraction, before the first launch, with maximum graphics settings. You do not need to run `--max-graphics` after a fresh install. **Existing installs** are not rewritten: if needed, close the game and use `CyberGladiatorsFix.exe --max-graphics` to modify only the two known graphics fields, with a one-time `cyber.ini.bak` backup. The existing executable upgrade process remains unchanged.
 
 `--launch` verifies first, starts CYBER.EXE in the game directory and waits for exit. Configures nGlide locally for the game, without editing global registry. Optional `--3dfx-logo` requires a separately supplied `3DfxSpl.dll`.
 
@@ -51,7 +51,7 @@ The USA CD ships with both `CYBER/SPLASH.AVI` (320×240, Cinepak video, 22.05-kH
 
 CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in the game directory. Reverse engineering confirmed two four-byte little-endian fields at offsets `0x10` (internal screen-size index: `0` = 640×480 maximum) and `0x14` (detail index: `3` = maximum of 0–3). `--max-graphics` updates only those two fields, preserves the other 24 bytes and backs up the original once. The internal 640×480 image can be upscaled by nGlide; the option does not add native widescreen rendering.
 
-If `cyber.ini` does not yet exist, launch and exit the game normally so it can write its preferences, then run `--max-graphics`. Alternatively, in the game the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
+On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
 
 ## nGlide
 
