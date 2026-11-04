@@ -50,6 +50,7 @@ jobs:
           Copy-Item target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe dist/
           Copy-Item cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsCDDA.dll dist/
           Copy-Item cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsIntro.exe dist/
+          Copy-Item CyberGladiatorsFix-Wine.sh dist/
           $player = (Get-Item dist/CyberGladiatorsIntro.exe).Length
           if ($player -lt 4096) { throw "Isolated intro player unexpectedly small" }
           Write-Host "x86 intro player bytes: $player"
