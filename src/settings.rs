@@ -7,7 +7,7 @@ use std::path::Path;
 
 pub const NAME:&str="CyberGladiatorsFix.ini";
 const MAX_SIZE:u64=4096;
-const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n; Experimental CD audio bridge (disabled by default).\r\n; 0 = system WinMM; 1 = FLAC CDDA bridge.\r\n[Audio]\r\nEnableCDDA=0\r\n";
+const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n; Experimental CD audio bridge (disabled by default).\r\n; 0 = system WinMM; 1 = FLAC CDDA bridge.\r\n[Audio]\r\nEnableCDDA=0\r\n\r\n; Disabled by default. Opt-in for games which update IQ data while running.\r\n; --verify remains strict even when this option is enabled.\r\n[Integrity]\r\nAllowModifiedIQ=0\r\n";
 
 fn parse(text:&str)->Result<bool,String>{
     let mut video=false;
@@ -79,6 +79,44 @@ fn parse_cdda(text:&str)->Result<bool,String>{
     Ok(choice.unwrap_or(false))
 }
 
+/// Read the explicit, game-local opt-in to retain modified, same-size IQ
+/// assets on launch. The strict --verify command ignores this setting.
+/// Older INIs without an [Integrity] section keep the fail-closed default.
+fn parse_iq_policy(text:&str)->Result<bool,String>{
+    let mut integrity=false;
+    let mut seen_section=false;
+    let mut choice:Option<bool>=None;
+    for (line_no,raw) in text.trim_start_matches('\u{feff}').lines().enumerate(){
+        let line=raw.trim();
+        if line.is_empty()||line.starts_with(';')||line.starts_with('#'){continue;}
+        if line.starts_with('['){
+            if !line.ends_with(']'){return Err(format!("Malformed INI section on line {}",line_no+1));}
+            integrity=line[1..line.len()-1].eq_ignore_ascii_case("Integrity");
+            if integrity {
+                if seen_section{return Err("Duplicate [Integrity] section".into());}
+                seen_section=true;
+            }
+            continue;
+        }
+        let (key,value)=line.split_once('=')
+            .ok_or_else(||format!("Malformed INI setting on line {}",line_no+1))?;
+        if !integrity{continue;}
+        if !key.trim().eq_ignore_ascii_case("AllowModifiedIQ"){
+            return Err(format!("Unknown [Integrity] option: {}",key.trim()));
+        }
+        if choice.is_some(){return Err("Duplicate AllowModifiedIQ".into());}
+        choice=Some(match value.trim().to_ascii_lowercase().as_str(){
+            "0"|"false"|"no"|"off"=>false,
+            "1"|"true"|"yes"|"on"=>true,
+            _=>return Err("AllowModifiedIQ must be 0 or 1".into()),
+        });
+    }
+    if seen_section && choice.is_none(){
+        return Err("[Integrity] section requires AllowModifiedIQ=0 or 1".into());
+    }
+    Ok(choice.unwrap_or(false))
+}
+
 /// Called only for a new installation or when launching/upgrading an older one.
 /// No existing config, game settings or user files are ever overwritten.
 pub fn ensure(game:&Path)->Result<(),String>{
@@ -88,7 +126,7 @@ pub fn ensure(game:&Path)->Result<(),String>{
             if m.file_type().is_symlink()||!m.is_file(){
                 return Err(format!("{NAME} must be a regular, non-symlinked file"));
             }
-            read(game)?;read_cdda(game).map(|_|())
+            read(game)?;read_cdda(game)?;read_allow_modified_iq(game).map(|_|())
         }
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{
             let mut file=OpenOptions::new().write(true).create_new(true).open(&path)
@@ -125,9 +163,34 @@ pub fn read_cdda(game:&Path)->Result<bool,String>{
     parse_cdda(&contents)
 }
 
+/// Whether the user explicitly permits same-size changes to IQ data during
+/// launch. This reads only the tool's text configuration; no IQ files touched.
+pub fn read_allow_modified_iq(game:&Path)->Result<bool,String>{
+    let path=game.join(NAME);
+    let metadata=fs::symlink_metadata(&path)
+        .map_err(|e|format!("Cannot find {}: {e}",path.display()))?;
+    if !metadata.is_file()||metadata.file_type().is_symlink()||metadata.len()>MAX_SIZE{
+        return Err(format!("{NAME} must be a regular text file of at most {MAX_SIZE} bytes"));
+    }
+    let contents=fs::read_to_string(&path).map_err(|e|format!("Cannot read {NAME}: {e}"))?;
+    parse_iq_policy(&contents)
+}
+
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn modified_iq_opt_in_is_explicit_and_backward_compatible(){
+        assert!(!parse_iq_policy(DEFAULT).unwrap());
+        assert!(!parse_iq_policy("[Video]\nSkipIntro=0\n[Audio]\nEnableCDDA=1\n").unwrap());
+        assert!(parse_iq_policy("[Video]\nSkipIntro=0\n[Integrity]\nAllowModifiedIQ=1\n").unwrap());
+        for bad in [
+            "[Integrity]\nAllowModifiedIQ=maybe\n",
+            "[Integrity]\nAllowModifiedIQ=1\nAllowModifiedIQ=0\n",
+            "[Integrity]\nUnknownKey=1\n",
+            "[Integrity]\n",
+            "[Integrity]\nAllowModifiedIQ=0\n[Integrity]\nAllowModifiedIQ=1\n",
+        ] {assert!(parse_iq_policy(bad).is_err(),"{bad}");}
+    }
     #[test] fn audio_bridge_defaults_off_and_supports_opt_in(){
         assert!(!parse_cdda(DEFAULT).unwrap());
         assert!(!parse_cdda("[Video]\nSkipIntro=1\n").unwrap());
