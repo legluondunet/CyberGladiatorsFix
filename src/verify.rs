@@ -90,12 +90,16 @@ pub fn launch(root:&Path,logo:bool,trace:bool)->Result<Child,String>{
         // and replaced by each new --launch --trace invocation.
         nglide::configure_diagnostic(&mut cmd,logo);
         cmd.env("WINEDEBUG","+seh,+loaddll");
+        // Only the debug launch observes the native 3dfx-to-VGA transition.
+        // The x86 CDDA DLL refuses unknown game/Glide pointers and leaves
+        // all game files and normal --launch behavior untouched.
+        cmd.env("CYBER_GLIDE_TRACE","1");
         let log=root.join("CyberGladiatorsFix-WineTrace.log");
         if log.is_symlink(){return Err("Refusing symlink Wine trace log".into());}
         let mut output=fs::OpenOptions::new().create(true).write(true).truncate(true)
             .open(&log).map_err(|e|format!("Cannot create Wine trace log: {e}"))?;
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CDDA enabled={enable_cdda}; SkipIntro={skip}"))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CDDA enabled={enable_cdda}; SkipIntro={skip}"))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
