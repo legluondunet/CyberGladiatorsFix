@@ -26,12 +26,52 @@ extern "system" {
     fn GetModuleHandleA(name:*const u8)->*mut c_void;
     fn GetProcAddress(module:*mut c_void,name:*const u8)->*mut c_void;
     fn VirtualProtect(addr:*mut c_void,bytes:usize,new_protection:u32,old:*mut u32)->i32;
+    fn GetCurrentProcessId()->u32;
 }
 #[link(name="user32")]
 extern "system" {
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
     fn IsWindow(hwnd:*mut c_void)->i32;
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
+    fn IsIconic(hwnd:*mut c_void)->i32;
+    fn GetForegroundWindow()->*mut c_void;
+    fn GetWindowThreadProcessId(hwnd:*mut c_void,process_id:*mut u32)->u32;
+    fn GetWindowRect(hwnd:*mut c_void,rect:*mut Rect)->i32;
+    fn EnumWindows(callback:unsafe extern "system" fn(*mut c_void,isize)->i32,context:isize)->i32;
+}
+#[repr(C)]
+#[derive(Default)]
+struct Rect {
+    left:i32,
+    top:i32,
+    right:i32,
+    bottom:i32,
+}
+struct WindowScan {
+    current_pid:u32,
+    total:usize,
+    sample:Vec<String>,
+}
+unsafe extern "system" fn collect_process_windows(hwnd:*mut c_void,context:isize)->i32 {
+    let snapshot=&mut *(context as *mut WindowScan);
+    let mut pid=0u32;
+    let tid=GetWindowThreadProcessId(hwnd,&mut pid);
+    if pid==snapshot.current_pid {
+        snapshot.total+=1;
+        if snapshot.sample.len()<8 {
+            let mut rect=Rect::default();
+            let geometry=if GetWindowRect(hwnd,&mut rect)!=0 {
+                format!("({},{})-({},{})",rect.left,rect.top,rect.right,rect.bottom)
+            } else {"unavailable".to_owned()};
+            snapshot.sample.push(format!(
+                "hwnd={hwnd:?} tid={tid} visible={} minimized={} style={:#010x} ex_style={:#010x} rect={geometry}",
+                IsWindowVisible(hwnd),IsIconic(hwnd),
+                GetWindowLongA(hwnd,GWL_STYLE) as u32,
+                GetWindowLongA(hwnd,GWL_EXSTYLE) as u32
+            ));
+        }
+    }
+    1
 }
 
 fn enabled()->bool{
@@ -132,15 +172,27 @@ fn window_snapshot(stage:&str) {
     unsafe {
         let hwnd=std::ptr::read_volatile((EXPECTED_IMAGE_BASE+MAIN_WINDOW_RVA) as *const usize)
             as *mut c_void;
-        if hwnd.is_null()||IsWindow(hwnd)==0 {
-            report(&format!("WINDOW {stage} invalid HWND={hwnd:?}"));
-            return;
-        }
-        let style=GetWindowLongA(hwnd,GWL_STYLE) as u32;
-        let ex_style=GetWindowLongA(hwnd,GWL_EXSTYLE) as u32;
-        let visible=IsWindowVisible(hwnd);
+        let valid=IsWindow(hwnd)!=0;
+        let mut owner_pid=0u32;
+        let owner_tid=if valid{GetWindowThreadProcessId(hwnd,&mut owner_pid)}else{0};
+        let foreground=GetForegroundWindow();
+        let voodoo_active=std::ptr::read_volatile(0x0044_727c as *const u32);
+        let vga_active=std::ptr::read_volatile(0x0044_7278 as *const u32);
         report(&format!(
-            "WINDOW {stage} hwnd={hwnd:?} style={style:#010x} ex_style={ex_style:#010x} visible={visible}"));
+            "WINDOW {stage} game_hwnd={hwnd:?} valid={} owner_pid={owner_pid} owner_tid={owner_tid} visible={} foreground={foreground:?} state_3dfx={voodoo_active} state_vga={vga_active}",
+            if valid{1}else{0},if valid{IsWindowVisible(hwnd)}else{0}
+        ));
+        let mut windows=WindowScan{
+            current_pid:GetCurrentProcessId(),
+            total:0,
+            sample:Vec::new()
+        };
+        let enumerated=EnumWindows(collect_process_windows,
+            (&mut windows as *mut WindowScan) as isize);
+        report(&format!(
+            "WINDOW_SCAN {stage} pid={} enum_result={enumerated} top_level_total={} entries=[{}]",
+            windows.current_pid,windows.total,windows.sample.join(" | ")
+        ));
     }
 }
 
