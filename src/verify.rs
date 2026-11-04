@@ -137,8 +137,12 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
-    if no_glide_hook && (!enable_cdda || skip){
-        return Err("--no-glide-hook requires [Audio] EnableCDDA=1 and [Video] SkipIntro=0".into());
+    // --no-glide-hook by itself is an AVI/3dfx-transition probe, so it
+    // requires the intro. In a *forced renderer* A/B comparison, permitting
+    // SkipIntro=1 provides an important control: D3D9 rendering without the
+    // video-to-Glide transition. CDDA stays enabled to preserve diagnostics.
+    if no_glide_hook && (!enable_cdda || (skip && backend_override.is_none())){
+        return Err("--no-glide-hook requires [Audio] EnableCDDA=1 and [Video] SkipIntro=0 unless running a forced renderer comparison".into());
     }
     if video_delay_ms!=0 && (!enable_cdda || skip){
         return Err("--video-delay requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1".into());
