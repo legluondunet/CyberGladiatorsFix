@@ -2,7 +2,7 @@
 //! Opt-in, process-isolated startup AVI playback. The helper exits before
 //! CYBER.EXE creates its Glide/DXVK device, so the two renderers never share
 //! the original game's DirectDraw or window state.
-use crate::{install::DIR,settings,verify};
+use crate::{diagnostics,install::DIR,settings,verify};
 use std::fs::{self,File,OpenOptions};
 use std::io::Read;
 use std::path::Path;
@@ -11,7 +11,6 @@ use std::thread;
 use std::time::{Duration,Instant};
 
 const PLAYER:&str="CyberGladiatorsIntro.exe";
-const LOG:&str="CyberGladiatorsIntro.log";
 
 fn validate_x86_exe(path:&Path)->Result<(),String>{
     let meta=fs::symlink_metadata(path).map_err(|e|format!("{PLAYER} missing: {e}"))?;
@@ -48,14 +47,15 @@ pub fn play_before_game(root:&Path)->Result<(),String>{
     verify::verify_launch_assets(root)?;
     let helper=root.join(PLAYER);
     validate_x86_exe(&helper)?;
-    let log_path=root.join(LOG);
-    if let Ok(meta)=fs::symlink_metadata(&log_path){
-        if !meta.is_file()||meta.file_type().is_symlink(){
-            return Err(format!("{LOG} must be a regular file, not a symlink"));
-        }
+    // Append the helper's MCI diagnostics into the ONE session log beside
+    // the patcher. Never truncate after the launcher wrote its config header.
+    let log_path=diagnostics::location(root);
+    let meta=fs::symlink_metadata(&log_path).map_err(|e|format!("Session log missing: {e}"))?;
+    if !meta.is_file()||meta.file_type().is_symlink(){
+        return Err("Refusing non-regular or symlink session log".into());
     }
-    let output=OpenOptions::new().write(true).create(true).truncate(true).open(&log_path)
-        .map_err(|e|format!("Cannot write intro trace: {e}"))?;
+    let output=OpenOptions::new().append(true).open(&log_path)
+        .map_err(|e|format!("Cannot append intro trace: {e}"))?;
     let error_output=output.try_clone().map_err(|e|e.to_string())?;
     let mut child=Command::new(&helper)
         .current_dir(&game)
