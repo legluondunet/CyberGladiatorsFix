@@ -4,9 +4,9 @@
 use crate::{install::{DIR,MANIFEST},cdda,nglide,patch,settings};
 use sha2::{Digest,Sha256};
 use std::fs::{self,File};
-use std::io::Read;
+use std::io::{Read,Write};
 use std::path::{Path,Component};
-use std::process::{Child,Command};
+use std::process::{Child,Command,Stdio};
 fn file_hash(path:&Path)->Result<(u64,String),String>{
     let m=fs::symlink_metadata(path).map_err(|e|format!("Missing {}: {e}",path.display()))?;
     if !m.is_file()||m.file_type().is_symlink(){return Err(format!("Not a regular file: {}",path.display()));}
@@ -64,7 +64,7 @@ pub fn verify(root:&Path)->Result<String,String>{
     }else{"native WinMM (CDDA bypass)"};
     Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}"))
 }
-pub fn launch(root:&Path,logo:bool)->Result<Child,String>{
+pub fn launch(root:&Path,logo:bool,trace:bool)->Result<Child,String>{
     let game=root.join(DIR);
     // For old installations, generate the absent *patcher* INI with
     // SkipIntro=0. Never touch the game's binary cyber.ini.
@@ -84,6 +84,25 @@ pub fn launch(root:&Path,logo:bool)->Result<Child,String>{
     if logo{nglide::check_logo(&game)?;}
     let mut cmd=Command::new(game.join("cyber.exe"));
     cmd.current_dir(&game);
-    nglide::configure(&mut cmd,logo);
+    if trace {
+        // Diagnoses graphics/exception handling without modifying game bytes
+        // or the Wine prefix. The trace is opt-in, stored beside the patcher,
+        // and replaced by each new --launch --trace invocation.
+        nglide::configure_diagnostic(&mut cmd,logo);
+        cmd.env("WINEDEBUG","+seh,+loaddll");
+        let log=root.join("CyberGladiatorsFix-WineTrace.log");
+        if log.is_symlink(){return Err("Refusing symlink Wine trace log".into());}
+        let mut output=fs::OpenOptions::new().create(true).write(true).truncate(true)
+            .open(&log).map_err(|e|format!("Cannot create Wine trace log: {e}"))?;
+        writeln!(output,"CyberGladiatorsFix --launch --trace")
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CDDA enabled={enable_cdda}; SkipIntro={skip}"))
+            .and_then(|_|output.flush())
+            .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
+        let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
+        cmd.stdout(Stdio::from(output));
+        cmd.stderr(Stdio::from(errors));
+    }else{
+        nglide::configure(&mut cmd,logo);
+    }
     cmd.spawn().map_err(|e|format!("Unable to start CYBER.EXE: {e}"))
 }
