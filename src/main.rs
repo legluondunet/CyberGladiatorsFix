@@ -24,6 +24,7 @@ Usage:
   CyberGladiatorsFix.exe
   CyberGladiatorsFix.exe <disc.cue>
   CyberGladiatorsFix.exe --verify
+  CyberGladiatorsFix.exe --upgrade-cdda
   CyberGladiatorsFix.exe --max-graphics
   CyberGladiatorsFix.exe --launch [--3dfx-logo|--trace]\n  CyberGladiatorsFix.exe --launch --trace --passthru-noop
   CyberGladiatorsFix.exe --help
@@ -37,7 +38,7 @@ available CUE AUDIO tracks as TrackNN.flac,
 and optionally copy a user-installed nGlide glide.dll.
 If CyberGladiatorsFix exists, install x86 CDDA DLL and upgrade known USA
 speed/no-CD/intro patches; never re-extract the game or FLACs. Keep cyber.exe.bak.
---max-graphics edits only two validated quality fields in an existing CYBER.INI
+--upgrade-cdda explicitly approves a one-time backed-up replacement of an unknown x86 CDDA DLL.\nAfter installation, the saved SHA-256 receipt verifies subsequent updates without a hard-coded hash list.\n--max-graphics edits only two validated quality fields in an existing CYBER.INI
 and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
 CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1;
 [Audio] EnableCDDA=0 (safe system WinMM) or 1 (experimental FLAC bridge).
@@ -108,19 +109,21 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         _=>{},
     }
-    if args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>1{
+    let upgrade_cdda=matches!(args,[one] if one.to_str()==Some("--upgrade-cdda"));
+    if !upgrade_cdda && (args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>1){
         return Err(format!("Invalid option(s).\n{HELP}"));
     }
     let target=root.join(install::DIR);
     if target.is_symlink(){return Err("Refusing symlink game directory".into());}
     if target.exists(){
-        if !args.is_empty(){return Err("Installation already exists: refusal to overwrite".into());}
+        if !args.is_empty() && !upgrade_cdda{return Err("Installation already exists: refusal to overwrite".into());}
         let exe=target.join("cyber.exe");
         // Validate the text settings before modifying the game binary.
         settings::ensure(&target)?;
         let skip_intro=settings::read(&target)?;
         let enable_cdda=settings::read_cdda(&target)?;
-        if enable_cdda {cdda::try_install(root,&target)?;}
+        if upgrade_cdda && !enable_cdda {return Err("--upgrade-cdda requires [Audio] EnableCDDA=1".into());}
+        if enable_cdda {cdda::try_install_with_consent(root,&target,upgrade_cdda)?;}
         let status=patch::apply(&exe)?;
         let audio=patch::set_cdda(&exe,enable_cdda)?;
         let intro=patch::set_skip_intro(&exe,skip_intro)?;
@@ -128,6 +131,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         show(&format!("{status}. {audio}. {intro}. nGlide {}",if glide{"ready"}else{"missing"}),root);
         return Ok(());
     }
+    if upgrade_cdda{return Err("--upgrade-cdda requires an existing game installation".into());}
     let input=if let Some(arg)=args.first(){PathBuf::from(arg)}else{
         install::find_cue(&std::env::current_dir().map_err(|e|e.to_string())?)?
     };
@@ -156,5 +160,6 @@ mod diagnostics_tests {
         assert!(HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(HELP.contains("NGLIDE_BACKEND=0"));
         assert!(HELP.contains("--launch --trace --passthru-noop"));
+        assert!(HELP.contains("--upgrade-cdda"));
     }
 }
