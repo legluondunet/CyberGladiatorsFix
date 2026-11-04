@@ -6,6 +6,7 @@ mod cue;
 mod audio;
 mod install;
 mod nglide;
+mod graphics;
 mod patch;
 mod verify;
 
@@ -21,6 +22,7 @@ Usage:
   CyberGladiatorsFix.exe
   CyberGladiatorsFix.exe <disc.cue>
   CyberGladiatorsFix.exe --verify
+  CyberGladiatorsFix.exe --max-graphics
   CyberGladiatorsFix.exe --launch [--3dfx-logo]
   CyberGladiatorsFix.exe --help
   CyberGladiatorsFix.exe --version
@@ -30,8 +32,10 @@ read one or more .bin tracks referenced by that CUE; standalone ISO/BIN is unsup
 install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
 create CYBER.EXE.bak, extract available CUE AUDIO tracks as TrackNN.flac,
 and optionally copy a user-installed nGlide glide.dll.
-If CyberGladiatorsFix exists, upgrade the verified speed-only patch to speed+no-CD;
-never re-extract or overwrite the game assets. The original .bak is required.
+If CyberGladiatorsFix exists, upgrade a verified speed/no-CD patch with the
+startup AVI fix; never re-extract the game. The original .bak is required.
+--max-graphics edits only two validated quality fields in an existing CYBER.INI
+and saves cyber.ini.bak. Close the game first; CYBER.INI is written on exit.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. No game or nGlide files bundled.
 Unrecognized CD editions/executables are refused rather than modified.
@@ -53,6 +57,10 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
         [one] if one.to_str()==Some("--verify")=>{let r=verify::verify(root)?;show(&r,root);return Ok(());},
+        [one] if one.to_str()==Some("--max-graphics")=>{
+            let r=graphics::maximize_saved(&root.join(install::DIR))?;
+            show(&r,root);return Ok(());
+        },
         [one] if one.to_str()==Some("--launch")=>{
             let mut child=verify::launch(root,false)?;
             show(&format!("Started CYBER.EXE (PID {})",child.id()),root);
