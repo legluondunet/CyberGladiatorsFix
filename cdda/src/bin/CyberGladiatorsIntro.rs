@@ -205,7 +205,7 @@ fn is_skip_key(vk:u32)->bool{
     (0x08..=0xFE).contains(&vk)
         && !matches!(vk,0x10..=0x12|0x5B|0x5C|0xA0..=0xA5)
 }
-fn key_down(vk:i32)->bool{unsafe{GetAsyncKeyState(vk)}<0}
+fn key_down(vk:i32)->bool{(unsafe{GetAsyncKeyState(vk)})<0}
 fn system_shortcut_held()->bool{
     [VK_CONTROL,VK_MENU,VK_LWIN,VK_RWIN].into_iter().any(key_down)
 }
