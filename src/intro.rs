@@ -74,9 +74,10 @@ unsafe extern "system" fn find_game_window(hwnd:*mut c_void,param:isize)->i32{
 /// search descendants too; do not change the user's Wine desktop options.
 unsafe extern "system" fn find_nested_game_window(hwnd:*mut c_void,param:isize)->i32{
     if find_game_window(hwnd,param)==0{return 0;}
-    let query=&mut *(param as *mut WindowSearch);
+    // Do not hold a Rust mutable reference across the nested Win32 callback
+    // (which also inspects the same query).
     let _=EnumChildWindows(hwnd,Some(find_game_window),param);
-    if query.found.is_null(){1}else{0}
+    if (*(param as *const WindowSearch)).found.is_null(){1}else{0}
 }
 fn visible_game_window(pid:u32)->Option<*mut c_void>{
     let mut query=WindowSearch{pid,found:std::ptr::null_mut()};
