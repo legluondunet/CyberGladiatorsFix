@@ -29,6 +29,21 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 - **Optional intro skip:** `CyberGladiatorsFix.ini` (a new plain-text file, **not** the original 32-byte binary `cyber.ini`) contains `[Video] SkipIntro=0` by default. With `SkipIntro=1`, the patched `90 90` at file offset `0x63FB` becomes `EB 2F`, jumping to the introduction function's existing epilogue. All other videos and WinMM/CDDA calls remain unchanged. `--launch` reapplies the selected exact-hash patch before each game start.
 - These offsets **must not** be used with unrecognized releases. Unknown hashes are refused and logged.
 
+## IQ data changes after gameplay — strict verification with an explicit opt-in
+
+The user observed two independent changed files after successful gameplay runs: `iq/iq40.dat` (3,696 bytes; one bit changed at offset `0x08CF`) and then `iq/iq01.dat` (also 3,696 bytes; SHA-256 changed from `265d10c49aae2a3592687b007ef3bb34589ba9765aff952d464cfc1287bb7c2f` to `ba194f9710ebc14b521e6ba6d64e754198b4dabd3e333a2ea9d3546f50d5e5d1`). This strongly suggests the game may update IQ data at runtime, but we have not yet compared the altered `iq01.dat` bytes, proven intentional save behavior, or ruled out corruption. **Preserve a copy of every changed file before experimenting.** Do not update `CyberGladiatorsFix.manifest` to new hashes, discard altered files, or overwrite the game installation automatically.
+
+The default remains **strict**: `--verify` and every `--launch` fail if an original CD asset has changed. To explicitly permit existing, same-size `iq/iqNN.dat` modifications during **launch only**, add this section to the *text* `CyberGladiatorsFix/CyberGladiatorsFix.ini` (not the 32-byte game binary `cyber.ini`):
+
+```ini
+[Integrity]
+AllowModifiedIQ=1
+```
+
+With that setting, the launcher still validates the original game executable and backup, immutable CD asset files, nGlide, CDDA bridge, file regularity, symlink checks, and the original CD manifest. It can continue only if changed files are named exactly `iq/iq00.dat` through `iq/iq99.dat` **and have the original sizes**. Every IQ mismatch produces `IQ_INTEGRITY_WARNING` with the original and current SHA-256 values in the launcher log; neither the IQ files nor the original manifest is modified by the verifier. Any non-IQ change, missing file, symlink, size mismatch, or invalid manifest remains a fatal error. Even if `AllowModifiedIQ=1`, `CyberGladiatorsFix.exe --verify` stays **fully strict** and will report the first mismatch. If more IQ data changes, preserve those files for analysis. This is an *explicit user acceptance of potential IQ changes*, **not** proof that modified data is safe or a validated save format. To restore strict launch behavior, set `AllowModifiedIQ=0` or remove the section.
+
+The original USA CD image was used to extract `iq01.dat` read-only; its SHA-256 matches the install manifest. A clean replacement is available from that source, but the launcher itself never automatically restores or overwrites a changed IQ file. This avoids losing any possibly meaningful game state.
+
 ## Controlled DXVK compatibility tests (2026-11-04)
 
 The user requested a DXVK solution rather than requiring WineD3D. The nGlide author's official configuration table documents `NGLIDE_BACKEND=0` (automatic), `1` (DirectX) and `2` (Vulkan). **nGlide DirectX9 and nGlide Vulkan are different renderers**. When DXVK is correctly installed and enabled in Wine, nGlide's DirectX9 path should use DXVK's `d3d9.dll`; the native Vulkan path does not use DXVK for this translation.
