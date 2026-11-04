@@ -133,14 +133,16 @@ pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,deskto
 /// The isolated MCI player has already completed successfully. The separate
 /// game process must skip its own AVI or we would still hit the DXVK crash.
 /// Only the exact known SkipIntro hash is applied; the user's INI is unchanged.
-pub fn launch_after_external_intro(root:&Path,trace:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+pub fn launch_after_external_intro(root:&Path,trace:bool,logo:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     if trace {
+        if logo{return Err("The optional 3dfx logo is not supported together with the external intro diagnostic mode".into());}
         return launch_renderer_experiment(root,"1",false,false,Some(true));
     }
     // Normal launch: same validated isolated-AVI -> nGlide D3D9 path,
     // without Wine/Glide/DXVK debug capture or temporary DXVK folders.
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
-    let child=launch_with_renderer_test(root,false,false,false,0,true,Some("1"),false,false,None,Some(true))?;
+    if logo{nglide::check_logo(&root.join(DIR))?;}
+    let child=launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,Some(true))?;
     Ok((child,None))
 }
 fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,skip_intro_override:Option<bool>)->Result<(Child,Option<std::path::PathBuf>),String>{
@@ -174,7 +176,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // this sole, hash-verified route during normal launch as well as trace.
     let isolated=skip_intro_override==Some(true)
         && backend_override==Some("1") && no_glide_hook
-        && !logo && !passthru_noop && video_delay_ms==0
+        && (!logo||!trace) && !passthru_noop && video_delay_ms==0
         && !dxvk_defer_surface && !desktop_refresh
         && (trace||dxvk_log_dir.is_none());
     if !isolated {
