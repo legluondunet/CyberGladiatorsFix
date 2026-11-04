@@ -29,18 +29,34 @@ fn check(path:&Path)->Result<(),String>{
     }
     Ok(())
 }
-// Exact hashes of our TWO previously distributed, broken 32-bit builds.
-// Their WinMM forwarding exports point to a JMP-self (EB FE) loop.
-// Never overwrite a third-party or unknown DLL based on its name alone.
+// Exact SHA-256 hashes of previously distributed *project-owned* 32-bit
+// DLL binaries, verified against the archived GitHub Actions ZIP files.
+// Only these known versions may be replaced automatically. The two oldest
+// were broken: their WinMM forwarding exports looped infinitely (EB FE).
+// Do not silently overwrite a third-party, modified or unknown DLL.
 const BROKEN_BRIDGES:[&str;2]=[
-    "055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71",
-    "d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb",
+    "055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71", // v0.2.1
+    "d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb", // prototype
+];
+const KNOWN_RELEASED_BRIDGES:[&str;4]=[
+    "3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29", // forwarder validation ZIP
+    "567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0", // v0.2.2
+    "acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13", // v0.2.3
+    "a0c93deff6981d34dd3cd964a0666d958f59c65ad3c8efe0bc2c09fd8e03d3d4", // v0.2.4
 ];
 fn digest(path:&Path)->Result<String,String>{
     let bytes=fs::read(path).map_err(|e|format!("Cannot hash {}: {e}",path.display()))?;
     Ok(format!("{:x}",Sha256::digest(bytes)))
 }
 fn broken(hash:&str)->bool{BROKEN_BRIDGES.contains(&hash)}
+fn replaceable_known_release(hash:&str)->bool {
+    broken(hash)||KNOWN_RELEASED_BRIDGES.contains(&hash)
+}
+fn prior_version_backup(game:&Path,hash:&str)->std::path::PathBuf {
+    // Deterministic per-version backup: does not conflict with the existing
+    // .previous.bak created when v0.2.1 was updated, and never overwrites it.
+    game.join(format!("CyberGladiatorsCDDA.dll.previous-{}.bak",&hash[..12]))
+}
 pub fn verify(game:&Path)->Result<(),String>{
     let path=game.join(DLL_NAME);
     check(&path)?;
@@ -88,15 +104,16 @@ pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
     check(&target)?;
     let existing=digest(&target)?;
     if existing==wanted{return Ok(());}
-    if !broken(&existing){
+    if !replaceable_known_release(&existing){
         return Err(format!(
             "Existing {DLL_NAME} has an unrecognized SHA-256 ({existing}); refusing to overwrite. Replace it manually only after making a backup."
         ));
     }
-    // Prior project-owned DLL is recognized as unsafe: stage its replacement,
-    // keep the old bytes in a one-time backup, and roll back on rename failure.
+    // Upgrade any recognized older project-owned DLL, even if it was not one
+    // of the original broken builds. Preserve the exact prior version under
+    // a unique hash-qualified backup; never overwrite previous backups.
     let staged=game.join("CyberGladiatorsCDDA.dll.updating.tmp");
-    let backup=game.join("CyberGladiatorsCDDA.dll.previous.bak");
+    let backup=prior_version_backup(game,&existing);
     if staged.exists()||staged.is_symlink()||backup.exists()||backup.is_symlink(){
         return Err("CDDA upgrade staging/backup path already exists; refusing overwrite".into());
     }
@@ -126,6 +143,32 @@ mod tests {
         assert!(broken("055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71"));
         assert!(broken("d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb"));
         assert!(!broken("71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb"));
+    }
+    #[test]
+    fn recognizes_archive_verified_prior_dll_versions(){
+        for (hash,release) in [
+            ("567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0","v0.2.2"),
+            ("acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13","v0.2.3"),
+            ("a0c93deff6981d34dd3cd964a0666d958f59c65ad3c8efe0bc2c09fd8e03d3d4","v0.2.4"),
+            ("3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29","forwarder validation"),
+        ] {
+            assert!(replaceable_known_release(hash),"{release}");
+            assert!(!broken(hash),"{release} was not an infinite-loop build");
+        }
+    }
+    #[test]
+    fn keeps_distinct_backup_files_for_prior_versions(){
+        let game=Path::new("C:/Cyber");
+        let a=prior_version_backup(game,"567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0");
+        let b=prior_version_backup(game,"acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13");
+        assert_ne!(a,b);
+        assert!(a.to_string_lossy().contains("567e74873301"));
+        assert_ne!(a,game.join("CyberGladiatorsCDDA.dll.previous.bak"));
+    }
+    #[test]
+    fn never_auto_overwrites_unknown_dll(){
+        assert!(!replaceable_known_release("f9b9b6f601e5986d46d1f672fbbd010ca93dafb8087182b55a0fbf7f4ad8ce4d"));
+        assert!(replaceable_known_release(BROKEN_BRIDGES[0]));
     }
     #[test]
     fn rejects_invalid_x86_modules(){
