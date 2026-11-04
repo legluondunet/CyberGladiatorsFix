@@ -53,6 +53,13 @@ fn digest(path:&Path)->Result<String,String>{
     let bytes=fs::read(path).map_err(|e|format!("Cannot hash {}: {e}",path.display()))?;
     Ok(format!("{:x}",Sha256::digest(bytes)))
 }
+/// A same-version EXE/DLL pairing is required for diagnostic telemetry.
+/// Older x86 DLLs can have the same file name and valid PE header yet lack
+/// both the required environment switch and the in-memory NO-OP hook.
+fn has_noop_capability(bytes:&[u8])->bool{
+    [b"CYBER_GLIDE_PASSTHRU_NOOP".as_slice(),b"PASSTHRU BYPASSED mode=1".as_slice()]
+        .into_iter().all(|needle|bytes.windows(needle.len()).any(|window|window==needle))
+}
 /// For a pass-through A/B test both the launcher-supplied and installed
 /// x86 DLLs must be byte-identical. Otherwise an older installed proxy can
 /// silently execute the non-NOOP nGlide function and invalidate the test.
@@ -61,6 +68,11 @@ pub fn matching_installed_hash(root:&Path,game:&Path)->Result<String,String>{
     let installed=game.join(DLL_NAME);
     check(&source)?;
     check(&installed)?;
+    if !has_noop_capability(&fs::read(&source).map_err(|e|e.to_string())?){
+        return Err(format!(
+            "Diagnostic cancelled: x86 {DLL_NAME} beside the patcher does not contain the pass-through NO-OP capability. Use both files from the same current Windows ZIP; no CD extraction is needed."
+        ));
+    }
     let expected=digest(&source)?;
     let actual=digest(&installed)?;
     if actual!=expected{
@@ -155,6 +167,15 @@ pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn diagnostic_bridge_requires_noop_markers(){
+        let capable=b"CYBER_GLIDE_PASSTHRU_NOOP abc PASSTHRU BYPASSED mode=1";
+        let old=b"CYBER_GLIDE_TRACE abc PASSTHRU BEGIN mode=1";
+        assert!(has_noop_capability(capable));
+        assert!(!has_noop_capability(old));
+        assert!(!has_noop_capability(b"CYBER_GLIDE_PASSTHRU_NOOP"));
+        assert!(!has_noop_capability(b"PASSTHRU BYPASSED mode=1"));
+    }
     #[test]
     fn dll_name_is_consistent_with_game_import_patch(){
         assert_eq!(DLL_NAME,"CyberGladiatorsCDDA.dll");
