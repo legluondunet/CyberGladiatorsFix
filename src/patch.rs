@@ -115,7 +115,7 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
     if hash==PATCHED {verify_exe(path)?;return Ok("Already patched (verified)");}
-    let stage=match hash {
+    let stage=match hash.as_str() {
         ORIGINAL=>Edition::Original,
         SPEED_ONLY=>Edition::SpeedOnly,
         NO_CD_ONLY=>Edition::NoCdOnly,
