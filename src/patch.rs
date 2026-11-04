@@ -7,7 +7,8 @@ use std::path::Path;
 pub const ORIGINAL: &str = "226a04a745addbfe77709aa7ec56bf5c17792c524b31882da7653e1973775624";
 pub const SPEED_ONLY: &str = "520d516a572f3287458337e8cef1231b5645f59e3952b3f568a2aab8f71af832";
 pub const NO_CD_ONLY: &str = "d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9";
-pub const PATCHED: &str = "d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6";
+pub const INTRO_ONLY: &str = "d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6";
+pub const PATCHED: &str = "71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb";
 pub const LEN: usize = 351_776;
 const CHANGES: [(usize, [u8;4], [u8;4]); 2] = [
     (0x3116, [0xc4,0xff,0xff,0xff], [0x0e,0x30,0x04,0x00]),
@@ -39,8 +40,26 @@ const INTRO_GATES: [(usize,[u8;2],[u8;2]);2] = [
 ];
 
 #[derive(Copy,Clone,PartialEq,Eq,Debug)]
-enum Edition { Original, SpeedOnly, NoCdOnly }
+enum Edition { Original, SpeedOnly, NoCdOnly, IntroOnly }
 
+// Exact USA PE: import descriptor WINMM name RVA field at raw 0x4E434.
+// Its original name RVA is 0x3ED40C. Raw 0x4EF00 of .idata is
+// verified zero padding and can hold our 24-byte DLL name.
+const WINMM_NAME_POINTER:usize=0x4e434;
+const OLD_WINMM_RVA:u32=0x3ed40c;
+const CDDA_NAME_RVA:u32=0x3edb00;
+const CDDA_NAME_OFFSET:usize=0x4ef00;
+const CDDA_NAME:&[u8]=b"CyberGladiatorsCDDA.dll\0";
+fn validate_import(data:&[u8])->Result<(),String>{
+    let name=u32::from_le_bytes(data[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4]
+        .try_into().unwrap());
+    if name!=OLD_WINMM_RVA ||
+        data[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()]
+            .iter().any(|&b|b!=0) {
+        return Err("Unexpected WinMM import descriptor or nonempty CDDA slot".into());
+    }
+    Ok(())
+}
 /// All instruction preimages are checked before mutating any bytes.
 fn patch_bytes(data: &mut [u8], stage: Edition) -> Result<(),String> {
     if data.len()!=LEN {return Err(format!("Unexpected CYBER.EXE size: {}",data.len()));}
@@ -51,26 +70,32 @@ fn patch_bytes(data: &mut [u8], stage: Edition) -> Result<(),String> {
         }
     }
     let (cd_offset, cd_old, cd_new)=CD_CHECK;
-    let expected=if stage==Edition::NoCdOnly {cd_new} else {cd_old};
+    let expected=if matches!(stage,Edition::NoCdOnly|Edition::IntroOnly) {cd_new} else {cd_old};
     if data[cd_offset..cd_offset+5]!=expected {
         return Err(format!("Unexpected CD-check instructions at 0x{cd_offset:X}; patch refused"));
     }
-    for (offset,old,_) in INTRO_GATES {
-        if data[offset..offset+2]!=old {
+    for (offset,old,new) in INTRO_GATES {
+        let expected=if stage==Edition::IntroOnly {new} else {old};
+        if data[offset..offset+2]!=expected {
             return Err(format!("Unexpected intro instructions at 0x{offset:X}; patch refused"));
         }
     }
+    validate_import(data)?;
     if stage==Edition::Original {
         for (offset,_,replacement) in CHANGES {
             data[offset..offset+4].copy_from_slice(&replacement);
         }
     }
-    if stage!=Edition::NoCdOnly {
+    if !matches!(stage,Edition::NoCdOnly|Edition::IntroOnly) {
         data[cd_offset..cd_offset+5].copy_from_slice(&cd_new);
     }
-    for (offset,_,new) in INTRO_GATES {
-        data[offset..offset+2].copy_from_slice(&new);
+    if stage!=Edition::IntroOnly {
+        for (offset,_,new) in INTRO_GATES {
+            data[offset..offset+2].copy_from_slice(&new);
+        }
     }
+    data[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4].copy_from_slice(&CDDA_NAME_RVA.to_le_bytes());
+    data[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()].copy_from_slice(CDDA_NAME);
     Ok(())
 }
 
@@ -91,8 +116,8 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
     }
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
-    if hash==SPEED_ONLY || hash==NO_CD_ONLY {
-        return Err("Existing CYBER.EXE needs the v0.1.4 intro-video upgrade. Run CyberGladiatorsFix.exe without arguments once; no re-extraction needed".into());
+    if [SPEED_ONLY,NO_CD_ONLY,INTRO_ONLY].contains(&hash.as_str()) {
+        return Err("Existing CYBER.EXE requires CDDA upgrade. Place CyberGladiatorsCDDA.dll beside CyberGladiatorsFix.exe and rerun patcher without arguments".into());
     }
     if hash!=PATCHED {return Err(format!("Unsupported or unpatched CYBER.EXE: SHA-256 {hash}; expected {PATCHED}"));}
     let backup=backup_path(path);
@@ -119,6 +144,7 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
         ORIGINAL=>Edition::Original,
         SPEED_ONLY=>Edition::SpeedOnly,
         NO_CD_ONLY=>Edition::NoCdOnly,
+        INTRO_ONLY=>Edition::IntroOnly,
         _=>return Err(format!("Unsupported CYBER.EXE: SHA-256 {hash} ({} bytes). Executable unchanged.",data.len())),
     };
     let mut patched=data.clone();
@@ -162,9 +188,10 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     let _=fs::remove_file(&retired);
     verify_exe(path)?;
     Ok(match stage {
-        Edition::Original => "Speed, no-CD and startup video fixes applied",
-        Edition::SpeedOnly => "No-CD and startup video fixes added to existing speed fix",
-        Edition::NoCdOnly => "Startup video fix added to existing no-CD installation",
+        Edition::Original => "Speed, no-CD, startup video and CDDA bridge applied",
+        Edition::SpeedOnly => "No-CD, startup video and CDDA bridge added to existing speed fix",
+        Edition::NoCdOnly => "Startup video and CDDA bridge added to existing no-CD installation",
+        Edition::IntroOnly => "CDDA bridge added to existing speed/no-CD/intro installation",
     })
 }
 
@@ -180,7 +207,7 @@ mod tests {
         }
     }
     #[test] fn known_hashes_are_all_distinct(){
-        let values=[ORIGINAL,SPEED_ONLY,NO_CD_ONLY,PATCHED];
+        let values=[ORIGINAL,SPEED_ONLY,NO_CD_ONLY,INTRO_ONLY,PATCHED];
         for (i,a) in values.iter().enumerate(){
             for b in values.iter().skip(i+1){assert_ne!(a,b);}
         }
@@ -206,6 +233,7 @@ mod tests {
         for (offset,old,_) in INTRO_GATES {
             data[offset..offset+2].copy_from_slice(&old);
         }
+        data[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4].copy_from_slice(&OLD_WINMM_RVA.to_le_bytes());
         data
     }
     fn prepare_stage(stage:Edition)->Vec<u8>{
@@ -213,8 +241,11 @@ mod tests {
         if stage!=Edition::Original {
             for (offset,_,new) in CHANGES {data[offset..offset+4].copy_from_slice(&new);}
         }
-        if stage==Edition::NoCdOnly {
+        if matches!(stage,Edition::NoCdOnly|Edition::IntroOnly) {
             data[CD_CHECK.0..CD_CHECK.0+5].copy_from_slice(&CD_CHECK.2);
+        }
+        if stage==Edition::IntroOnly {
+            for (offset,_,new) in INTRO_GATES {data[offset..offset+2].copy_from_slice(&new);}
         }
         data
     }
@@ -248,6 +279,22 @@ mod tests {
         let err=patch_bytes(&mut data,Edition::Original).unwrap_err();
         assert!(err.contains("CD-check"));
         assert_eq!(data,unchanged);
+    }
+    #[test] fn upgrades_intro_without_modifying_existing_speed_or_video_fixes(){
+        let mut data=prepare_stage(Edition::IntroOnly);
+        let before=data.clone();
+        patch_bytes(&mut data,Edition::IntroOnly).unwrap();
+        assert_eq!(&data[0x3110..0x3130],&before[0x3110..0x3130]);
+        assert_eq!(&data[CD_CHECK.0..CD_CHECK.0+5],&before[CD_CHECK.0..CD_CHECK.0+5]);
+        assert_eq!(&data[INTRO_GATES[0].0..INTRO_GATES[0].0+2],&before[INTRO_GATES[0].0..INTRO_GATES[0].0+2]);
+        assert_eq!(&data[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()],CDDA_NAME);
+    }
+    #[test] fn refuses_nonempty_import_name_padding(){
+        let mut data=prepare_stage(Edition::IntroOnly);
+        data[CDDA_NAME_OFFSET]=0x42;
+        let before=data.clone();
+        assert!(patch_bytes(&mut data,Edition::IntroOnly).is_err());
+        assert_eq!(data,before);
     }
     #[test] fn refuses_unexpected_intro_branch_without_partial_mutation(){
         let mut data=prepare_stage(Edition::NoCdOnly);
