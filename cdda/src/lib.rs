@@ -244,83 +244,93 @@ fn virtual_command(message:u32,flags:u32,param:usize)->u32{
     }
 }
 
-// Both the DLL and WinMM are imported by the game separately: a 1996
-// executable import descriptor is redirected from WINMM.dll to this DLL.
-// Original WinMM functions are still loaded and called through real imports.
-#[link(name="winmm")]
+// Never import WinMM functions under the same names that this DLL exports.
+// MSVC/LTO can resolve those references to *our own* exported functions,
+// producing self-recursive wrappers (observed as EB FE infinite-loop stubs
+// in v0.2.1). Resolve system WinMM explicitly from the Windows system
+// directory and cache its procedures instead. This does not affect the
+// separate waveOut imports in player.rs (none of those are exported here).
+#[link(name="kernel32")]
 extern "system" {
-    #[link_name="mciSendCommandA"] fn system_mci_send_command(id:u32,msg:u32,flags:usize,param:usize)->u32;
-    #[link_name="mciSendStringA"] fn system_mci_send_string(command:*const c_char,out:*mut c_char,len:u32,hwnd:Handle)->u32;
-    #[link_name="joyGetPosEx"] fn system_joy_get_pos_ex(id:u32,info:*mut c_void)->u32;
-    #[link_name="joyGetDevCapsA"] fn system_joy_get_dev_caps(id:usize,caps:*mut c_void,size:u32)->u32;
-    #[link_name="mmioSetInfo"] fn system_mmio_set_info(h:Handle,info:*mut c_void,flags:u32)->u32;
-    #[link_name="mmioSeek"] fn system_mmio_seek(h:Handle,offset:i32,origin:i32)->i32;
-    #[link_name="mmioRead"] fn system_mmio_read(h:Handle,out:*mut c_char,count:i32)->i32;
-    #[link_name="mmioGetInfo"] fn system_mmio_get_info(h:Handle,info:*mut c_void,flags:u32)->u32;
-    #[link_name="mmioDescend"] fn system_mmio_descend(h:Handle,chunk:*mut c_void,parent:*const c_void,flags:u32)->u32;
-    #[link_name="mmioCreateChunk"] fn system_mmio_create_chunk(h:Handle,chunk:*mut c_void,flags:u32)->u32;
-    #[link_name="mmioOpenA"] fn system_mmio_open(name:*mut c_char,info:*mut c_void,flags:u32)->Handle;
-    #[link_name="mmioAscend"] fn system_mmio_ascend(h:Handle,chunk:*mut c_void,flags:u32)->u32;
-    #[link_name="mmioAdvance"] fn system_mmio_advance(h:Handle,info:*mut c_void,flags:u32)->u32;
-    #[link_name="mmioWrite"] fn system_mmio_write(h:Handle,data:*const c_char,count:i32)->i32;
-    #[link_name="mmioClose"] fn system_mmio_close(h:Handle,flags:u32)->u32;
+    fn GetSystemDirectoryW(buffer:*mut u16,size:u32)->u32;
+    fn LoadLibraryW(name:*const u16)->*mut c_void;
+    fn GetProcAddress(module:*mut c_void,name:*const c_char)->*mut c_void;
 }
+static SYSTEM_WINMM:OnceLock<Option<usize>>=OnceLock::new();
+fn system_winmm()->Option<usize> {
+    *SYSTEM_WINMM.get_or_init(||unsafe{
+        // A local winmm.dll override is forbidden. Absolute system-directory
+        // loading avoids resolving to CyberGladiatorsCDDA.dll or the game dir.
+        let mut path=[0u16;1024];
+        let n=GetSystemDirectoryW(path.as_mut_ptr(),path.len() as u32) as usize;
+        if n==0 || n>=path.len()-12 {
+            log("CDDA: GetSystemDirectoryW failed");
+            return None;
+        }
+        let suffix:Vec<u16>="\\winmm.dll".encode_utf16().chain(std::iter::once(0)).collect();
+        path[n..n+suffix.len()].copy_from_slice(&suffix);
+        let module=LoadLibraryW(path.as_ptr());
+        if module.is_null(){
+            log("CDDA: could not load system WINMM.dll");
+            None
+        }else{Some(module as usize)}
+    })
+}
+fn system_proc(name:&[u8])->Option<usize>{
+    let module=system_winmm()?;
+    let ptr=unsafe{GetProcAddress(module as *mut c_void,name.as_ptr() as *const c_char)};
+    if ptr.is_null() {
+        log(&format!("CDDA: WinMM lacks {}",String::from_utf8_lossy(name)));
+        None
+    }else{Some(ptr as usize)}
+}
+macro_rules! forward_winmm {
+    ($function:ident($($arg:ident:$typ:ty),*) -> $return:ty, $failure:expr) => {
+        #[no_mangle]
+        #[allow(non_snake_case)]
+        pub unsafe extern "system" fn $function($($arg:$typ),*)->$return {
+            let Some(address)=system_proc(concat!(stringify!($function),"\0").as_bytes()) else {
+                return $failure;
+            };
+            let function:unsafe extern "system" fn($($typ),*)->$return=
+                std::mem::transmute(address);
+            function($($arg),*)
+        }
+    };
+}
+// The 1996 game's 15 WinMM imports: forward 14 unchanged; intercept CD
+// commands only in mciSendCommandA. The full x86 ABI is preserved.
+forward_winmm!(mciSendStringA(cmd:*const c_char,out:*mut c_char,len:u32,hwnd:Handle)->u32, MCIERR_UNSUPPORTED_FUNCTION);
+forward_winmm!(joyGetPosEx(id:u32,info:*mut c_void)->u32, 1);
+forward_winmm!(joyGetDevCapsA(id:usize,caps:*mut c_void,size:u32)->u32, 1);
+forward_winmm!(mmioSetInfo(h:Handle,info:*mut c_void,flags:u32)->u32, 1);
+forward_winmm!(mmioSeek(h:Handle,offset:i32,origin:i32)->i32, -1);
+forward_winmm!(mmioRead(h:Handle,out:*mut c_char,count:i32)->i32, -1);
+forward_winmm!(mmioGetInfo(h:Handle,info:*mut c_void,flags:u32)->u32, 1);
+forward_winmm!(mmioDescend(h:Handle,chunk:*mut c_void,parent:*const c_void,flags:u32)->u32, 1);
+forward_winmm!(mmioCreateChunk(h:Handle,chunk:*mut c_void,flags:u32)->u32, 1);
+forward_winmm!(mmioOpenA(name:*mut c_char,info:*mut c_void,flags:u32)->Handle, std::ptr::null_mut());
+forward_winmm!(mmioAscend(h:Handle,chunk:*mut c_void,flags:u32)->u32, 1);
+forward_winmm!(mmioAdvance(h:Handle,info:*mut c_void,flags:u32)->u32, 1);
+forward_winmm!(mmioWrite(h:Handle,data:*const c_char,count:i32)->i32, -1);
+forward_winmm!(mmioClose(h:Handle,flags:u32)->u32, 1);
 
 #[no_mangle]
 pub unsafe extern "system" fn mciSendCommandA(id:u32,message:u32,flags:usize,param:usize)->u32 {
-    // Never change any non-CD audio MCI device behavior.
-    if message==MCI_OPEN && cd_type_matches(flags as u32,param){
+    // Never change non-CD MCI commands, especially video-related devices.
+    if message==MCI_OPEN && cd_type_matches(flags as u32,param) {
         return open_virtual(param);
     }
     if id==DEVICE_ID {
         return virtual_command(message,flags as u32,param);
     }
-    system_mci_send_command(id,message,flags,param)
+    let Some(address)=system_proc(b"mciSendCommandA\0") else {
+        return MCIERR_UNSUPPORTED_FUNCTION;
+    };
+    let function:unsafe extern "system" fn(u32,u32,usize,usize)->u32=
+        std::mem::transmute(address);
+    function(id,message,flags,param)
 }
-#[no_mangle]
-pub unsafe extern "system" fn mciSendStringA(cmd:*const c_char,out:*mut c_char,len:u32,hwnd:Handle)->u32{
-    system_mci_send_string(cmd,out,len,hwnd)
-}
-#[no_mangle]
-pub unsafe extern "system" fn joyGetPosEx(id:u32,info:*mut c_void)->u32{system_joy_get_pos_ex(id,info)}
-#[no_mangle]
-pub unsafe extern "system" fn joyGetDevCapsA(id:usize,caps:*mut c_void,size:u32)->u32{
-    system_joy_get_dev_caps(id,caps,size)
-}
-#[no_mangle]
-pub unsafe extern "system" fn mmioSetInfo(h:Handle,info:*mut c_void,flags:u32)->u32{system_mmio_set_info(h,info,flags)}
-#[no_mangle]
-pub unsafe extern "system" fn mmioSeek(h:Handle,offset:i32,origin:i32)->i32{system_mmio_seek(h,offset,origin)}
-#[no_mangle]
-pub unsafe extern "system" fn mmioRead(h:Handle,out:*mut c_char,count:i32)->i32{system_mmio_read(h,out,count)}
-#[no_mangle]
-pub unsafe extern "system" fn mmioGetInfo(h:Handle,info:*mut c_void,flags:u32)->u32{system_mmio_get_info(h,info,flags)}
-#[no_mangle]
-pub unsafe extern "system" fn mmioDescend(h:Handle,chunk:*mut c_void,parent:*const c_void,flags:u32)->u32{
-    system_mmio_descend(h,chunk,parent,flags)
-}
-#[no_mangle]
-pub unsafe extern "system" fn mmioCreateChunk(h:Handle,chunk:*mut c_void,flags:u32)->u32{
-    system_mmio_create_chunk(h,chunk,flags)
-}
-#[no_mangle]
-pub unsafe extern "system" fn mmioOpenA(name:*mut c_char,info:*mut c_void,flags:u32)->Handle{
-    system_mmio_open(name,info,flags)
-}
-#[no_mangle]
-pub unsafe extern "system" fn mmioAscend(h:Handle,chunk:*mut c_void,flags:u32)->u32{
-    system_mmio_ascend(h,chunk,flags)
-}
-#[no_mangle]
-pub unsafe extern "system" fn mmioAdvance(h:Handle,info:*mut c_void,flags:u32)->u32{
-    system_mmio_advance(h,info,flags)
-}
-#[no_mangle]
-pub unsafe extern "system" fn mmioWrite(h:Handle,data:*const c_char,count:i32)->i32{
-    system_mmio_write(h,data,count)
-}
-#[no_mangle]
-pub unsafe extern "system" fn mmioClose(h:Handle,flags:u32)->u32{system_mmio_close(h,flags)}
 
 #[cfg(test)]
 mod tests {
@@ -329,6 +339,25 @@ mod tests {
     fn mci_tmsf_track_is_low_byte(){
         assert_eq!(tmsf_track(0x0000_0002),2);
         assert_eq!(tmsf_track(0x0000_000f),15);
+    }
+    #[test]
+    fn forwarded_mmio_seek_uses_real_system_winmm(){
+        // On Windows, mmioSeek(NULL, ...) must return -1 immediately.
+        // v0.2.1 compiled all 14 relays into JMP $ (EB FE), so this
+        // regression test would hang in that broken build.
+        assert!(system_winmm().is_some(),"WINMM.dll not available");
+        let value=unsafe{mmioSeek(std::ptr::null_mut(),0,0)};
+        assert_eq!(value,-1);
+    }
+    #[test]
+    fn forwarded_mci_video_string_returns_instead_of_recursing(){
+        // Missing MCI alias: real WinMM reports a nonzero error promptly.
+        // Never intercept mciSendStringA, which CYBER.EXE uses for AVI.
+        let value=unsafe{
+            mciSendStringA(b"status unavailable_cyber_test_device mode\0".as_ptr()
+                as *const c_char,std::ptr::null_mut(),0,std::ptr::null_mut())
+        };
+        assert_ne!(value,0);
     }
     #[test]
     fn devtype_cd_audio_matches_win32_id(){
