@@ -1,6 +1,6 @@
 [package]
 name = "cyber-gladiators-fix"
-version = "0.1.5"
+version = "0.1.4"
 edition = "2021"
 rust-version = "1.95"
 description = "Windows CUE/BIN installer, timing/no-CD/intro fixes, graphics settings and launcher for CyberGladiators (1996)"

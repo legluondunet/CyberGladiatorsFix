@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.1.5 (game-writable IQ files).** Windows CUE/BIN installer, lossless FLAC extraction, timing + no-CD + startup-video fixes, safe graphics settings tool, verifier and game launcher for CyberGladiators (1996).
+**v0.1.4 (startup intro and graphics settings).** Windows CUE/BIN installer, lossless FLAC extraction, timing + no-CD + startup-video fixes, safe graphics settings tool, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -39,7 +39,7 @@ CyberGladiatorsFix.exe --version
 
 Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it upgrades known prior speed/no-CD patches (including v0.1.3) with the intro fix, provided `cyber.exe.bak` is intact, and attempts to install the user's nGlide DLL. No game resources or FLAC tracks are re-extracted.
 
-`--verify` checks the supported patched executable and its unmodified original `.bak`, SHA-256 hashes of **static** extracted resources (including FLAC tracks), and a 32-bit `glide.dll`. The retail `IQ/iq00.dat`–`IQ/iq99.dat` files are game-writable: their original **3,696-byte size, presence and regular-file status** remain checked, but content hash changes are allowed. The original hashes stay in the manifest for reference.
+`--verify` checks known patched executable identity, original `.bak` identity, installer-recorded SHA-256 values for extracted resources, and presence of a 32-bit `glide.dll`.
 
 **Existing installs:** first run `CyberGladiatorsFix.exe` **without arguments** once to upgrade the current executable (speed + no-CD) with the intro fix. Keep `cyber.exe.bak` untouched. To maximize the saved graphics settings, first **exit the game normally**, then run `CyberGladiatorsFix.exe --max-graphics`, followed by `--launch`. This command only edits the two validated fields in an existing 32-byte binary `cyber.ini` and preserves `cyber.ini.bak`. It refuses missing/unknown formats rather than inventing settings for an unplayed game.
 
@@ -105,15 +105,11 @@ accepted. A data BIN is always required.
 emulation layer. `CYBER.EXE` may continue to request physical CD audio; nGlide
 is a graphics wrapper and does not automatically supply FLAC playback.
 
-## Verifier behavior after the first game run
-
-The original disc contains exactly 100 `IQ/iq00.dat` through `IQ/iq99.dat` files, each **3,696 bytes**. The game references these files by name and can write them during play. The initial verifier incorrectly required their original CD SHA-256 values forever, which blocked subsequent launches after `iq/iq41.dat` changed. The new verifier still requires the files to exist with their original fixed sizes, rejects symlinks, and reports their number, but permits changes in their content. All other game resources (including the 14 generated FLACs), the patched `CYBER.EXE` and untouched `CYBER.EXE.bak` retain strict SHA-256 validation. Existing installations do not need reinstalling or manifest rewrites.
-
 ## Known limitations / investigation
 
 1. A Wine report confirmed the game starts without asking for the CD and gameplay speed appears normal after v0.1.3. The no-CD behavior is promising but other CD-dependent features may remain, especially CDDA music.
-2. The video/graphics changes introduced in v0.1.4 remain **unconfirmed under Wine**: the user's next attempt was stopped by a false-positive integrity alert for `iq/iq41.dat`. v0.1.5 adjusts the verifier to account for game-writable IQ files; Cinepak MCI/VfW codec support remains a possible dependency.
-3. `--verify` checks static extracted files against the local manifest and keeps executable identity checks strict. `IQ/iqNN.dat` changes are allowed only for exactly 100 known names and original sizes, because the game modifies this directory during gameplay. The manifest is local, not an independently authenticated retail database. Unsupported executable editions are refused.
+2. The original startup AVI was absent and graphics settings were below maximum. The v0.1.4 video/graphics changes target both issues and **are awaiting gameplay confirmation under Wine**; Cinepak MCI/VfW codec support remains a separate dependency.
+3. `--verify` audits extracted files against the **local installation manifest** created from the user's disc; this is an integrity check, not an independently authenticated retail-release database. Different executable editions are refused.
 4. The latest Wine install log reports conversion of 14 audio tracks to FLAC. Their playback in the game is **not** integrated: 44.1 kHz 16-bit stereo PCM is converted losslessly, pregaps before INDEX 01 are excluded, and native CDDA requests may still need handling. This is not a complete bit-perfect CD image/archive.
 5. No executable, game assets, disc images or proprietary nGlide binaries are shipped in this source project.
 
