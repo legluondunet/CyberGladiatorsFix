@@ -19,6 +19,11 @@ fn file_hash(path:&Path)->Result<(u64,String),String>{
     }
     Ok((n,format!("{:x}",digest.finalize())))
 }
+fn asset_mismatch_message(name:&str,expected_size:u64,expected_sha256:&str,actual_size:u64,actual_sha256:&str)->String{
+    format!(
+        "Game asset has changed: {name} (expected size={expected_size}, SHA-256={expected_sha256}; actual size={actual_size}, SHA-256={actual_sha256}). Original CD assets must not be silently overwritten or trusted as mutable; preserve the changed file for comparison."
+    )
+}
 fn safe_manifest_path(s:&str)->bool{
     let p=Path::new(s);
     if s.is_empty()||s.contains(['\t','\n','\r',':','\\'])||p.is_absolute(){return false;}
@@ -54,7 +59,9 @@ pub fn verify(root:&Path)->Result<String,String>{
             if meta.file_type().is_symlink(){return Err(format!("Symlink in manifest path: {}",path.display()));}
         }
         let (actual_size,actual_hash)=file_hash(&path)?;
-        if actual_size!=size||actual_hash!=hash {return Err(format!("Game asset has changed: {name}"));}
+        if actual_size!=size||actual_hash!=hash {
+            return Err(asset_mismatch_message(name,size,hash,actual_size,&actual_hash));
+        }
         count+=1;bytes+=size;
     }
     nglide::verify(&game)?;
@@ -180,6 +187,13 @@ pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,vi
 #[cfg(test)]
 mod experimental_launch_tests {
     use super::*;
+    #[test]
+    fn asset_change_error_reports_both_size_and_hash_without_approving_changes(){
+        let err=asset_mismatch_message("iq/iq40.dat",1024,"oldhash",2048,"newhash");
+        assert!(err.starts_with("Game asset has changed: iq/iq40.dat"));
+        assert!(err.contains("expected size=1024, SHA-256=oldhash"));
+        assert!(err.contains("actual size=2048, SHA-256=newhash"));
+    }
     #[test]
     fn video_delay_is_bounded_and_trace_only(){
         assert!(matches!(100u64,100|250|500|1000));
