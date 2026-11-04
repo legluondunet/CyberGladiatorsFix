@@ -38,7 +38,7 @@ const BROKEN_BRIDGES:[&str;2]=[
     "055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71", // v0.2.1
     "d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb", // prototype
 ];
-const KNOWN_RELEASED_BRIDGES:[&str;8]=[
+const KNOWN_RELEASED_BRIDGES:[&str;9]=[
     "3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29", // forwarder validation ZIP
     "567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0", // v0.2.2
     "acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13", // v0.2.3
@@ -47,10 +47,28 @@ const KNOWN_RELEASED_BRIDGES:[&str;8]=[
     "42df88a0aa88f1cfd24048d02df13478b4435af4d2d8ed4b53443fe334fc7af2", // v0.2.6
     "6d4ffd7ca461b5e41b0bf1ac3cda898d343284febe3085c4e1a40f832defbc6d", // v0.2.7, verified ZIP
     "abf5c9d60ff20d0dc5816c742fbc04ca8a1226385b45fe375288a52d96c9dfca", // v0.2.8, verified ZIP
+    "a95c5787f3a9b5dc101e673777111257fcf0482bf4dce8340cb5b91b00f5026a", // v0.2.9, verified ZIP
 ];
 fn digest(path:&Path)->Result<String,String>{
     let bytes=fs::read(path).map_err(|e|format!("Cannot hash {}: {e}",path.display()))?;
     Ok(format!("{:x}",Sha256::digest(bytes)))
+}
+/// For a pass-through A/B test both the launcher-supplied and installed
+/// x86 DLLs must be byte-identical. Otherwise an older installed proxy can
+/// silently execute the non-NOOP nGlide function and invalidate the test.
+pub fn matching_installed_hash(root:&Path,game:&Path)->Result<String,String>{
+    let source=root.join(DLL_NAME);
+    let installed=game.join(DLL_NAME);
+    check(&source)?;
+    check(&installed)?;
+    let expected=digest(&source)?;
+    let actual=digest(&installed)?;
+    if actual!=expected{
+        return Err(format!(
+            "Diagnostic cancelled: installed CDDA DLL SHA-256 {actual} differs from patcher DLL SHA-256 {expected}. No pass-through test can be trusted with different DLLs."
+        ));
+    }
+    Ok(actual)
 }
 fn broken(hash:&str)->bool{BROKEN_BRIDGES.contains(&hash)}
 fn replaceable_known_release(hash:&str)->bool {
@@ -158,6 +176,7 @@ mod tests {
             ("42df88a0aa88f1cfd24048d02df13478b4435af4d2d8ed4b53443fe334fc7af2","v0.2.6"),
             ("6d4ffd7ca461b5e41b0bf1ac3cda898d343284febe3085c4e1a40f832defbc6d","v0.2.7"),
             ("abf5c9d60ff20d0dc5816c742fbc04ca8a1226385b45fe375288a52d96c9dfca","v0.2.8"),
+            ("a95c5787f3a9b5dc101e673777111257fcf0482bf4dce8340cb5b91b00f5026a","v0.2.9"),
             ("3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29","forwarder validation"),
         ] {
             assert!(replaceable_known_release(hash),"{release}");
