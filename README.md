@@ -33,7 +33,7 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 
 The user requested a DXVK solution rather than requiring WineD3D. The nGlide author's official configuration table documents `NGLIDE_BACKEND=0` (automatic), `1` (DirectX) and `2` (Vulkan). **nGlide DirectX9 and nGlide Vulkan are different renderers**. When DXVK is correctly installed and enabled in Wine, nGlide's DirectX9 path should use DXVK's `d3d9.dll`; the native Vulkan path does not use DXVK for this translation.
 
-The following opt-in commands perform three **controlled A/B tests** with intro and CDDA enabled, 3dfx diagnostic pointer hook disabled, and normal settings untouched. All are trace-only and use the original validated game executable:
+The following opt-in commands perform **controlled A/B tests** with intro and CDDA enabled, 3dfx diagnostic pointer hook disabled, and normal settings untouched. All are trace-only and use the original validated game executable:
 
 ```powershell
 # Prerequisite: enable DXVK and remove PROTON_USE_WINED3D=1 in Lutris.
@@ -44,11 +44,17 @@ CyberGladiatorsFix.exe --launch --trace --nglide-d3d9
 # only changes a child-process environment variable.
 CyberGladiatorsFix.exe --launch --trace --dxvk-defer-surface
 
-# 3. Control: nGlide native Vulkan, bypasses DXVK's Direct3D9 layer.
+# 3. Refresh-rate handoff control: D3D9 via DXVK, but use desktop
+# refresh rather than nGlide's previously forced 60 Hz.
+CyberGladiatorsFix.exe --launch --trace --dxvk-desktop-refresh
+
+# 4. Control: nGlide native Vulkan, bypasses DXVK's Direct3D9 layer.
 CyberGladiatorsFix.exe --launch --trace --nglide-vulkan
 ```
 
 DXVK experiments set `DXVK_HUD=version,devinfo,fps`, `DXVK_LOG_LEVEL=info`, and `DXVK_LOG_PATH` pointing to a newly created, unique `CyberGladiatorsFix/DXVKTrace-<pid>-<timestamp>/` subdirectory. Under Wine, DXVK may otherwise emit no standalone logfile. After each test the launcher reports `DXVK_EVIDENCE DLL_LOADED` only if that fresh directory contains a `*_d3d9.log`; otherwise it reports `DXVK_EVIDENCE UNCONFIRMED`. The log confirms that the D3D9 DXVK DLL loaded, **not** that the renderer initialized or gameplay worked. Save and share the entire DXVK log alongside `CyberGladiatorsFix-WineTrace.log` and `CyberGladiatorsCDDA.log`. nGlide selecting DirectX by itself does **not** prove that DXVK rather than WineD3D was active.
+
+**DXVK confirmed in the 2026-11-04 14:45 session:** The user-provided `cyber_d3d9.log` explicitly records `DXVK: v3.1.1-174-gf86377680682448-GE-Proton(dirty)` (x86, AMD RADV) and a D3D9 swapchain reset requesting **1920x1080 fullscreen at 60 Hz**. It also reports restoring the desktop mode to **1920x1080 at 120 Hz**. The latest trace in `CyberGladiatorsCDDA.log` records `D3D9_IDENTITY` with PE timestamp `0x6ae97d38` and image size `0x73f000`, followed by the **same** `0xC00000FD` stack overflow inside `d3d9.dll` at RVA `0xBA1E8`, approximately 200 ms after closing the AVI. This establishes that DXVK is actually involved in the failing rendering path, but does not attribute the root cause to DXVK rather than its interaction with nGlide and Wine. The nGlide wrapper currently sets `NGLIDE_REFRESH=2` (60 Hz), whereas the actual desktop runs at 120 Hz. The new trace-only `--dxvk-desktop-refresh` command overrides **only** `NGLIDE_REFRESH=1` (by desktop) for the game process. This tests whether removing those refresh-mode switches avoids the crash. It is not a verified fix and normal `--launch` remains unchanged. See the [official nGlide environment variable values](https://zeus-software.com/forum/viewtopic.php?p=4254).
 
 The x86 CDDA bridge also records `D3D9_IDENTITY` in the cumulative `CyberGladiatorsCDDA.log` immediately after AVI close and again at +200 ms. The snapshot uses `GetModuleHandleA` (not `LoadLibrary`) and reads only the already-loaded `d3d9.dll` PE header, recording path, mapped base, PE machine, TimeDateStamp and SizeOfImage. This **does not identify DXVK on its own**; compare it with the unique DXVK log folder. It allows comparing whether the exact same D3D9 binary was involved in the previously observed stack overflow, including runs where no DXVK log appeared. There is no in-memory graphics hook for these renderer tests; the snapshot does not change any game state, game file, nGlide setting or rendering behavior. Capture the section beginning with the latest `TRACE_SESSION BEGIN` instead of earlier cumulative sessions. The DXVK deferred-surface experiment additionally sets `DXVK_CONFIG=d3d9.deferSurfaceCreation = True` **only on the child process**. The current upstream DXVK configuration describes this as postponing Vulkan surface creation until the first D3D9 presentation, useful when an application first renders with another API; this is an unverified hypothesis for the crash when switching back from the Cinepak splash to nGlide.
 
