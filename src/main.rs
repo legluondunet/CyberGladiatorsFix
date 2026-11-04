@@ -31,6 +31,7 @@ Usage:
   CyberGladiatorsFix.exe --max-graphics  Maximize verified game settings
   CyberGladiatorsFix.exe --upgrade-cdda  Approve backed-up unknown DLL upgrade
   CyberGladiatorsFix.exe --check-bundle  Validate embedded 32-bit components
+  CyberGladiatorsFix.exe --dxvk-rootcause  Reproduce native AVI/DXVK crash (diagnostic)
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
@@ -201,11 +202,34 @@ fn isolated_intro_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     restore?;
     result
 }
+/// Reproduce the ORIGINAL in-process MCIAVI -> nGlide D3D9/DXVK crash.
+/// This explicitly bypasses our external-video curtain. No invasive Glide
+/// pointer hook is enabled. The first-chance observer in the optional CDDA
+/// bridge collects the faulting instruction and a bounded stack fingerprint.
+fn diagnose_dxvk(root:&Path)->Result<(),String>{
+    let game=root.join(install::DIR);
+    settings::ensure(&game)?;
+    if settings::read(&game)? {
+        return Err("DXVK root-cause reproduction requires [Video] SkipIntro=0 in the existing game INI; do not alter the original game assets".into());
+    }
+    if !settings::read_cdda(&game)? {
+        return Err("DXVK root-cause stack observer requires [Audio] EnableCDDA=1 to load the 32-bit diagnostic bridge; no other file is modified".into());
+    }
+    show("DXVK_ROOTCAUSE BEGIN mode=native_in_game_AVI renderer=nGlide_D3D9 diagnostic_glide_hook=OFF external_video=OFF dxvk_deferred_surface=OFF",root);
+    show("DXVK_ROOTCAUSE Purpose: observe first-chance 0xC00000FD, capture fault instruction bytes, candidate x86 stack addresses and fresh DXVK D3D9 log; no fixes or workarounds applied",root);
+    let (child,dxvk_dir)=verify::launch_renderer_ab(root,"1",false,false)?;
+    show(&format!("DXVK_ROOTCAUSE GAME_STARTED pid={} native_avi=ON (may reproduce known crash)",child.id()),root);
+    let result=wait_diagnostic(child,root);
+    report_dxvk_evidence(root,dxvk_dir);
+    show("DXVK_ROOTCAUSE END; EXCEPTION_CAPTURE alone is not a symbolized call stack; see DXVK_STACK_CANDIDATES and DXVK_FAULT_CODE, then use WineDbg if necessary",root);
+    result
+}
 fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
     match args{
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
+        [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root),
         [one] if one.to_str()==Some("--check-bundle")=>{
             let report=bundle::describe()?;
             show(&report,root);
@@ -346,7 +370,7 @@ mod diagnostics_tests {
     #[test]
     fn help_lists_only_public_single_file_controls(){
         for expected in ["--launch","--trace","--verify","--max-graphics",
-            "--upgrade-cdda","--check-bundle","--3dfx-logo","--version","--help",
+            "--upgrade-cdda","--check-bundle","--dxvk-rootcause","--3dfx-logo","--version","--help",
             "CyberGladiatorsFix.log","isolated AVI player"]{
             assert!(HELP.contains(expected),"{expected}");
         }
