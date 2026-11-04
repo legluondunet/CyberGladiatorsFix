@@ -131,33 +131,37 @@ fn pe_identity(image:&[u8])->Option<(u16,u32,u32)>{
     let size_image=u32::from_le_bytes(image.get(offset+0x50..offset+0x54)?.try_into().ok()?);
     Some((machine,timestamp,size_image))
 }
-pub fn d3d9_identity(stage:&str){
-    if std::env::var("CYBER_GLIDE_TRACE").as_deref()!=Ok("1"){return;}
-    let module=unsafe{GetModuleHandleA(c"d3d9.dll".as_ptr() as *const u8)};
+fn loaded_pe_identity(name:&std::ffi::CStr,label:&str,stage:&str){
+    let module=unsafe{GetModuleHandleA(name.as_ptr().cast())};
     if module.is_null(){
-        crate::log(&format!("D3D9_IDENTITY stage={stage:?} loaded=0"));
+        crate::log(&format!("{label} stage={stage:?} loaded=0"));
         return;
     }
-    let mut name=[0u8;1024];
-    let len=unsafe{GetModuleFileNameA(module,name.as_mut_ptr(),name.len() as u32)} as usize;
-    let path=if len>0&&len<name.len(){
-        String::from_utf8_lossy(&name[..len]).into_owned()
+    let mut out=[0u8;1024];
+    let len=unsafe{GetModuleFileNameA(module,out.as_mut_ptr(),out.len() as u32)} as usize;
+    let path=if len>0 && len<out.len(){
+        String::from_utf8_lossy(&out[..len]).into_owned()
     }else{String::from("path_unavailable")};
-    // Loaded PE images map their header on the first 4-KiB page.
-    // This observer reads only that mapped page, with strict bounds checks
-    // for all PE offsets. Called from the normal trace thread, never from
-    // the exhausted-stack vectored exception callback.
     let header=unsafe{std::slice::from_raw_parts(module as *const u8,4096)};
     let details=match pe_identity(header){
-        Some((machine,timestamp,size_image))=>format!(
-            "machine={machine:#06x} timestamp={timestamp:#010x} size_of_image={size_image:#x}"
-        ),
+        Some((machine,timestamp,size))=>format!(
+            "machine={machine:#06x} timestamp={timestamp:#010x} size_of_image={size:#x}"),
         None=>String::from("pe_header_unavailable"),
     };
     crate::log(&format!(
-        "D3D9_IDENTITY stage={stage:?} loaded=1 base={:#x} path={path:?} {details} (fingerprint_only_not_dxvk_proof)",
+        "{label} stage={stage:?} loaded=1 base={:#x} path={path:?} {details} (fingerprint_only_not_provider_proof)",
         module as usize
     ));
+}
+/// Snapshot the actual legacy video / 3D providers mapped in the same
+/// 32-bit process, never LoadLibrary: this must not change runtime behavior.
+/// GE-Proton may include D7VK's ddraw.dll alongside DXVK's d3d9.dll, but
+/// only these in-process facts and independent provider logs can show it.
+pub fn d3d9_identity(stage:&str){
+    if std::env::var("CYBER_GLIDE_TRACE").as_deref()!=Ok("1"){return;}
+    loaded_pe_identity(c"d3d9.dll","D3D9_IDENTITY",stage);
+    loaded_pe_identity(c"ddraw.dll","DDRAW_IDENTITY",stage);
+    loaded_pe_identity(c"mciavi32.dll","MCIAVI_IDENTITY",stage);
 }
 // All potentially expensive work is strictly outside the VEH: our sampler
 // has its own healthy stack. A stack overflow may already have destroyed
