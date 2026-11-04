@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Read-only checks. Asset hashes are recorded during extraction and are
 //! independently recomputed before launch, including the original backup.
-use crate::{install::{DIR,MANIFEST},cdda,nglide,patch};
+use crate::{install::{DIR,MANIFEST},cdda,nglide,patch,settings};
 use sha2::{Digest,Sha256};
 use std::fs::{self,File};
 use std::io::Read;
@@ -62,8 +62,15 @@ pub fn verify(root:&Path)->Result<String,String>{
     Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes) and nGlide + CDDA DLL"))
 }
 pub fn launch(root:&Path,logo:bool)->Result<Child,String>{
-    verify(root)?;
     let game=root.join(DIR);
+    // For old installations, generate the absent *patcher* INI with
+    // SkipIntro=0. Never touch the game's binary cyber.ini.
+    settings::ensure(&game)?;
+    let skip=settings::read(&game)?;
+    verify(root)?;
+    // Reconcile the exact two-byte intro branch before starting the EXE.
+    // Other videos and CDDA interception are unchanged.
+    patch::set_skip_intro(&game.join("cyber.exe"),skip)?;
     if logo{nglide::check_logo(&game)?;}
     let mut cmd=Command::new(game.join("cyber.exe"));
     cmd.current_dir(&game);
