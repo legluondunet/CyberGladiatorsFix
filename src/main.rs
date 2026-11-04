@@ -8,6 +8,7 @@ mod audio;
 mod install;
 mod nglide;
 mod graphics;
+mod settings;
 mod patch;
 mod verify;
 
@@ -38,6 +39,8 @@ If CyberGladiatorsFix exists, install x86 CDDA DLL and upgrade known USA
 speed/no-CD/intro patches; never re-extract the game or FLACs. Keep cyber.exe.bak.
 --max-graphics edits only two validated quality fields in an existing CYBER.INI
 and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
+CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1.
+The --launch command reads SkipIntro before starting the game;
 close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
@@ -90,11 +93,15 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     if target.exists(){
         if !args.is_empty(){return Err("Installation already exists: refusal to overwrite".into());}
         let exe=target.join("cyber.exe");
-        // Install the x86 bridge before touching the game imports.
+        // Validate the text settings before modifying the game binary.
+        settings::ensure(&target)?;
+        let skip_intro=settings::read(&target)?;
+        // Install the x86 bridge before redirecting the game imports.
         cdda::try_install(root,&target)?;
         let status=patch::apply(&exe)?;
+        let intro=patch::set_skip_intro(&exe,skip_intro)?;
         let glide=nglide::try_install(root,&target)?;
-        show(&format!("{status}. nGlide {}",if glide{"ready"}else{"missing"}),root);
+        show(&format!("{status}. {intro}. nGlide {}",if glide{"ready"}else{"missing"}),root);
         return Ok(());
     }
     let input=if let Some(arg)=args.first(){PathBuf::from(arg)}else{
