@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.1.3 (no-CD startup check).** Windows console CUE/BIN installer, lossless FLAC audio extraction, speed + no-CD check, verifier and game launcher for CyberGladiators (1996).
+**v0.1.4 (startup intro and graphics settings).** Windows CUE/BIN installer, lossless FLAC extraction, timing + no-CD + startup-video fixes, safe graphics settings tool, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -15,12 +15,14 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 
 - 351,776 bytes, SHA-256 `226a04a745addbfe77709aa7ec56bf5c17792c524b31882da7653e1973775624`.
 - Previous speed-only patched SHA-256 `520d516a572f3287458337e8cef1231b5645f59e3952b3f568a2aab8f71af832` (supported for upgrade).
-- Current speed + no-CD patched SHA-256 `d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9`.
+- Previous speed + no-CD patched SHA-256 `d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9` (supported for upgrade).
+- Current speed + no-CD + intro patched SHA-256 `d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6`.
 - `CYBER.EXE.bak` contains the unchanged original.
 - At file offset `0x3116`: relative call displacement `c4 ff ff ff` -> `0e 30 04 00`.
 - At file offset `0x3125`: `b5 ff ff ff` -> `ff 2f 04 00`.
 - Both calls now target the existing `GetTickCount` import trampoline at virtual address `0x00446B28` rather than the old `QueryPerformanceCounter`-based routine.
 - **No-CD startup check:** at raw offset `0x4A16` (VA `0x00405416`), original `e8 4f ff ff ff` (CALL CD-volume check) becomes `b8 01 00 00 00` (`MOV EAX,1`). This skips the original first-CD-drive volume label test for `CYBER`; it does **not** provide CDDA emulation or replace other potentially CD-dependent code. Only the verified USA executable may be patched.
+- **Startup movie:** `0x63FB: 74 2F -> 90 90` bypasses the missing `[Config] CDROM` entry in the old `sierra.ini` when the original installer has not run. `0x640F: 7C 0C -> 90 90` chooses the existing 640×480 `SPLASH4.AVI` instead of the low-resolution `SPLASH.AVI`. Both files use **Cinepak**; Wine/Windows must still be able to decode Cinepak through Video for Windows / MCI.
 - These offsets **must not** be used with unrecognized releases. Unknown hashes are refused and logged.
 
 ## CLI
@@ -29,18 +31,27 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 CyberGladiatorsFix.exe
 CyberGladiatorsFix.exe <disc.cue>
 CyberGladiatorsFix.exe --verify
+CyberGladiatorsFix.exe --max-graphics
 CyberGladiatorsFix.exe --launch [--3dfx-logo]
 CyberGladiatorsFix.exe --help
 CyberGladiatorsFix.exe --version
 ```
 
-Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it verifies or applies the exact speed + no-CD patch (including upgrading the previously speed-patched executable, if its original `.bak` is intact) and attempts to install the user's nGlide DLL.
+Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher and, when a CUE is used, extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it upgrades known prior speed/no-CD patches (including v0.1.3) with the intro fix, provided `cyber.exe.bak` is intact, and attempts to install the user's nGlide DLL. No game resources or FLAC tracks are re-extracted.
 
 `--verify` checks known patched executable identity, original `.bak` identity, installer-recorded SHA-256 values for extracted resources, and presence of a 32-bit `glide.dll`.
 
-**Existing installs:** first run `CyberGladiatorsFix.exe` **without arguments** once to upgrade the current `cyber.exe` from the previous speed-only patch to the new speed + no-CD patch; no CUE/BIN re-extraction is needed. Keep `cyber.exe.bak` untouched. Then run `CyberGladiatorsFix.exe --launch`.
+**Existing installs:** first run `CyberGladiatorsFix.exe` **without arguments** once to upgrade the current executable (speed + no-CD) with the intro fix. Keep `cyber.exe.bak` untouched. To maximize the saved graphics settings, first **exit the game normally**, then run `CyberGladiatorsFix.exe --max-graphics`, followed by `--launch`. This command only edits the two validated fields in an existing 32-byte binary `cyber.ini` and preserves `cyber.ini.bak`. It refuses missing/unknown formats rather than inventing settings for an unplayed game.
 
 `--launch` verifies first, starts CYBER.EXE in the game directory and waits for exit. Configures nGlide locally for the game, without editing global registry. Optional `--3dfx-logo` requires a separately supplied `3DfxSpl.dll`.
+
+## Intro video and graphics
+
+The USA CD ships with both `CYBER/SPLASH.AVI` (320×240, Cinepak video, 22.05-kHz PCM audio) and `CYBER/SPLASH4.AVI` (640×480, same codecs). Both were inspected and decoded from the user-provided original data track. The original game normally skips the video if `[Config] CDROM` is absent from Sierra's Windows-directory `sierra.ini`. The patch bypasses only this legacy condition and selects `SPLASH4.AVI`. It does not install a Cinepak codec, modify the Windows directory or force a separate external video player. **Whether MCI/Cinepak playback works under Wine is still to be tested.**
+
+CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in the game directory. Reverse engineering confirmed two four-byte little-endian fields at offsets `0x10` (internal screen-size index: `0` = 640×480 maximum) and `0x14` (detail index: `3` = maximum of 0–3). `--max-graphics` updates only those two fields, preserves the other 24 bytes and backs up the original once. The internal 640×480 image can be upscaled by nGlide; the option does not add native widescreen rendering.
+
+If `cyber.ini` does not yet exist, launch and exit the game normally so it can write its preferences, then run `--max-graphics`. Alternatively, in the game the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
 
 ## nGlide
 
@@ -96,8 +107,8 @@ is a graphics wrapper and does not automatically supply FLAC playback.
 
 ## Known limitations / investigation
 
-1. **The known CD startup check is bypassed** by replacing one validated call in the original USA executable. Actual game startup/playability *without a mounted CD* still requires validation on Wine/Windows. Other CD-dependent functions may remain.
-2. A Wine test confirmed installation of 342 game resources, all 14 FLAC tracks, and the speed fix with nGlide; the older patched game then stopped at the insert-CD dialog. Gameplay and the new no-CD patch are **not yet validated**.
+1. A Wine report confirmed the game starts without asking for the CD and gameplay speed appears normal after v0.1.3. The no-CD behavior is promising but other CD-dependent features may remain, especially CDDA music.
+2. The original startup AVI was absent and graphics settings were below maximum. The v0.1.4 video/graphics changes target both issues and **are awaiting gameplay confirmation under Wine**; Cinepak MCI/VfW codec support remains a separate dependency.
 3. `--verify` audits extracted files against the **local installation manifest** created from the user's disc; this is an integrity check, not an independently authenticated retail-release database. Different executable editions are refused.
 4. The latest Wine install log reports conversion of 14 audio tracks to FLAC. Their playback in the game is **not** integrated: 44.1 kHz 16-bit stereo PCM is converted losslessly, pregaps before INDEX 01 are excluded, and native CDDA requests may still need handling. This is not a complete bit-perfect CD image/archive.
 5. No executable, game assets, disc images or proprietary nGlide binaries are shipped in this source project.
@@ -111,7 +122,7 @@ cargo test --target x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 ```
 
-The source project includes a Windows GitHub Actions workflow. CI compilation, unit tests and CLI smoke tests have passed; real Windows/Wine gameplay and full retail audio extraction remain unverified.
+The source project includes Windows GitHub Actions compilation, unit tests and CLI smoke tests. The user confirmed game launch without a CD, normal apparent speed, extraction of 342 resources, and FLAC conversion of all 14 audio tracks. The new intro and graphics settings adjustments are not yet verified in the game.
 
 ## Credits and reference
 
