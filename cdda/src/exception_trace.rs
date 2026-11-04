@@ -121,8 +121,8 @@ fn resolve_module(address:usize)->String {
 fn pe_identity(image:&[u8])->Option<(u16,u32,u32)>{
     if image.len()<0x100 || image.get(..2)?!=b"MZ" {return None;}
     let offset=u32::from_le_bytes(image.get(0x3c..0x40)?.try_into().ok()?) as usize;
-    if offset>0x800 || offset.checked_add(0x54)?>image.len(){return None;}
-    if image.get(offset..offset+4)?!=b"PE\\0\\0"{return None;}
+    if offset>0x800 || offset.checked_add(0x54)? > image.len(){return None;}
+    if image.get(offset..offset+4)?!=b"PE\0\0"{return None;}
     let machine=u16::from_le_bytes(image.get(offset+4..offset+6)?.try_into().ok()?);
     let timestamp=u32::from_le_bytes(image.get(offset+8..offset+12)?.try_into().ok()?);
     let size_image=u32::from_le_bytes(image.get(offset+0x50..offset+0x54)?.try_into().ok()?);
@@ -198,7 +198,7 @@ mod tests {
         let mut data=[0u8;4096];
         data[..2].copy_from_slice(b"MZ");
         data[0x3c..0x40].copy_from_slice(&0x80u32.to_le_bytes());
-        data[0x80..0x84].copy_from_slice(b"PE\\0\\0");
+        data[0x80..0x84].copy_from_slice(b"PE\0\0");
         data[0x84..0x86].copy_from_slice(&0x14cu16.to_le_bytes());
         data[0x88..0x8c].copy_from_slice(&0x11223344u32.to_le_bytes());
         data[0xd0..0xd4].copy_from_slice(&0x00200000u32.to_le_bytes());
