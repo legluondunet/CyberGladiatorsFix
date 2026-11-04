@@ -71,6 +71,12 @@ fn require_cd_audio_for_passthru(passthru_noop:bool,enable_cdda:bool)->Result<()
     Ok(())
 }
 pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
+    launch_with_video_delay(root,logo,trace,passthru_noop,0)
+}
+pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64)->Result<Child,String>{
+    if video_delay_ms!=0 && (!trace||logo||passthru_noop||!matches!(video_delay_ms,100|250|500|1000)){
+        return Err("Video close delay requires --launch --trace --video-delay=100|250|500|1000".into());
+    }
     if passthru_noop && (!trace || logo) {
         return Err("--passthru-noop is a trace-only diagnostic experiment".into());
     }
@@ -80,6 +86,9 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
+    if video_delay_ms!=0 && (!enable_cdda || skip){
+        return Err("--video-delay requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1".into());
+    }
     // The diagnostic Glide hook lives exclusively inside the x86 CDDA bridge.
     // A fresh extraction defaults EnableCDDA=0, so running the NO-OP A/B
     // experiment then silently skips the hook and gives a misleading result.
@@ -110,6 +119,8 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
     }
     let mut cmd=Command::new(game.join("cyber.exe"));
     cmd.current_dir(&game);
+    // Prevent ambient environment variables from changing regular launches.
+    cmd.env_remove("CYBER_VIDEO_CLOSE_DELAY_MS");
     if trace {
         // Diagnoses graphics/exception handling without modifying game bytes
         // or the Wine prefix. The trace is opt-in, stored beside the patcher,
@@ -120,6 +131,9 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
         // The x86 CDDA DLL refuses unknown game/Glide pointers and leaves
         // all game files and normal --launch behavior untouched.
         cmd.env("CYBER_GLIDE_TRACE","1");
+        if video_delay_ms!=0{
+            cmd.env("CYBER_VIDEO_CLOSE_DELAY_MS",video_delay_ms.to_string());
+        }
         if passthru_noop {
             // Explicit A/B experiment: the 32-bit bridge suppresses only
             // grSstPassthruMode(1), in memory, after the movie has closed.
@@ -131,7 +145,7 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
         let mut output=fs::OpenOptions::new().create(true).write(true).truncate(true)
             .open(&log).map_err(|e|format!("Cannot create Wine trace log: {e}"))?;
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
@@ -146,6 +160,14 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
 #[cfg(test)]
 mod experimental_launch_tests {
     use super::*;
+    #[test]
+    fn video_delay_is_bounded_and_trace_only(){
+        assert!(matches!(100u64,100|250|500|1000));
+        assert!(matches!(250u64,100|250|500|1000));
+        assert!(matches!(500u64,100|250|500|1000));
+        assert!(matches!(1000u64,100|250|500|1000));
+        assert!(!matches!(10000u64,100|250|500|1000));
+    }
     #[test]
     fn pass_through_experiment_refuses_native_winmm_without_cd_audio_proxy() {
         let failure=require_cd_audio_for_passthru(true,false).unwrap_err();
