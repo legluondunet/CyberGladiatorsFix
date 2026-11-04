@@ -45,13 +45,19 @@ fn safe_name(name:&str)->bool{
     }
     true
 }
+// ISO entries use host-native PathBuf separators when preparing output files.
+// Normalize only lookup / manifest keys so nested files have the same keys on
+// Windows (\u005c\u005c) and Linux (/). Keep PathBuf for actual filesystem operations.
+fn disc_key(path:&Path)->String {
+    path.to_string_lossy().replace('\\',"/")
+}
 fn collect(dir:&TreeNode, parent:&Path, all:&mut Vec<Asset>, seen:&mut BTreeSet<String>)->Result<(),String>{
     for child in &dir.children {
         if all.len()+seen.len()>MAX_ENTRIES{return Err("Too many files on CD".into());}
         if !safe_name(&child.name){return Err(format!("Unsafe name in disc image: {}",child.name));}
         let name=child.name.to_ascii_lowercase();
         let relative=parent.join(&name);
-        let key=relative.to_string_lossy().replace('\\',"/");
+        let key=disc_key(&relative);
         if !seen.insert(key.clone()){return Err(format!("Ambiguous case-colliding disc path: {key}"));}
         if child.is_directory{collect(child,&relative,all,seen)?;continue;}
         if child.size>MAX_BYTES||child.file_length!=Some(child.size)||child.file_location.is_none(){
@@ -145,7 +151,7 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
     let mut seen=BTreeSet::new();
     let mut assets=Vec::new();
     collect(folder,Path::new(""),&mut assets,&mut seen)?;
-    let files:BTreeMap<String,Asset>=assets.into_iter().map(|a|(a.path.to_string_lossy().to_string(),a)).collect();
+    let files:BTreeMap<String,Asset>=assets.into_iter().map(|a|(disc_key(&a.path),a)).collect();
     let exe=files.get("cyber.exe").ok_or("Disc not recognized: CYBER/CYBER.EXE missing")?;
     if exe.size != patch::LEN as u64 {return Err(format!("Unsupported CYBER.EXE size: {}",exe.size));}
     let hash=hash_on_disc(&mut iso,exe)?;
@@ -188,6 +194,27 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
     operation
 }
 
+#[cfg(test)]
+mod disc_key_tests {
+    use super::*;
+    #[test]
+    fn nested_reference_asset_uses_forward_slashes() {
+        let path=Path::new("graphics").join("shell.fnt");
+        assert_eq!(disc_key(&path),"graphics/shell.fnt");
+        let files=BTreeMap::from([(disc_key(&path),42usize)]);
+        assert_eq!(files.get("graphics/shell.fnt"),Some(&42));
+    }
+    #[test]
+    fn deeply_nested_assets_use_forward_slashes() {
+        let path=Path::new("fighters").join("plasma").join("head.dat");
+        assert_eq!(disc_key(&path),"fighters/plasma/head.dat");
+        assert_eq!(disc_key(Path::new("cyber.exe")),"cyber.exe");
+    }
+    #[test]
+    fn backslashes_in_windows_style_keys_are_normalized() {
+        assert_eq!(disc_key(Path::new(r"graphics\shell.fnt")),"graphics/shell.fnt");
+    }
+}
 #[cfg(test)]
 mod cue_selection_tests {
     use super::*;
