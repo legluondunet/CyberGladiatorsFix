@@ -86,12 +86,21 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
     launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,None)
 }
+/// Proton selects WineD3D before the patcher itself starts; an inline
+/// Windows child environment flag cannot reverse that runtime choice.
+fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Result<(),String>{
+    if backend=="1" && proton_wined3d==Some("1") {
+        return Err("DXVK control invalid: PROTON_USE_WINED3D=1 is still enabled. Remove that variable in Lutris and restart the runner before testing DXVK. No game files modified".into());
+    }
+    Ok(())
+}
 /// Opt-in comparison of nGlide Direct3D9 (DXVK under a configured Wine prefix)
 /// versus nGlide's direct Vulkan renderer. Never assume D3D9 implies DXVK.
 /// Each D3D9 experiment writes DXVK logs into its own newly-created folder:
 /// pre-existing DXVK logs can never masquerade as evidence from this run.
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_renderer_test(Some(backend),dxvk_defer_surface,true,true,false,false,0)?;
+    validate_proton_dxvk_preflight(backend,std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
     let log_dir=if backend=="1" {
         let nonce=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|e|format!("System clock error for DXVK trace: {e}"))?.as_nanos();
@@ -247,6 +256,13 @@ mod experimental_launch_tests {
         assert!(err.starts_with("Game asset has changed: iq/iq40.dat"));
         assert!(err.contains("expected size=1024, SHA-256=oldhash"));
         assert!(err.contains("actual size=2048, SHA-256=newhash"));
+    }
+    #[test]
+    fn explicit_proton_wined3d_blocks_dxvk_comparison_not_direct_vulkan(){
+        assert!(validate_proton_dxvk_preflight("1",Some("1")).is_err());
+        assert!(validate_proton_dxvk_preflight("1",Some("0")).is_ok());
+        assert!(validate_proton_dxvk_preflight("1",None).is_ok());
+        assert!(validate_proton_dxvk_preflight("2",Some("1")).is_ok());
     }
     #[test]
     fn renderer_ab_requires_explicit_safe_trace_and_valid_backends(){
