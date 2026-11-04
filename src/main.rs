@@ -3,6 +3,7 @@
 #[cfg(not(windows))]
 compile_error!("CyberGladiatorsFix targets Windows x64 (and Wine on Linux). Build for a Windows target.");
 mod cue;
+mod cdda;
 mod audio;
 mod install;
 mod nglide;
@@ -30,7 +31,7 @@ Usage:
 No arguments: discover exactly one CUE in the current working directory;
 read one or more .bin tracks referenced by that CUE; standalone ISO/BIN is unsupported;
 install CYBER/ into CyberGladiatorsFix beside the patcher, patch CYBER.EXE,
-create CYBER.EXE.bak, generate CYBER.INI with maximum graphics, and extract
+create CYBER.EXE.bak, install the local x86 CDDA bridge, generate CYBER.INI with maximum graphics, and extract
 available CUE AUDIO tracks as TrackNN.flac,
 and optionally copy a user-installed nGlide glide.dll.
 If CyberGladiatorsFix exists, upgrade a verified speed/no-CD patch with the
@@ -39,7 +40,8 @@ startup AVI fix; never re-extract the game. The original .bak is required.
 and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
 close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
-requires a user-provided 32-bit 3DfxSpl.dll. No game or nGlide files bundled.
+requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
+CyberGladiatorsCDDA.dll must be beside this installer. No game or nGlide files bundled.
 Unrecognized CD editions/executables are refused rather than modified.
 ";
 fn show(s:&str,root:&Path){
@@ -87,6 +89,8 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     if target.exists(){
         if !args.is_empty(){return Err("Installation already exists: refusal to overwrite".into());}
         let exe=target.join("cyber.exe");
+        // Install the x86 bridge before touching the game imports.
+        cdda::try_install(root,&target)?;
         let status=patch::apply(&exe)?;
         let glide=nglide::try_install(root,&target)?;
         show(&format!("{status}. nGlide {}",if glide{"ready"}else{"missing"}),root);
