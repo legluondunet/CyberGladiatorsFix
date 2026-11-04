@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Read-only checks. Asset hashes are recorded during extraction and are
 //! independently recomputed before launch, including the original backup.
-use crate::{install::{DIR,MANIFEST},cdda,nglide,patch,settings};
+use crate::{diagnostics,install::{DIR,MANIFEST},cdda,nglide,patch,settings};
 use sha2::{Digest,Sha256};
 use std::fs::{self,File};
 use std::io::{Read,Write};
@@ -143,7 +143,9 @@ fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,de
     let log_dir=if backend=="1" {
         let nonce=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
             .map_err(|e|format!("System clock error for DXVK trace: {e}"))?.as_nanos();
-        let dir=root.join(DIR).join(format!("DXVKTrace-{}-{nonce}",std::process::id()));
+        // DXVK writes its own files; collect them into one log on exit.
+        // Never leave generated trace folders inside the original game tree.
+        let dir=std::env::temp_dir().join(format!("CyberGladiatorsFix-DXVKTrace-{}-{nonce}",std::process::id()));
         fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
         Some(dir)
     }else{None};
@@ -248,8 +250,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
                 // Use a unique, previously nonexistent subdirectory relative
                 // to the game's working directory for unequivocal provenance.
                 let log_dir=dxvk_log_dir.ok_or("DXVK log directory missing for DirectX9 experiment")?;
-                let relative=log_dir.file_name().ok_or("Invalid DXVK log directory")?;
-                cmd.env("DXVK_LOG_PATH",relative);
+                cmd.env("DXVK_LOG_PATH",log_dir);
                 cmd.env("DXVK_HUD","version,devinfo,fps");
                 cmd.env("DXVK_LOG_LEVEL","info");
                 if dxvk_defer_surface {
@@ -277,10 +278,10 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             // The option is never enabled on ordinary --launch.
             cmd.env("CYBER_GLIDE_PASSTHRU_NOOP","1");
         }
-        let log=root.join("CyberGladiatorsFix-WineTrace.log");
-        if log.is_symlink(){return Err("Refusing symlink Wine trace log".into());}
-        let mut output=fs::OpenOptions::new().create(true).write(true).truncate(true)
-            .open(&log).map_err(|e|format!("Cannot create Wine trace log: {e}"))?;
+        let log=diagnostics::location(root);
+        if log.is_symlink(){return Err("Refusing symlink session log".into());}
+        let mut output=fs::OpenOptions::new().append(true)
+            .open(&log).map_err(|e|format!("Cannot append Wine trace to session log: {e}"))?;
         // Proton consumes this option before starting Wine; we record the
         // value visible to the launcher, not an unverified claim about which
         // d3d9.dll implementation was actually loaded.
@@ -291,13 +292,21 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         writeln!(output,"CyberGladiatorsFix --launch --trace")
             .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; NGLIDE_REFRESH={}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if desktop_refresh{"1 (by desktop)"}else{"2 (60 Hz)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"unique directory beside game"}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
-            .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
+            .map_err(|e|format!("Cannot initialize Wine trace in session log: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
         cmd.stdout(Stdio::from(output));
         cmd.stderr(Stdio::from(errors));
     }else{
         nglide::configure(&mut cmd,logo);
     }
+    // All DLL/CDDA logs go directly into the launcher-adjacent session log.
+    cmd.env("CYBER_LOG_FILE",diagnostics::location(root));
+    diagnostics::log(root,"CONFIG",&format!(
+        "GAME launch: SkipIntro={} EnableCDDA={} NGLIDE_BACKEND={} NGLIDE_RESOLUTION=1 NGLIDE_ASPECT=1 NGLIDE_REFRESH={} NGLIDE_VSYNC=1 NGLIDE_GAMMA=5 NGLIDE_SPLASH={} DXVK_defer_surface={} trace={}",
+        u8::from(skip),u8::from(enable_cdda),backend_override.unwrap_or("0"),
+        if desktop_refresh{"1 (desktop)"}else{"2 (60Hz)"},
+        u8::from(logo),u8::from(dxvk_defer_surface),u8::from(trace)
+    ));
     cmd.spawn().map_err(|e|format!("Unable to start CYBER.EXE: {e}"))
 }
 
