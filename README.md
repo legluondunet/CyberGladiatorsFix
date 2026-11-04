@@ -40,19 +40,19 @@ The following opt-in commands perform three **controlled A/B tests** with intro 
 # 1. Explicit nGlide DirectX9 baseline; verify DXVK is actually loaded.
 CyberGladiatorsFix.exe --launch --trace --nglide-d3d9
 
-# 2. Same DirectX9 path, testing DXVK's documented exclusive-fullscreen
-# compatibility quirk; only changes a child-process environment variable.
-CyberGladiatorsFix.exe --launch --trace --dxvk-dialog
+# 2. Same DirectX9 path, testing DXVK's documented Vulkan surface creation compatibility experiment for mixed APIs;
+# only changes a child-process environment variable.
+CyberGladiatorsFix.exe --launch --trace --dxvk-defer-surface
 
 # 3. Control: nGlide native Vulkan, bypasses DXVK's Direct3D9 layer.
 CyberGladiatorsFix.exe --launch --trace --nglide-vulkan
 ```
 
-DXVK experiments set `DXVK_HUD=version,devinfo,fps` and `DXVK_LOG_LEVEL=info`. Check for a DXVK HUD or a fresh `cyber_d3d9.log` **in the game directory, beside `cyber.exe`**. nGlide using DirectX does **not** by itself prove that DXVK rather than WineD3D is active. If the HUD/logs are absent, check the runner/prefix DXVK configuration before interpreting an A/B result. The DXVK dialog experiment additionally sets `DXVK_CONFIG=d3d9.enableDialogMode = True` **only on the child process**, which disables D3D9 exclusive fullscreen; this is an unverified hypothesis for the crash when returning from the Cinepak splash to 3dfx rendering, not a confirmed fix.
+DXVK experiments set `DXVK_HUD=version,devinfo,fps` and `DXVK_LOG_LEVEL=info`. Check for a DXVK HUD or a fresh `cyber_d3d9.log` **in the game directory, beside `cyber.exe`**. nGlide using DirectX does **not** by itself prove that DXVK rather than WineD3D is active. If the HUD/logs are absent, check the runner/prefix DXVK configuration before interpreting an A/B result. The DXVK deferred-surface experiment additionally sets `DXVK_CONFIG=d3d9.deferSurfaceCreation = True` **only on the child process**. The current upstream DXVK configuration describes this as postponing Vulkan surface creation until the first D3D9 presentation, useful when an application first renders with another API; this is an unverified hypothesis for the crash when switching back from the Cinepak splash to nGlide.
 
 Do **not** enable `PROTON_USE_WINED3D=1` in the DXVK comparisons. That setting requests WineD3D instead of DXVK when applied by Proton. Normal `CyberGladiatorsFix.exe --launch` continues to use nGlide backend 0, and native Windows support is unaffected. Do not copy, replace or bundle any Direct3D/nGlide DLLs as part of these tests. All original `IQ/` assets remain unchanged.
 
-References: [nGlide backend environment-variable legend](https://zeus-software.com/forum/viewtopic.php?p=4254), [DXVK README: HUD and logs](https://github.com/doitsujin/dxvk/blob/master/README.md), [DXVK configuration](https://github.com/doitsujin/dxvk/wiki/Configuration), [DXVK's dialog-mode option](https://github.com/doitsujin/dxvk/blob/master/dxvk.conf).
+References: [nGlide backend environment-variable legend](https://zeus-software.com/forum/viewtopic.php?p=4254), [DXVK README: HUD and logs](https://github.com/doitsujin/dxvk/blob/master/README.md), [DXVK configuration](https://github.com/doitsujin/dxvk/wiki/Configuration), [current DXVK D3D9 deferred-surface option](https://github.com/doitsujin/dxvk/blob/master/dxvk.conf).
 
 ## Linux Wine / Proton: Direct3D 9 compatibility investigation (2026-11-04)
 
