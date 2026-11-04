@@ -55,6 +55,8 @@ If `cyber.ini` does not yet exist, launch and exit the game normally so it can w
 
 ## nGlide
 
+The launcher uses the same **process-local** nGlide settings as ScorchedPlanetFix, without editing the Windows/Wine registry: `NGLIDE_BACKEND=2` (Vulkan) if `vulkan-1.dll` can be loaded, otherwise `0` (automatic); `NGLIDE_RESOLUTION=1` (desktop), `NGLIDE_ASPECT=1` (correction), `NGLIDE_REFRESH=2` (60 Hz), `NGLIDE_VSYNC=1` (enabled), `NGLIDE_GAMMA=5` (gamma 1.0), and `NGLIDE_SPLASH=0` unless `--3dfx-logo` is explicitly requested. A loadable Vulkan DLL does not guarantee a working GPU driver. These parameters affect Glide rendering only; the game's AVI playback uses a separate MCI/Video-for-Windows path.
+
 Install the **official nGlide** from [Zeus Software](https://www.zeus-software.com/downloads/nglide). The patcher can copy an already-installed 32-bit `glide.dll` from next to the patcher or from Windows `SysWOW64` into **CyberGladiatorsFix/**. It does not bundle, download or install proprietary DLLs. A historical CD `GLIDE.DLL` is explicitly excluded, so that it cannot replace the modern wrapper.
 
 ## Disc support
