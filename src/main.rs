@@ -160,12 +160,31 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
                 "--nglide-vulkan"=>("2",false,"nGlide native Vulkan control"),
                 _=>unreachable!(),
             };
-            let child=verify::launch_renderer_ab(root,backend,dialog)?;
+            let (child,dxvk_log_dir)=verify::launch_renderer_ab(root,backend,dialog)?;
             show(&format!(
-                "Started CYBER.EXE {label} (no Glide probe, PID {}); renderer={} DXVK_DEFER_SURFACE={} Wine trace at {}",
-                child.id(),backend,dialog,root.join("CyberGladiatorsFix-WineTrace.log").display()
+                "Started CYBER.EXE {label} (no Glide probe, PID {}); renderer={} DXVK_DEFER_SURFACE={} Wine trace at {}; isolated DXVK log folder={}",
+                child.id(),backend,dialog,root.join("CyberGladiatorsFix-WineTrace.log").display(),
+                dxvk_log_dir.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"not applicable (native Vulkan)".into())
             ),root);
-            return wait_diagnostic(child,root);
+            let result=wait_diagnostic(child,root);
+            if let Some(dir)=dxvk_log_dir {
+                let mut logs=Vec::new();
+                if let Ok(entries)=fs::read_dir(&dir) {
+                    for entry in entries.flatten(){
+                        let name=entry.file_name().to_string_lossy().to_string();
+                        if name.to_ascii_lowercase().ends_with("_d3d9.log")
+                            && entry.file_type().is_ok_and(|kind|kind.is_file()) {
+                            logs.push(name);
+                        }
+                    }
+                }
+                if logs.is_empty() {
+                    show(&format!("DXVK_EVIDENCE UNCONFIRMED: no new *_d3d9.log in {}; neither NGLIDE_BACKEND=1 nor an inherited environment setting proves DXVK was loaded",dir.display()),root);
+                }else{
+                    show(&format!("DXVK_EVIDENCE DLL_LOADED: fresh D3D9 log(s) {:?} in {}; examine their contents for DXVK version and initialization errors. This does NOT prove gameplay works",logs,dir.display()),root);
+                }
+            }
+            return result;
         },
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
