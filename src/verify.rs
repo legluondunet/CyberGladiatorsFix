@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Read-only checks. Asset hashes are recorded during extraction and are
 //! independently recomputed before launch, including the original backup.
-use crate::{install::{DIR,MANIFEST},nglide,patch};
+use crate::{install::{DIR,MANIFEST},cdda,nglide,patch};
 use sha2::{Digest,Sha256};
 use std::fs::{self,File};
 use std::io::Read;
@@ -58,7 +58,8 @@ pub fn verify(root:&Path)->Result<String,String>{
         count+=1;bytes+=size;
     }
     nglide::verify(&game)?;
-    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes) and nGlide"))
+    cdda::verify(&game)?;
+    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes) and nGlide + CDDA DLL"))
 }
 pub fn launch(root:&Path,logo:bool)->Result<Child,String>{
     verify(root)?;
