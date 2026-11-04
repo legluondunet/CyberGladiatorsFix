@@ -2,7 +2,7 @@
 //! A single launcher-adjacent log for an invocation and its child processes.
 //! Only whitelisted, troubleshooting-relevant system data is recorded:
 //! never the machine name, username, MAC, registry identifiers or WINEPREFIX.
-use crate::{install,settings};
+use crate::{graphics,install,settings};
 use std::ffi::{c_char,c_void,CStr};
 use std::fs::{self,OpenOptions};
 use std::io::{self,Write};
@@ -218,6 +218,12 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
             _=>write_line(&mut file,"CONFIG",
                 "game settings unavailable or invalid; launcher will validate before modifying game")
                 .map_err(|e|e.to_string())?,
+        }
+        if let Ok(summary)=graphics::describe_saved(&game){
+            write_line(&mut file,"CONFIG",&summary).map_err(|e|e.to_string())?;
+        }else{
+            write_line(&mut file,"CONFIG","CYBER.INI graphics options unavailable or unrecognized")
+                .map_err(|e|e.to_string())?;
         }
     }else{
         write_line(&mut file,"CONFIG","game installation not present yet")
