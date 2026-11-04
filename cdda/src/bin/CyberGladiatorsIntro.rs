@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Process-isolated x86 MCI/Video-for-Windows intro player.
 //! Present the AVI inside our own borderless screen-sized Win32 window.
-//! The helper and every MCI/DirectDraw object exit BEFORE DXVK starts in
-//! CYBER.EXE. No Wine virtual desktop, graphics mode, registry or game file
-//! is created/changed by this helper.
+//! All MCI/DirectDraw resources CLOSE BEFORE DXVK starts in CYBER.EXE.
+//! The helper temporarily keeps only a black Win32 window during game
+//! startup, without creating a Wine desktop or changing game files.
 #![cfg(windows)]
 #![windows_subsystem = "windows"]
 
