@@ -74,6 +74,12 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
     launch_with_video_delay(root,logo,trace,passthru_noop,0)
 }
 pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64)->Result<Child,String>{
+    launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
+}
+pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
+    if no_glide_hook && (!trace||logo||passthru_noop||video_delay_ms!=0){
+        return Err("--no-glide-hook requires --launch --trace without other experiments".into());
+    }
     if video_delay_ms!=0 && (!trace||logo||passthru_noop||!matches!(video_delay_ms,100|250|500|1000)){
         return Err("Video close delay requires --launch --trace --video-delay=100|250|500|1000".into());
     }
@@ -86,6 +92,9 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
+    if no_glide_hook && (!enable_cdda || skip){
+        return Err("--no-glide-hook requires [Audio] EnableCDDA=1 and [Video] SkipIntro=0".into());
+    }
     if video_delay_ms!=0 && (!enable_cdda || skip){
         return Err("--video-delay requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1".into());
     }
@@ -121,6 +130,7 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     cmd.current_dir(&game);
     // Prevent ambient environment variables from changing regular launches.
     cmd.env_remove("CYBER_VIDEO_CLOSE_DELAY_MS");
+    cmd.env_remove("CYBER_GLIDE_HOOK_DISABLED");
     if trace {
         // Diagnoses graphics/exception handling without modifying game bytes
         // or the Wine prefix. The trace is opt-in, stored beside the patcher,
@@ -131,6 +141,9 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
         // The x86 CDDA DLL refuses unknown game/Glide pointers and leaves
         // all game files and normal --launch behavior untouched.
         cmd.env("CYBER_GLIDE_TRACE","1");
+        if no_glide_hook {
+            cmd.env("CYBER_GLIDE_HOOK_DISABLED","1");
+        }
         if video_delay_ms!=0{
             cmd.env("CYBER_VIDEO_CLOSE_DELAY_MS",video_delay_ms.to_string());
         }
@@ -145,7 +158,7 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
         let mut output=fs::OpenOptions::new().create(true).write(true).truncate(true)
             .open(&log).map_err(|e|format!("Cannot create Wine trace log: {e}"))?;
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
