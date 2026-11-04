@@ -27,6 +27,7 @@ Usage:
   CyberGladiatorsFix.exe --upgrade-cdda
   CyberGladiatorsFix.exe --max-graphics
   CyberGladiatorsFix.exe --launch [--3dfx-logo|--trace]\n  CyberGladiatorsFix.exe --launch --trace --passthru-noop
+  CyberGladiatorsFix.exe --launch --trace --video-delay=100|250|500|1000
   CyberGladiatorsFix.exe --help
   CyberGladiatorsFix.exe --version
 
@@ -48,6 +49,10 @@ Both --launch and --launch --trace now use NGLIDE_BACKEND=0 (automatic).
 CyberGladiatorsFix-WineTrace.log beside this launcher.
 --launch --trace --passthru-noop tests bypassing only grSstPassthruMode(1)
 after the intro AVI, using an in-memory diagnostic hook; no files are patched.
+--launch --trace --video-delay=N waits N milliseconds after native WinMM
+closes the opening AVI and BEFORE the game can restore Glide; only
+100, 250, 500 or 1000 are allowed. Requires SkipIntro=0 and EnableCDDA=1.
+This is a diagnostic experiment, not a permanent video compatibility fix.
 Close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
 requires a user-provided 32-bit 3DfxSpl.dll. The bundled-build x86
@@ -65,6 +70,10 @@ fn require_cue(path:&Path)->Result<(),String>{
         return Err("Expected a .cue sheet referencing one or more .bin files; ISO/BIN files cannot be selected directly".into());
     }
     Ok(())
+}
+fn parse_video_delay(arg:&str)->Option<u64>{
+    let number=arg.strip_prefix("--video-delay=")?.parse::<u64>().ok()?;
+    matches!(number,100|250|500|1000).then_some(number)
 }
 fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
@@ -87,6 +96,19 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let mut child=verify::launch(root,false,true,false)?;
             show(&format!("Started CYBER.EXE diagnostic mode (PID {}); nGlide backend AUTO, Wine trace at {}",
                 child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()),root);
+            let status=child.wait().map_err(|e|e.to_string())?;
+            if !status.success(){return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));}
+            return Ok(());
+        },
+        [one,two,three] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--trace")
+            && three.to_str().and_then(parse_video_delay).is_some()=>{
+            let delay=three.to_str().and_then(parse_video_delay).unwrap();
+            let mut child=verify::launch_with_video_delay(root,false,true,false,delay)?;
+            show(&format!(
+                "Started CYBER.EXE video-close delay experiment ({delay} ms, PID {}); Wine trace at {}",
+                child.id(),root.join("CyberGladiatorsFix-WineTrace.log").display()
+            ),root);
             let status=child.wait().map_err(|e|e.to_string())?;
             if !status.success(){return Err(format!("Game exited with status {status}; see CyberGladiatorsFix-WineTrace.log"));}
             return Ok(());
@@ -155,11 +177,22 @@ fn main(){
 mod diagnostics_tests {
     use super::*;
     #[test]
+    fn video_delay_cli_accepts_only_safe_bounded_values(){
+        for ms in [100,250,500,1000] {
+            assert_eq!(parse_video_delay(&format!("--video-delay={ms}")),Some(ms));
+        }
+        for arg in ["--video-delay=0","--video-delay=10000","--video-delay=-1",
+                    "--video-delay=wat","--video-delay=500ms","--video-delay="] {
+            assert_eq!(parse_video_delay(arg),None);
+        }
+    }
+    #[test]
     fn help_mentions_debug_trace_command(){
         assert!(HELP.contains("--launch [--3dfx-logo|--trace]"));
         assert!(HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(HELP.contains("NGLIDE_BACKEND=0"));
         assert!(HELP.contains("--launch --trace --passthru-noop"));
         assert!(HELP.contains("--upgrade-cdda"));
+        assert!(HELP.contains("--video-delay=100|250|500|1000"));
     }
 }
