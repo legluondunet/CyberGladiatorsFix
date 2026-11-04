@@ -60,6 +60,29 @@ The next **experimental** x86 player instead creates its own screen-sized, borde
 
 **Important distinction:** The helper does **not** call `wine explorer /desktop` or change Wine's desktop configuration, but it cannot disable a *virtual desktop already configured by Lutris or winecfg*. For a truly borderless screen without the Wine desktop, **turn off** Lutris Wine runner's **Windowed (virtual desktop)** option and verify **winecfg → Graphics → Emulate a virtual desktop** is disabled in the *same prefix*. Lutris has had a reported issue where that desktop option could remain active after switching to Proton: [Lutris issue #6795](https://github.com/lutris/lutris/issues/6795). Do not alter the shared prefix's registry automatically. The new helper behavior remains untested under the user's Wine configuration until the next build and gameplay test.
 
+## Unified user-configuration log (2026-11-04)
+
+**Single file by design:** Every operational invocation starts a new `CyberGladiatorsFix.log` **beside `CyberGladiatorsFix.exe`**. The header logs the launcher version and Git commit, command category, timestamp, Win32-reported OS version, detected Wine version (if present), CPU descriptor (when provided), total RAM, Win32 primary display-adapter name, desktop resolution/refresh, and the effective game-local `CyberGladiatorsFix.ini` settings: `SkipIntro`, `EnableCDDA` and `AllowModifiedIQ`. Where available, it also reads the two **verified** values of the game's original 32-byte `cyber.ini`: internal rendering resolution and graphics detail. Other unknown binary settings are neither interpreted nor logged.
+
+For each game launch the same file records the **configured** nGlide backend/resolution/aspect/refresh/VSync/gamma/splash, CDDA state and any DXVK experiment. A chosen backend is **not** treated as proof that DXVK actually loaded: the game trace reports DLL/log evidence separately. The 32-bit CDDA proxy and FLAC player append to the same log through a process-specific inherited `CYBER_LOG_FILE` path. The separate AVI helper appends its stdout/stderr to this same file. In `--trace` mode, Wine's child-process diagnostics also append there instead of creating `CyberGladiatorsFix-WineTrace.log`. DXVK still needs temporary native files; the launcher reads any fresh DXVK D3D9 log into the main session log and removes its **newly created temporary directory** after successful import. It never removes old traces left by earlier versions. If a fatal error prevents safe import, the temporary traces are preserved for investigation.
+
+Under Wine, native Linux distribution and kernel information is not accessible from the emulated Windows APIs. The optional `CyberGladiatorsFix-Wine.sh` wrapper passes just `CYBER_HOST_OS` and `CYBER_HOST_KERNEL`, so these labels are recorded when launched through that script. Otherwise they are explicitly marked as unavailable, not guessed. Wine-reported GPU names and Windows versions may reflect emulation instead of the actual Linux host. No computer hostname, usernames, MAC addresses, serial numbers, full Wine prefix or arbitrary environment variables are intentionally collected. Paths in crash traces or DXVK driver messages may still contain environment-specific details: review the log before publishing it online.
+
+Sample header (illustrative values only):
+
+```text
+[YYYY-MM-DD HH:MM:SS] [SESSION] BEGIN version=... command=--launch --trace --external-intro pid=...
+[YYYY-MM-DD HH:MM:SS] [SYSTEM] runtime=Wine ... Win32_OS=... CPU=... RAM=... GPU=... DISPLAY=...
+[YYYY-MM-DD HH:MM:SS] [HOST] Linux_distribution=... Linux_kernel=...
+[YYYY-MM-DD HH:MM:SS] [RUNTIME] PROTON_USE_WINED3D=unset WINEDEBUG=set (value omitted) WINEPREFIX=not logged (privacy)
+[YYYY-MM-DD HH:MM:SS] [CONFIG] SkipIntro=0 EnableCDDA=1 AllowModifiedIQ=1 CDDA_FORMAT=FLAC/44100Hz/16bit/stereo
+[YYYY-MM-DD HH:MM:SS] [CONFIG] CYBER.INI internal_resolution=640x480 (index=0) graphics_detail=3/3
+[YYYY-MM-DD HH:MM:SS] [CONFIG] GAME launch: SkipIntro=1 EnableCDDA=1 NGLIDE_BACKEND=1 ...
+[YYYY-MM-DD HH:MM:SS] [SESSION] END success
+```
+
+The exact game-launch settings may differ intentionally from the user's saved INI when the external AVI player uses its isolated startup workaround; both settings are logged separately. Existing log files from earlier builds remain untouched until the next invocation, which then replaces only the **main** session log. `--help` and `--version` do not erase the previous log. This is the first stage of architectural simplification, **not yet** the proposed single-download bundling of the 32-bit DLL/helper.
+
 ## Primary DXVK startup-video fix candidate: isolated AVI player (experimental)
 
 **Root-cause isolation:** The game successfully renders under nGlide DirectX9 → DXVK when `[Video] SkipIntro=1` (user-confirmed, including extended gameplay and CDDA). With `SkipIntro=0`, closing the game's internal `splash4.avi` playback is consistently followed by first-chance stack overflow `0xC00000FD` in DXVK's `d3d9.dll` at RVA `0xBA1E8`, roughly 200 ms later. The same failure persists with no diagnostic Glide hook, at both 60 Hz and desktop 120 Hz, and with the prior deferred-surface experiment. The most useful remaining hypothesis is **graphics/DirectDraw state shared by the MCIAVI video and the game within one process**, not general DXVK incompatibility.
