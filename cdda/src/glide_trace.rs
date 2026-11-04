@@ -278,6 +278,7 @@ fn window_snapshot(stage:&str) {
 pub fn after_video_close(){
     if !enabled(){return;}
     if unsafe{GetModuleHandleA(std::ptr::null())} as usize != EXPECTED_IMAGE_BASE {return;}
+    crate::exception_trace::d3d9_identity("immediately after MCI close");
     window_snapshot("immediately after MCI close");
     // Dense, read-only sampling for the first 500 ms, where the last
     // reproducible trace shows DirectDraw objects disappearing and the game
@@ -289,6 +290,9 @@ pub fn after_video_close(){
             let target=Duration::from_millis(delay);
             if let Some(remaining)=target.checked_sub(start.elapsed()){
                 thread::sleep(remaining);
+            }
+            if delay==200 {
+                crate::exception_trace::d3d9_identity("200 ms after MCI close");
             }
             window_snapshot(&format!("{} ms after MCI close",delay));
         }
