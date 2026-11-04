@@ -4,8 +4,6 @@
 //! the game thread or DllMain. CD track numbering includes data Track 01.
 use claxon::FlacReader;
 use std::ffi::c_void;
-use std::fs::{self,OpenOptions};
-use std::io::Write;
 use std::path::{Path,PathBuf};
 use std::sync::{mpsc,Arc};
 use std::sync::atomic::{AtomicU32,Ordering};
@@ -52,9 +50,9 @@ extern "system" {
     #[link_name="waveOutGetPosition"] fn wave_out_get_position(handle:*mut c_void,
        time:*mut MmTime,size:u32)->u32;
 }
-fn log(root:&Path,s:&str){
-    if let Ok(mut f)=OpenOptions::new().create(true).append(true)
-        .open(root.join("CyberGladiatorsCDDA.log")){let _=writeln!(f,"{s}");}
+fn log(_root:&Path,s:&str){
+    // Share the DLL's central session log, never create a track-player log.
+    crate::log(s);
 }
 pub struct Shared {
     pub mode:AtomicU32,
