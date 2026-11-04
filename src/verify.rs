@@ -133,8 +133,15 @@ pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,deskto
 /// The isolated MCI player has already completed successfully. The separate
 /// game process must skip its own AVI or we would still hit the DXVK crash.
 /// Only the exact known SkipIntro hash is applied; the user's INI is unchanged.
-pub fn launch_after_external_intro(root:&Path)->Result<(Child,Option<std::path::PathBuf>),String>{
-    launch_renderer_experiment(root,"1",false,false,Some(true))
+pub fn launch_after_external_intro(root:&Path,trace:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+    if trace {
+        return launch_renderer_experiment(root,"1",false,false,Some(true));
+    }
+    // Normal launch: same validated isolated-AVI -> nGlide D3D9 path,
+    // without Wine/Glide/DXVK debug capture or temporary DXVK folders.
+    validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
+    let child=launch_with_renderer_test(root,false,false,false,0,true,Some("1"),false,false,None,Some(true))?;
+    Ok((child,None))
 }
 fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,skip_intro_override:Option<bool>)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_renderer_test(Some(backend),dxvk_defer_surface,true,true,false,false,0)?;
@@ -162,11 +169,21 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
     Ok(())
 }
 fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,skip_intro_override:Option<bool>)->Result<Child,String>{
-    validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
-    if skip_intro_override.is_some() && (skip_intro_override!=Some(true) || backend_override!=Some("1") || !no_glide_hook || !trace){
-        return Err("External intro can only skip the internal AVI in a DXVK trace-only, no-Glide-hook launch".into());
+    // External intro is not a renderer experiment: its own x86 process
+    // has already disposed every MCI device before game startup. Permit
+    // this sole, hash-verified route during normal launch as well as trace.
+    let isolated=skip_intro_override==Some(true)
+        && backend_override==Some("1") && no_glide_hook
+        && !logo && !passthru_noop && video_delay_ms==0
+        && !dxvk_defer_surface && !desktop_refresh
+        && (trace||dxvk_log_dir.is_none());
+    if !isolated {
+        validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
     }
-    if no_glide_hook && (!trace||logo||passthru_noop||video_delay_ms!=0){
+    if skip_intro_override.is_some() && !isolated {
+        return Err("External intro requires the isolated MCI player followed by the verified nGlide D3D9 game path".into());
+    }
+    if no_glide_hook && !isolated && (!trace||logo||passthru_noop||video_delay_ms!=0){
         return Err("--no-glide-hook requires --launch --trace without other experiments".into());
     }
     if video_delay_ms!=0 && (!trace||logo||passthru_noop||!matches!(video_delay_ms,100|250|500|1000)){
@@ -186,7 +203,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // requires the intro. In a *forced renderer* A/B comparison, permitting
     // SkipIntro=1 provides an important control: D3D9 rendering without the
     // video-to-Glide transition. CDDA stays enabled to preserve diagnostics.
-    if no_glide_hook && (!enable_cdda || (skip && backend_override.is_none())){
+    if no_glide_hook && !isolated && (!enable_cdda || (skip && backend_override.is_none())){
         return Err("--no-glide-hook requires [Audio] EnableCDDA=1 and [Video] SkipIntro=0 unless running a forced renderer comparison".into());
     }
     if video_delay_ms!=0 && (!enable_cdda || skip){
@@ -298,6 +315,11 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         cmd.stderr(Stdio::from(errors));
     }else{
         nglide::configure(&mut cmd,logo);
+        if isolated {
+            // The normal user path deliberately selects the same nGlide
+            // Direct3D9 renderer that worked after the isolated intro.
+            cmd.env("NGLIDE_BACKEND","1");
+        }
     }
     // All DLL/CDDA logs go directly into the launcher-adjacent session log.
     cmd.env("CYBER_LOG_FILE",diagnostics::location(root));
