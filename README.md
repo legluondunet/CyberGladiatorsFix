@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.0 (experimental CDDA bridge).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.1 (optional startup video skip + experimental CDDA bridge).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -17,7 +17,8 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 - Previous speed-only patched SHA-256 `520d516a572f3287458337e8cef1231b5645f59e3952b3f568a2aab8f71af832` (supported for upgrade).
 - Previous speed + no-CD patched SHA-256 `d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162c28ea94bccdaf9` (supported for upgrade).
 - Previous speed + no-CD + intro patched SHA-256 `d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6` (supported for upgrade).
-- Current speed + no-CD + intro + CDDA patched SHA-256 `71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb`.
+- Current speed + no-CD + intro + CDDA patched SHA-256 `71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb` (intro enabled).
+- Current skip-intro + CDDA SHA-256 `05215ec70462c0e34de7a5d3f9bf32adebb0a6a17b2946bcb768efb1db1b328f` (intro disabled). Both variants are verified.
 - `CYBER.EXE.bak` contains the unchanged original.
 - At file offset `0x3116`: relative call displacement `c4 ff ff ff` -> `0e 30 04 00`.
 - At file offset `0x3125`: `b5 ff ff ff` -> `ff 2f 04 00`.
@@ -25,6 +26,7 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 - **No-CD startup check:** at raw offset `0x4A16` (VA `0x00405416`), original `e8 4f ff ff ff` (CALL CD-volume check) becomes `b8 01 00 00 00` (`MOV EAX,1`). This skips the original first-CD-drive volume label test for `CYBER`. The separate CDDA bridge now emulates audio commands, not the physical CD filesystem. Only the verified USA executable may be patched.
 - **Startup movie:** `0x63FB: 74 2F -> 90 90` bypasses the missing `[Config] CDROM` entry in the old `sierra.ini` when the original installer has not run. `0x640F: 7C 0C -> 90 90` chooses the existing 640×480 `SPLASH4.AVI` instead of the low-resolution `SPLASH.AVI`. Both files use **Cinepak**; Wine/Windows must still be able to decode Cinepak through Video for Windows / MCI.
 - **CDDA import redirect:** original WINMM.dll import descriptor name field at file offset `0x4E434` changes from RVA `0x3ED40C` to `0x3EDB00`; the initially empty `.idata` padding at `0x4EF00` receives the name `CyberGladiatorsCDDA.dll`. All 15 imports remain satisfied. The bridge forwards 14 original WinMM functions unchanged and intercepts only `mciSendCommandA` for CD-audio devices; `mciSendStringA` continues to the true WinMM for AVI. The exact final patched executable SHA-256 is `71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb`.
+- **Optional intro skip:** `CyberGladiatorsFix.ini` (a new plain-text file, **not** the original 32-byte binary `cyber.ini`) contains `[Video] SkipIntro=0` by default. With `SkipIntro=1`, the patched `90 90` at file offset `0x63FB` becomes `EB 2F`, jumping to the introduction function's existing epilogue. All other videos and WinMM/CDDA calls remain unchanged. `--launch` reapplies the selected exact-hash patch before each game start.
 - These offsets **must not** be used with unrecognized releases. Unknown hashes are refused and logged.
 
 ## CLI
@@ -39,13 +41,27 @@ CyberGladiatorsFix.exe --help
 CyberGladiatorsFix.exe --version
 ```
 
-Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher, creates a 32-byte `cyber.ini` with the maximum 640×480 internal image size and 3/3 details, and extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it installs the 32-bit `CyberGladiatorsCDDA.dll` supplied beside the patcher and upgrades known prior speed/no-CD/intro patches if `cyber.exe.bak` remains intact. It also attempts to install the user's nGlide DLL. No game resources or FLAC tracks are re-extracted.
+Without arguments, looks for exactly one `.cue` in the current working directory (an `.iso` alongside it is ignored). The CUE references one or more `.bin` files holding the data and optional audio tracks. Standalone `.iso` and `.bin` inputs are deliberately rejected. Installs the **CYBER/** tree from the CD image to **CyberGladiatorsFix/** next to the patcher, creates a 32-byte `cyber.ini` with the maximum 640×480 internal image size and 3/3 details, and extracts available CD AUDIO tracks as `Track02.flac` through `Track15.flac` beside `cyber.exe`. It also creates the separate editable `CyberGladiatorsFix.ini` containing the `SkipIntro` switch. Excludes CD-root installers and obsolete 3dfx hardware drivers. Patches the game and saves its original binary. Does not overwrite an existing installation. When run again with an existing CyberGladiatorsFix directory, it installs the 32-bit `CyberGladiatorsCDDA.dll` supplied beside the patcher and upgrades known prior speed/no-CD/intro patches if `cyber.exe.bak` remains intact. It also attempts to install the user's nGlide DLL. No game resources or FLAC tracks are re-extracted.
 
 `--verify` checks known patched executable identity, original `.bak` identity, installer-recorded SHA-256 values for extracted resources, and presence of a 32-bit `glide.dll`.
 
 **Fresh installs:** `cyber.ini` is created during extraction with maximum internal graphics settings. Both `CyberGladiatorsFix.exe` (Windows x64) and `CyberGladiatorsCDDA.dll` (Windows x86) must be extracted from the same GitHub Actions ZIP beside each other. The patcher copies the DLL into the game directory. **Existing installs:** put the two build files beside the existing patcher and rerun `CyberGladiatorsFix.exe` without arguments once to install the DLL and upgrade the original retail EXE; no CUE/BIN re-extraction is required. Use `--max-graphics` for older installations if desired; this backs up `cyber.ini` as `cyber.ini.bak`. The original `cyber.exe.bak` and all game `IQ/` data are preserved.
 
 `--launch` verifies first, starts CYBER.EXE in the game directory and waits for exit. Configures nGlide locally for the game, without editing global registry. Optional `--3dfx-logo` requires a separately supplied `3DfxSpl.dll`.
+
+## Skipping only the opening video
+
+On a new installation the patcher creates two independent INI files beside `cyber.exe`:
+
+- `cyber.ini` is the **binary 32-byte original game settings** (screen size and details); never add text keys to it.
+- `CyberGladiatorsFix.ini` is **plain UTF-8 text** containing the patcher's options:
+
+```ini
+[Video]
+SkipIntro=0
+```
+
+Change `SkipIntro=1` to skip the opening movie and go directly to the next original game step, or use `SkipIntro=0` to enable the opening movie again. The first time you use the updated patcher on an old installation, it creates the text INI without overwriting existing user files. After changing this setting, always start the game with `CyberGladiatorsFix.exe --launch` (or run the patcher with no arguments once before launching `cyber.exe` directly). The patcher switches between **two precisely SHA-256-verified EXE variants** before launching; this is not a global MCI-video-blocking hack. It leaves `cyber.ini`, FLACs and every `IQ/` file untouched.
 
 ## Intro video and graphics
 
