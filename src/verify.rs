@@ -288,7 +288,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
                 }
             }
         }
-        cmd.env("WINEDEBUG","+seh,+loaddll");
+        // Timestamp, process and thread IDs let us align the WinMM AVI-close
+        // boundary with the first-chance DXVK stack overflow precisely.
+        cmd.env("WINEDEBUG","+timestamp,+pid,+tid,+seh,+loaddll");
         // Only the debug launch observes the native 3dfx-to-VGA transition.
         // The x86 CDDA DLL refuses unknown game/Glide pointers and leaves
         // all game files and normal --launch behavior untouched.
