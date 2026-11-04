@@ -166,9 +166,15 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             // renderer for mode 2, not DXVK. The D3D9 branch uses DXVK only
             // if the Wine prefix actually provides DXVK's d3d9.dll.
             cmd.env("NGLIDE_BACKEND",backend);
+            // A/B baselines must not inherit a prior inline DXVK_CONFIG
+            // value, otherwise the baseline might also use the tweak.
+            cmd.env_remove("DXVK_CONFIG");
             if backend=="1" {
-                // DXVK's HUD and per-process logs confirm whether the actual
-                // DLL implements DXVK; do not mistake a D3D9 selection for it.
+                // On Wine, DXVK does not necessarily write standalone logs
+                // without DXVK_LOG_PATH; force them into the game's working
+                // directory so a fresh cyber_d3d9.log can prove DXVK loaded.
+                // Never remove or overwrite logs ourselves.
+                cmd.env("DXVK_LOG_PATH",".");
                 cmd.env("DXVK_HUD","version,devinfo,fps");
                 cmd.env("DXVK_LOG_LEVEL","info");
                 if dxvk_defer_surface {
@@ -208,7 +214,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             Ok(_)=>"other",Err(_)=>"unset",
         };
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"."}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
