@@ -7,6 +7,7 @@ use std::path::Path;
 use sha2::{Digest,Sha256};
 
 pub const DLL_NAME:&str="CyberGladiatorsCDDA.dll";
+const RECEIPT_NAME:&str="CyberGladiatorsCDDA.sha256";
 fn check(path:&Path)->Result<(),String>{
     let m=fs::symlink_metadata(path)
         .map_err(|e|format!("Missing {DLL_NAME} at {}: {e}",path.display()))?;
@@ -103,6 +104,57 @@ fn broken(hash:&str)->bool{BROKEN_BRIDGES.contains(&hash)}
 fn replaceable_known_release(hash:&str)->bool {
     broken(hash)||KNOWN_RELEASED_BRIDGES.contains(&hash)
 }
+// A locally recorded digest is an integrity receipt, not a signature or
+// proof of publisher identity. Unknown pre-receipt DLLs require explicit
+// one-time consent; subsequent upgrades can verify the installed bytes.
+fn read_receipt(game:&Path)->Result<Option<String>,String>{
+    let path=game.join(RECEIPT_NAME);
+    if !path.exists() && !path.is_symlink(){return Ok(None);}
+    let m=fs::symlink_metadata(&path).map_err(|e|e.to_string())?;
+    if !m.is_file()||m.file_type().is_symlink()||m.len()!=65{
+        return Err("Invalid CDDA digest receipt; refusing automatic upgrade".into());
+    }
+    let contents=fs::read_to_string(&path).map_err(|e|e.to_string())?;
+    let Some(hash)=contents.strip_suffix('\n') else{
+        return Err("Malformed CDDA digest receipt".into());
+    };
+    if hash.len()!=64 || !hash.bytes().all(|b|b.is_ascii_hexdigit() && !b.is_ascii_uppercase()){
+        return Err("Malformed CDDA digest receipt".into());
+    }
+    Ok(Some(hash.to_owned()))
+}
+fn record_receipt(game:&Path,hash:&str)->Result<(),String>{
+    let path=game.join(RECEIPT_NAME);
+    let old=read_receipt(game)?;
+    if old.as_deref()==Some(hash){return Ok(());}
+    let temp=game.join("CyberGladiatorsCDDA.sha256.tmp");
+    if temp.exists()||temp.is_symlink(){
+        return Err("Existing CDDA digest receipt staging file; refusing overwrite".into());
+    }
+    let mut output=OpenOptions::new().write(true).create_new(true).open(&temp)
+        .map_err(|e|format!("Cannot stage CDDA receipt: {e}"))?;
+    if let Err(e)=writeln!(output,"{hash}").and_then(|_|output.sync_all()){
+        drop(output);let _=fs::remove_file(&temp);
+        return Err(format!("Cannot write CDDA digest receipt: {e}"));
+    }
+    drop(output);
+    if path.exists(){
+        // Windows cannot rename over an existing target. Temporarily retire
+        // it and restore on failure, never follow a symlink.
+        let retired=game.join("CyberGladiatorsCDDA.sha256.previous.tmp");
+        if retired.exists()||retired.is_symlink(){let _=fs::remove_file(&temp);return Err("CDDA receipt backup staging path exists".into());}
+        if let Err(e)=fs::rename(&path,&retired){let _=fs::remove_file(&temp);return Err(format!("Cannot retire CDDA receipt: {e}"));}
+        if let Err(e)=fs::rename(&temp,&path){let restore=fs::rename(&retired,&path);let _=fs::remove_file(&temp);return Err(format!("Cannot update CDDA receipt: {e}; restore={restore:?}"));}
+        let _=fs::remove_file(&retired);
+    } else if let Err(e)=fs::rename(&temp,&path){
+        let _=fs::remove_file(&temp);
+        return Err(format!("Cannot install CDDA receipt: {e}"));
+    }
+    Ok(())
+}
+fn allows_upgrade(existing:&str,receipt:Option<&str>,consent:bool)->bool{
+    consent || replaceable_known_release(existing) || receipt==Some(existing)
+}
 fn prior_version_backup(game:&Path,hash:&str)->std::path::PathBuf {
     // Deterministic per-version backup: does not conflict with the existing
     // .previous.bak created when v0.2.1 was updated, and never overwrites it.
@@ -138,6 +190,9 @@ fn install_new(source:&Path,target:&Path,expected:&str)->Result<(),String>{
     Ok(())
 }
 pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
+    try_install_with_consent(root,game,false)
+}
+pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),String>{
     let source=root.join(DLL_NAME);
     check(&source).map_err(|e|format!(
         "{e}. Copy the x86 {DLL_NAME} from the same latest ZIP beside CyberGladiatorsFix.exe."
@@ -150,14 +205,23 @@ pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
     }
     let target=game.join(DLL_NAME);
     if !target.exists() && !target.is_symlink(){
-        return install_new(&source,&target,&wanted);
+        install_new(&source,&target,&wanted)?;
+        return record_receipt(game,&wanted);
     }
     check(&target)?;
     let existing=digest(&target)?;
-    if existing==wanted{return Ok(());}
-    if !replaceable_known_release(&existing){
+    let receipt=read_receipt(game)?;
+    if existing==wanted{
+        // Never silently bless a foreign, unrecognized DLL. The command
+        // --upgrade-cdda grants explicit approval to establish the receipt.
+        if allows_upgrade(&existing,receipt.as_deref(),consent){
+            record_receipt(game,&existing)?;
+        }
+        return Ok(());
+    }
+    if !allows_upgrade(&existing,receipt.as_deref(),consent){
         return Err(format!(
-            "Existing {DLL_NAME} has an unrecognized SHA-256 ({existing}); refusing to overwrite. Replace it manually only after making a backup."
+            "Existing {DLL_NAME} has an unrecognized SHA-256 ({existing}); refusing to overwrite. Run --upgrade-cdda to explicitly approve a backed-up replacement of this x86 DLL."
         ));
     }
     // Upgrade any recognized older project-owned DLL, even if it was not one
@@ -179,6 +243,7 @@ pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
         return Err(format!("Cannot install new CDDA DLL: {e}; restore={restored:?}"));
     }
     verify(game)?;
+    record_receipt(game,&wanted)?;
     Ok(())
 }
 #[cfg(test)]
@@ -249,6 +314,28 @@ mod tests {
     fn never_auto_overwrites_unknown_dll(){
         assert!(!replaceable_known_release("f9b9b6f601e5986d46d1f672fbbd010ca93dafb8087182b55a0fbf7f4ad8ce4d"));
         assert!(replaceable_known_release(BROKEN_BRIDGES[0]));
+    }
+    #[test]
+    fn receipt_matches_only_the_exact_installed_digest(){
+        let old="5c5e1b4e21c7964364846cb811a3263ca0285d394a5e35f348c7450a463c735c";
+        let next="451f7fc3715ac39428779943e24ac823de42eef31d2e80077ad2899269e4066c";
+        assert!(!allows_upgrade(old,None,false));
+        assert!(allows_upgrade(old,None,true));
+        assert!(allows_upgrade(old,Some(old),false));
+        assert!(!allows_upgrade(old,Some(next),false));
+    }
+    #[test]
+    fn receipt_roundtrip_and_malformed_rejected(){
+        let root=std::env::temp_dir().join(format!("cdda-receipt-test-{}",std::process::id()));
+        let _=fs::remove_dir_all(&root);fs::create_dir(&root).unwrap();
+        let hash="5c5e1b4e21c7964364846cb811a3263ca0285d394a5e35f348c7450a463c735c";
+        assert_eq!(read_receipt(&root).unwrap(),None);
+        record_receipt(&root,hash).unwrap();
+        assert_eq!(read_receipt(&root).unwrap().as_deref(),Some(hash));
+        record_receipt(&root,hash).unwrap();
+        fs::write(root.join(RECEIPT_NAME),"not-an-integrity-receipt").unwrap();
+        assert!(read_receipt(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn rejects_invalid_x86_modules(){
