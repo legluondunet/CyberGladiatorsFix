@@ -29,7 +29,7 @@ Usage:
   CyberGladiatorsFix.exe --launch [--3dfx-logo|--trace]\n  CyberGladiatorsFix.exe --launch --trace --passthru-noop
   CyberGladiatorsFix.exe --launch --trace --no-glide-hook
   CyberGladiatorsFix.exe --launch --trace --nglide-d3d9
-  CyberGladiatorsFix.exe --launch --trace --dxvk-dialog
+  CyberGladiatorsFix.exe --launch --trace --dxvk-defer-surface
   CyberGladiatorsFix.exe --launch --trace --nglide-vulkan
   CyberGladiatorsFix.exe --launch --trace --video-delay=100|250|500|1000
   CyberGladiatorsFix.exe --help
@@ -60,9 +60,10 @@ effects of the diagnostic Glide hook.
 --launch --trace --nglide-d3d9 forces nGlide's DirectX9 backend
 (NGLIDE_BACKEND=1) with DXVK HUD and DXVK logging, to verify whether
 a properly configured Wine prefix loads DXVK's d3d9.dll.
---launch --trace --dxvk-dialog additionally sets the documented DXVK
-compatibility option d3d9.enableDialogMode=True (disables exclusive
-fullscreen); it is an unverified workaround, not an automatic fix.
+--launch --trace --dxvk-defer-surface additionally enables DXVK's
+current d3d9.deferSurfaceCreation=True option. It delays Vulkan surface
+creation until the first D3D9 present, useful for mixed-API games.
+This is an unverified workaround, not an automatic fix.
 --launch --trace --nglide-vulkan forces nGlide's own Vulkan backend
 (NGLIDE_BACKEND=2), which bypasses DXVK's Direct3D9 translation.
 These three renderer tests disable the diagnostic Glide hook.
@@ -152,16 +153,16 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
-            && matches!(three.to_str(),Some("--nglide-d3d9"|"--dxvk-dialog"|"--nglide-vulkan"))=>{
+            && matches!(three.to_str(),Some("--nglide-d3d9"|"--dxvk-defer-surface"|"--nglide-vulkan"))=>{
             let (backend,dialog,label)=match three.to_str().unwrap(){
                 "--nglide-d3d9"=>("1",false,"nGlide DirectX9 / DXVK control"),
-                "--dxvk-dialog"=>("1",true,"nGlide DirectX9 / DXVK window-mode experiment"),
+                "--dxvk-defer-surface"=>("1",true,"nGlide DirectX9 / DXVK deferred-surface experiment"),
                 "--nglide-vulkan"=>("2",false,"nGlide native Vulkan control"),
                 _=>unreachable!(),
             };
             let child=verify::launch_renderer_ab(root,backend,dialog)?;
             show(&format!(
-                "Started CYBER.EXE {label} (no Glide probe, PID {}); renderer={} DXVK_DIALOG_MODE={} Wine trace at {}",
+                "Started CYBER.EXE {label} (no Glide probe, PID {}); renderer={} DXVK_DEFER_SURFACE={} Wine trace at {}",
                 child.id(),backend,dialog,root.join("CyberGladiatorsFix-WineTrace.log").display()
             ),root);
             return wait_diagnostic(child,root);
@@ -257,7 +258,7 @@ mod diagnostics_tests {
         assert!(HELP.contains("--video-delay=100|250|500|1000"));
         assert!(HELP.contains("--no-glide-hook"));
         assert!(HELP.contains("--nglide-d3d9"));
-        assert!(HELP.contains("--dxvk-dialog"));
+        assert!(HELP.contains("--dxvk-defer-surface"));
         assert!(HELP.contains("--nglide-vulkan"));
     }
 }
