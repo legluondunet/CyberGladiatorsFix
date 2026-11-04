@@ -10,6 +10,9 @@ pub const NO_CD_ONLY: &str = "d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162
 pub const INTRO_ONLY: &str = "d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6";
 pub const PATCHED: &str = "71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb";
 pub const PATCHED_SKIP_INTRO: &str = "05215ec70462c0e34de7a5d3f9bf32adebb0a6a17b2946bcb768efb1db1b328f";
+/// Verified fallback: original system WinMM import, no experimental CDDA hook.
+pub const PATCHED_NO_CDDA: &str = INTRO_ONLY;
+pub const PATCHED_NO_CDDA_SKIP: &str = "339c2a0a51ab48849bfc12d07d1caf9745a6fef43b80e195c8d404aeb80e2ff9";
 pub const LEN: usize = 351_776;
 const CHANGES: [(usize, [u8;4], [u8;4]); 2] = [
     (0x3116, [0xc4,0xff,0xff,0xff], [0x0e,0x30,0x04,0x00]),
@@ -117,10 +120,10 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
     }
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
-    if [SPEED_ONLY,NO_CD_ONLY,INTRO_ONLY].contains(&hash.as_str()) {
+    if [SPEED_ONLY,NO_CD_ONLY].contains(&hash.as_str()) {
         return Err("Existing CYBER.EXE requires CDDA upgrade. Place CyberGladiatorsCDDA.dll beside CyberGladiatorsFix.exe and rerun patcher without arguments".into());
     }
-    if hash!=PATCHED && hash!=PATCHED_SKIP_INTRO {
+    if ![PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA,PATCHED_NO_CDDA_SKIP].contains(&hash.as_str()) {
         return Err(format!("Unsupported CYBER.EXE: SHA-256 {hash}; expected the recognized CDDA patch with intro enabled/disabled"));
     }
     let backup=backup_path(path);
@@ -166,7 +169,7 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     if !meta.is_file()||meta.file_type().is_symlink(){return Err("CYBER.EXE must be a regular file".into());}
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&data);
-    if hash==PATCHED || hash==PATCHED_SKIP_INTRO {
+    if [PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA,PATCHED_NO_CDDA_SKIP].contains(&hash.as_str()) {
         verify_exe(path)?;
         return Ok("Already patched (verified)");
     }
@@ -217,30 +220,89 @@ const INTRO_SKIP_BYTES:[u8;2]=[0xeb,0x2f];
 /// Applies the [Video] SkipIntro setting before the game starts. Both
 /// exact SHA-256 executable variants are supported and the retail backup
 /// remains untouched. No game assets, IQ data or cyber.ini are modified.
+/// Current exact-hash state of the experimental CDDA import.
+pub fn cdda_active(path:&Path)->Result<bool,String>{
+    verify_exe(path)?;
+    let hash=file_hash(path)?;
+    Ok(hash==PATCHED || hash==PATCHED_SKIP_INTRO)
+}
+
+fn expected_runtime_hash(intro_skip:bool,cdda_enabled:bool)->&'static str{
+    match (intro_skip,cdda_enabled){
+        (false,true)=>PATCHED,
+        (true,true)=>PATCHED_SKIP_INTRO,
+        (false,false)=>PATCHED_NO_CDDA,
+        (true,false)=>PATCHED_NO_CDDA_SKIP,
+    }
+}
+fn is_intro_skipped(hash:&str)->bool{
+    hash==PATCHED_SKIP_INTRO || hash==PATCHED_NO_CDDA_SKIP
+}
+
+/// Switch the exact import-table descriptor between the experimental CDDA
+/// proxy and the system WinMM DLL. Four SHA-256 variants are recognized.
+/// The caller owns the INI toggle; the original retail EXE backup and game
+/// resources are never modified.
+pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
+    verify_exe(path)?;
+    let original=fs::read(path).map_err(|e|e.to_string())?;
+    let hash=digest(&original);
+    let current=hash==PATCHED||hash==PATCHED_SKIP_INTRO;
+    if current==enabled {
+        return Ok(if enabled{"CDDA bridge already enabled"}else{"CDDA bridge already disabled"});
+    }
+    let mut updated=original;
+    let name=u32::from_le_bytes(updated[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4]
+        .try_into().unwrap());
+    let expected_name=if current{CDDA_NAME_RVA}else{OLD_WINMM_RVA};
+    let expected_bytes=if current{CDDA_NAME}else{&[0u8;24]};
+    if name!=expected_name ||
+       updated[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()]!=*expected_bytes{
+        return Err("Unexpected WinMM import name; refusing CDDA toggle".into());
+    }
+    let new_rva=if enabled{CDDA_NAME_RVA}else{OLD_WINMM_RVA};
+    updated[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4].copy_from_slice(&new_rva.to_le_bytes());
+    if enabled{
+        updated[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()].copy_from_slice(CDDA_NAME);
+    }else{
+        updated[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()].fill(0);
+    }
+    if digest(&updated)!=expected_runtime_hash(is_intro_skipped(&hash),enabled){
+        return Err("CDDA toggle checksum mismatch; CYBER.EXE unchanged".into());
+    }
+    replace_exe(path,&updated)?;
+    verify_exe(path)?;
+    Ok(if enabled{"Experimental CDDA enabled"}else{"Experimental CDDA disabled (native WinMM)"})
+}
+
+/// Applies the [Video] SkipIntro setting before game start, independently of
+/// CDDA mode, without modifying cyber.ini, other videos or any IQ files.
 pub fn set_skip_intro(path:&Path,skip:bool)->Result<&'static str,String>{
     verify_exe(path)?;
     let original=fs::read(path).map_err(|e|e.to_string())?;
-    let old_hash=digest(&original);
-    let (from,to,expected_hash)=if skip {
-        (INTRO_PLAY_BYTES,INTRO_SKIP_BYTES,PATCHED_SKIP_INTRO)
-    }else{
-        (INTRO_SKIP_BYTES,INTRO_PLAY_BYTES,PATCHED)
-    };
-    if (skip && old_hash==PATCHED_SKIP_INTRO)||(!skip && old_hash==PATCHED){
-        return Ok(if skip {"Startup intro already disabled"}else{"Startup intro already enabled"});
+    let hash=digest(&original);
+    let cdda=hash==PATCHED||hash==PATCHED_SKIP_INTRO;
+    if skip==is_intro_skipped(&hash){
+        return Ok(if skip{"Startup intro already disabled"}else{"Startup intro already enabled"});
     }
-    if original[SKIP_INTRO_OFFSET..SKIP_INTRO_OFFSET+2]!=from {
+    let (from,to)=if skip {
+        (INTRO_PLAY_BYTES,INTRO_SKIP_BYTES)
+    }else{
+        (INTRO_SKIP_BYTES,INTRO_PLAY_BYTES)
+    };
+    if original[SKIP_INTRO_OFFSET..SKIP_INTRO_OFFSET+2]!=from{
         return Err("Unexpected intro bytes; refusing to modify CYBER.EXE".into());
     }
     let mut updated=original;
     updated[SKIP_INTRO_OFFSET..SKIP_INTRO_OFFSET+2].copy_from_slice(&to);
-    if digest(&updated)!=expected_hash {
+    if digest(&updated)!=expected_runtime_hash(skip,cdda){
         return Err("Startup intro checksum mismatch; CYBER.EXE unchanged".into());
     }
     replace_exe(path,&updated)?;
     verify_exe(path)?;
-    Ok(if skip {"Startup intro disabled by CyberGladiatorsFix.ini"}else{"Startup intro enabled by CyberGladiatorsFix.ini"})
+    Ok(if skip{"Startup intro disabled by CyberGladiatorsFix.ini"}else{"Startup intro enabled by CyberGladiatorsFix.ini"})
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -254,7 +316,7 @@ mod tests {
         }
     }
     #[test] fn known_hashes_are_all_distinct(){
-        let values=[ORIGINAL,SPEED_ONLY,NO_CD_ONLY,INTRO_ONLY,PATCHED,PATCHED_SKIP_INTRO];
+        let values=[ORIGINAL,SPEED_ONLY,NO_CD_ONLY,PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA_SKIP];
         for (i,a) in values.iter().enumerate(){
             for b in values.iter().skip(i+1){assert_ne!(a,b);}
         }
@@ -350,7 +412,19 @@ mod tests {
         let err=patch_bytes(&mut data,Edition::NoCdOnly).unwrap_err();
         assert!(err.contains("intro"));
         assert_eq!(data,unchanged);
-    }    #[test] fn intro_skip_branch_targets_existing_epilogue(){
+    }    #[test] fn all_four_runtime_states_are_distinct(){
+        let values=[PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA,PATCHED_NO_CDDA_SKIP];
+        for (i,v) in values.iter().enumerate(){
+            for other in values.iter().skip(i+1){assert_ne!(v,other);}
+        }
+        assert_eq!(expected_runtime_hash(false,false),INTRO_ONLY);
+        assert_eq!(expected_runtime_hash(true,false),PATCHED_NO_CDDA_SKIP);
+        assert_eq!(expected_runtime_hash(false,true),PATCHED);
+        assert_eq!(expected_runtime_hash(true,true),PATCHED_SKIP_INTRO);
+        assert!(!is_intro_skipped(PATCHED_NO_CDDA));
+        assert!(is_intro_skipped(PATCHED_NO_CDDA_SKIP));
+    }
+    #[test] fn intro_skip_branch_targets_existing_epilogue(){
         assert_eq!(SKIP_INTRO_OFFSET+2+0x2f,0x642c);
         assert_eq!(INTRO_SKIP_BYTES,[0xeb,0x2f]);
         assert_eq!(INTRO_PLAY_BYTES,[0x90,0x90]);
