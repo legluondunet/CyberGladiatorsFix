@@ -64,6 +64,12 @@ pub fn verify(root:&Path)->Result<String,String>{
     }else{"native WinMM (CDDA bypass)"};
     Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}"))
 }
+fn require_cd_audio_for_passthru(passthru_noop:bool,enable_cdda:bool)->Result<(),String>{
+    if passthru_noop && !enable_cdda {
+        return Err("--passthru-noop requires [Audio] EnableCDDA=1 in CyberGladiatorsFix.ini (game folder); no files were patched".into());
+    }
+    Ok(())
+}
 pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
     if passthru_noop && (!trace || logo) {
         return Err("--passthru-noop is a trace-only diagnostic experiment".into());
@@ -78,9 +84,7 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
     // A fresh extraction defaults EnableCDDA=0, so running the NO-OP A/B
     // experiment then silently skips the hook and gives a misleading result.
     // Fail before any change to the game EXE if the bridge is not requested.
-    if passthru_noop && !enable_cdda {
-        return Err("--passthru-noop requires [Audio] EnableCDDA=1 in CyberGladiatorsFix.ini (game folder); no files were patched".into());
-    }
+    require_cd_audio_for_passthru(passthru_noop,enable_cdda)?;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
     // If the user explicitly opts into CDDA, copy/upgrade the project's
@@ -125,4 +129,17 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
         nglide::configure(&mut cmd,logo);
     }
     cmd.spawn().map_err(|e|format!("Unable to start CYBER.EXE: {e}"))
+}
+
+#[cfg(test)]
+mod experimental_launch_tests {
+    use super::*;
+    #[test]
+    fn pass_through_experiment_refuses_native_winmm_without_cd_audio_proxy() {
+        let failure=require_cd_audio_for_passthru(true,false).unwrap_err();
+        assert!(failure.contains("EnableCDDA=1"));
+        assert!(require_cd_audio_for_passthru(true,true).is_ok());
+        assert!(require_cd_audio_for_passthru(false,false).is_ok());
+        assert!(require_cd_audio_for_passthru(false,true).is_ok());
+    }
 }
