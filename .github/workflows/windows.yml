@@ -43,12 +43,16 @@ jobs:
           & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --help
           if ($LASTEXITCODE -ne 0) { throw "Help smoke test failed" }
 
-      - name: Stage Windows launcher and CDDA DLL together
+      - name: Stage Windows launcher, CDDA DLL and isolated x86 intro player
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe dist/
           Copy-Item cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsCDDA.dll dist/
+          Copy-Item cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsIntro.exe dist/
+          $player = (Get-Item dist/CyberGladiatorsIntro.exe).Length
+          if ($player -lt 4096) { throw "Isolated intro player unexpectedly small" }
+          Write-Host "x86 intro player bytes: $player"
           $dll = (Get-Item dist/CyberGladiatorsCDDA.dll).Length
           if ($dll -lt 4096) { throw "CDDA DLL unexpectedly small" }
           Write-Host "CDDA DLL bytes: $dll"
