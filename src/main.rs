@@ -11,6 +11,7 @@ mod graphics;
 mod settings;
 mod patch;
 mod verify;
+mod intro;
 
 use std::ffi::OsString;
 use std::fs;
@@ -30,6 +31,7 @@ Usage:
   CyberGladiatorsFix.exe --launch --trace --no-glide-hook
   CyberGladiatorsFix.exe --launch --trace --nglide-d3d9
   CyberGladiatorsFix.exe --launch --trace --dxvk-defer-surface
+  CyberGladiatorsFix.exe --launch --trace --external-intro
   CyberGladiatorsFix.exe --launch --trace --dxvk-desktop-refresh
   CyberGladiatorsFix.exe --launch --trace --nglide-vulkan
   CyberGladiatorsFix.exe --launch --trace --video-delay=100|250|500|1000
@@ -71,6 +73,16 @@ a properly configured Wine prefix loads DXVK's d3d9.dll.
 current d3d9.deferSurfaceCreation=True option. It delays Vulkan surface
 creation until the first D3D9 present, useful for mixed-API games.
 This is an unverified workaround, not an automatic fix.
+--launch --trace --external-intro is an experimental AVI/DXVK
+isolation test. It plays splash4.avi via a separate bundled x86 MCI
+helper, waits for the helper to exit, then runs CYBER.EXE through DXVK
+with the in-game introduction skipped. The helper only reads the AVI.
+The user's SkipIntro=0 INI setting is preserved; recognized EXE patch
+bytes are restored after the game exits. No other videos are changed.
+Requires CyberGladiatorsIntro.exe from the same Windows build, an
+installed Wine Video-for-Windows/Cinepak decoder, EnableCDDA=1,
+SkipIntro=0, DXVK enabled, and PROTON_USE_WINED3D unset.
+The intro player writes CyberGladiatorsIntro.log and fails closed.
 --launch --trace --dxvk-desktop-refresh keeps DirectX9 / DXVK but
 asks nGlide for the desktop refresh rate instead of forcing 60 Hz.
 This tests 60/120 Hz mode switches seen in the provided DXVK log.
@@ -130,6 +142,25 @@ fn wait_diagnostic(mut child:std::process::Child,root:&Path)->Result<(),String>{
     }
     Ok(())
 }
+fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
+    if let Some(dir)=dxvk_log_dir {
+        let mut logs=Vec::new();
+        if let Ok(entries)=fs::read_dir(&dir) {
+            for entry in entries.flatten(){
+                let name=entry.file_name().to_string_lossy().to_string();
+                if name.to_ascii_lowercase().ends_with("_d3d9.log")
+                    && entry.file_type().is_ok_and(|kind|kind.is_file()) {
+                    logs.push(name);
+                }
+            }
+        }
+        if logs.is_empty() {
+            show(&format!("DXVK_EVIDENCE UNCONFIRMED: no new *_d3d9.log in {}; an inherited environment value does not prove DXVK loaded",dir.display()),root);
+        }else{
+            show(&format!("DXVK_EVIDENCE DLL_LOADED: fresh D3D9 log(s) {:?} in {}; inspect contents for DXVK version and initialization. This does NOT prove gameplay works",logs,dir.display()),root);
+        }
+    }
+}
 fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
     match args{
@@ -163,6 +194,38 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
+            && three.to_str()==Some("--external-intro")=>{
+            // Isolate 1996 MCIAVI and DXVK in different Wine processes.
+            // This is an explicit experiment, never a normal-launch default.
+            intro::play_before_game(root)?;
+            let exe=root.join(install::DIR).join("cyber.exe");
+            let launched=verify::launch_after_external_intro(root);
+            let (child,dxvk_log_dir)=match launched {
+                Ok(pair)=>pair,
+                Err(e)=>{
+                    // Recover the exact known in-game intro state if a
+                    // failed game spawn left its runtime switch enabled.
+                    let _=patch::set_skip_intro(&exe,false);
+                    return Err(e);
+                }
+            };
+            show(&format!(
+                "INTRO_EXTERNAL GAME_STARTED pid={} skip_internal_avi=1 in-process nGlide/DXVK (game INI retains SkipIntro=0); DXVK log folder={}",
+                child.id(),
+                dxvk_log_dir.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"missing".into())
+            ),root);
+            let game_result=wait_diagnostic(child,root);
+            report_dxvk_evidence(root,dxvk_log_dir);
+            let restored=patch::set_skip_intro(&exe,false);
+            match restored {
+                Ok(_) => show("INTRO_EXTERNAL RESTORED in-game intro patch to SkipIntro=0 after game exit; game INI was unchanged",root),
+                Err(ref e) => show(&format!("INTRO_EXTERNAL RESTORE_FAILED: {e}; next normal launch will reapply the INI setting"),root),
+            }
+            restored?;
+            return game_result;
+        },
+        [one,two,three] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--trace")
             && matches!(three.to_str(),Some("--nglide-d3d9"|"--dxvk-defer-surface"|"--dxvk-desktop-refresh"|"--nglide-vulkan"))=>{
             let (backend,dialog,desktop_refresh,label)=match three.to_str().unwrap(){
                 "--nglide-d3d9"=>("1",false,false,"nGlide DirectX9 / DXVK control"),
@@ -178,23 +241,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
                 dxvk_log_dir.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"not applicable (native Vulkan)".into())
             ),root);
             let result=wait_diagnostic(child,root);
-            if let Some(dir)=dxvk_log_dir {
-                let mut logs=Vec::new();
-                if let Ok(entries)=fs::read_dir(&dir) {
-                    for entry in entries.flatten(){
-                        let name=entry.file_name().to_string_lossy().to_string();
-                        if name.to_ascii_lowercase().ends_with("_d3d9.log")
-                            && entry.file_type().is_ok_and(|kind|kind.is_file()) {
-                            logs.push(name);
-                        }
-                    }
-                }
-                if logs.is_empty() {
-                    show(&format!("DXVK_EVIDENCE UNCONFIRMED: no new *_d3d9.log in {}; neither NGLIDE_BACKEND=1 nor an inherited environment setting proves DXVK was loaded",dir.display()),root);
-                }else{
-                    show(&format!("DXVK_EVIDENCE DLL_LOADED: fresh D3D9 log(s) {:?} in {}; examine their contents for DXVK version and initialization errors. This does NOT prove gameplay works",logs,dir.display()),root);
-                }
-            }
+            report_dxvk_evidence(root,dxvk_log_dir);
             return result;
         },
         [one,two,three] if one.to_str()==Some("--launch")
@@ -289,6 +336,7 @@ mod diagnostics_tests {
         assert!(HELP.contains("--no-glide-hook"));
         assert!(HELP.contains("--nglide-d3d9"));
         assert!(HELP.contains("--dxvk-defer-surface"));
+        assert!(HELP.contains("--external-intro"));
         assert!(HELP.contains("--dxvk-desktop-refresh"));
         assert!(HELP.contains("--nglide-vulkan"));
     }
