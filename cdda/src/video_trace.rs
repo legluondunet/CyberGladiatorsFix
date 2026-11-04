@@ -32,8 +32,12 @@ pub fn before(command:&str)->Option<String>{
 }
 pub fn after(command:&str,code:u32,reply:&str)->Option<String>{
     if !command_is_video(command){return None;}
+    let mut shared=state().lock().unwrap_or_else(|e|e.into_inner());
+    after_in(&mut shared,command,code,reply)
+}
+fn after_in(state:&mut MovieState,command:&str,code:u32,reply:&str)->Option<String>{
+    if !command_is_video(command){return None;}
     let cmd=command.trim().to_ascii_lowercase();
-    let mut state=state().lock().unwrap_or_else(|e|e.into_inner());
     if cmd=="play movie window" {
         state.active=code==0;
         state.started=if code==0{Some(Instant::now())}else{None};
@@ -74,13 +78,14 @@ mod tests {
     }
     #[test]
     fn logs_status_transitions_without_spamming_poll_loop(){
-        let _=after("play movie window",0,"");
-        assert!(after("status movie mode",0,"playing").unwrap().contains("playing"));
-        for _ in 0..398{assert!(after("status movie mode",0,"playing").is_none());}
-        let m=after("status movie mode",0,"playing").unwrap();
+        let mut state=MovieState::default();
+        let _=after_in(&mut state,"play movie window",0,"");
+        assert!(after_in(&mut state,"status movie mode",0,"playing").unwrap().contains("playing"));
+        for _ in 0..398{assert!(after_in(&mut state,"status movie mode",0,"playing").is_none());}
+        let m=after_in(&mut state,"status movie mode",0,"playing").unwrap();
         assert!(m.contains("polls=400"),"{m}");
-        assert!(after("status movie mode",0,"stopped").unwrap().contains("stopped"));
-        assert!(after("close movie",0,"").unwrap().contains("close movie"));
+        assert!(after_in(&mut state,"status movie mode",0,"stopped").unwrap().contains("stopped"));
+        assert!(after_in(&mut state,"close movie",0,"").unwrap().contains("close movie"));
     }
     #[test]
     fn captures_failed_video_commands(){
