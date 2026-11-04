@@ -84,12 +84,23 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
 }
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false)
+    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,None)
 }
 /// Opt-in comparison of nGlide Direct3D9 (DXVK under a configured Wine prefix)
 /// versus nGlide's direct Vulkan renderer. Never assume D3D9 implies DXVK.
-pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface)
+/// Each D3D9 experiment writes DXVK logs into its own newly-created folder:
+/// pre-existing DXVK logs can never masquerade as evidence from this run.
+pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+    validate_renderer_test(Some(backend),dxvk_defer_surface,true,true,false,false,0)?;
+    let log_dir=if backend=="1" {
+        let nonce=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e|format!("System clock error for DXVK trace: {e}"))?.as_nanos();
+        let dir=root.join(DIR).join(format!("DXVKTrace-{}-{nonce}",std::process::id()));
+        fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
+        Some(dir)
+    }else{None};
+    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,log_dir.as_deref())?;
+    Ok((child,log_dir))
 }
 fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
     if backend.is_some_and(|b|!matches!(b,"1"|"2")) || (dxvk_defer_surface && backend!=Some("1")){
@@ -100,7 +111,7 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
     }
     Ok(())
 }
-fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool)->Result<Child,String>{
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,dxvk_log_dir:Option<&Path>)->Result<Child,String>{
     validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
     if no_glide_hook && (!trace||logo||passthru_noop||video_delay_ms!=0){
         return Err("--no-glide-hook requires --launch --trace without other experiments".into());
@@ -170,11 +181,12 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             // value, otherwise the baseline might also use the tweak.
             cmd.env_remove("DXVK_CONFIG");
             if backend=="1" {
-                // On Wine, DXVK does not necessarily write standalone logs
-                // without DXVK_LOG_PATH; force them into the game's working
-                // directory so a fresh cyber_d3d9.log can prove DXVK loaded.
-                // Never remove or overwrite logs ourselves.
-                cmd.env("DXVK_LOG_PATH",".");
+                // Wine-side DXVK logs are not necessarily created by default.
+                // Use a unique, previously nonexistent subdirectory relative
+                // to the game's working directory for unequivocal provenance.
+                let log_dir=dxvk_log_dir.ok_or("DXVK log directory missing for DirectX9 experiment")?;
+                let relative=log_dir.file_name().ok_or("Invalid DXVK log directory")?;
+                cmd.env("DXVK_LOG_PATH",relative);
                 cmd.env("DXVK_HUD","version,devinfo,fps");
                 cmd.env("DXVK_LOG_LEVEL","info");
                 if dxvk_defer_surface {
@@ -214,7 +226,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             Ok(_)=>"other",Err(_)=>"unset",
         };
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"."}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND={} {}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"unique directory beside game"}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
