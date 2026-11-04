@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**v0.2.9 (isolated diagnostic A/B test of post-AVI 3dfx pass-through).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
+**v0.2.10 (fail-closed, version-verified post-AVI 3dfx A/B diagnostics).** Windows CUE/BIN installer with lossless FLAC extraction, a 32-bit CD-audio MCI bridge, timing/no-CD/startup-video fixes, graphics preferences, verifier and game launcher for CyberGladiators (1996).
 
 [![Windows x64](https://img.shields.io/badge/Windows-x64-blue)](https://github.com/legluondunet)
 [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux-Wine%20%2F%20Proton-blue)](https://www.winehq.org/)
@@ -106,6 +106,14 @@ The USA CD ships with both `CYBER/SPLASH.AVI` (320×240, Cinepak video, 22.05-kH
 CyberGladiators stores graphics preferences in a 32-byte binary `cyber.ini` in the game directory. Reverse engineering confirmed two four-byte little-endian fields at offsets `0x10` (internal screen-size index: `0` = 640×480 maximum) and `0x14` (detail index: `3` = maximum of 0–3). `--max-graphics` updates only those two fields, preserves the other 24 bytes and backs up the original once. The internal 640×480 image can be upscaled by nGlide; the option does not add native widescreen rendering.
 
 On fresh installations, the 32-byte `cyber.ini` is created using the original USA game-generated file provided for analysis as the baseline; the six non-graphics DWORDs are preserved and are not all independently characterized. The graphics fields are set to `0` (640×480 maximum internal size) and `3` (detail 3/3). This generated file is a writable local game preference, excluded from the immutable CD-file manifest. The game may overwrite these settings when saving preferences. If you prefer adjusting them manually, the original manual specifies `+` / `-` for image size and `]` / `[` for detail.
+
+## In-place diagnostic verification (v0.2.10)
+
+The user's 2026-11-04 uploads show `CyberGladiatorsFix.ini` with `SkipIntro=0`, `EnableCDDA=1`, but a **cumulative** `CyberGladiatorsCDDA.log` containing two non-NOOP `PASSTHRU BEGIN mode=1` events without `BYPASSED` or `END`. The launcher log shows `--launch --trace --passthru-noop` being invoked after an intervening **fresh CUE extraction** that had reset the game's INI to `EnableCDDA=0`. These files do not establish whether the later launch loaded the intended CDDA DLL or whether the uploaded INI was from the game's folder. Do not conclude the diagnostic NOOP failed.
+
+Starting with v0.2.10, `--launch --trace --passthru-noop` refuses to launch unless the **game-folder** `CyberGladiatorsFix.ini` contains `EnableCDDA=1`. After the normal in-place DLL upgrade and game verification, it checks that the DLL beside `CYBER.EXE` is **byte-for-byte identical** to the bundled x86 DLL and emits `PASS-THROUGH A/B PREREQUISITES` in the patcher's `CyberGladiatorsFix.log`, naming the actual settings file, effective settings and DLL SHA-256. The x86 bridge independently logs `GLIDE_RESTORE diagnostic environment present: trace=1 passthru_noop=1` at video startup, even before checking the in-memory hook. The v0.2.9 binary (`a95c5787f3a9b5dc101e673777111257fcf0482bf4dce8340cb5b91b00f5026a`) is explicitly recognized as a project-owned DLL for in-place upgrade, with backup. Unknown DLLs are still refused, and no disc extraction is needed.
+
+**Repro:** close the game; extract **both** v0.2.10 EXE and DLL next to one another (not into the game folder); confirm effective `[Video] SkipIntro=0`, `[Audio] EnableCDDA=1` in `<patcher directory>/CyberGladiatorsFix/CyberGladiatorsFix.ini`; launch `CyberGladiatorsFix.exe --launch --trace --passthru-noop` without extracting the CUE again. Rename the old game `CyberGladiatorsCDDA.log` beforehand so it records only the new test. Supply the patcher log and game CDDA log, and report whether the menu appears. If the NOOP flag is truly active, look for `PASSTHRU BYPASSED mode=1` and `PASSTHRU END mode=1`. Do not declare the 3dfx workaround successful until the menu has been observed.
 
 ## Experimental 3dfx pass-through isolation (v0.2.9)
 
