@@ -74,6 +74,13 @@ pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
+    // The diagnostic Glide hook lives exclusively inside the x86 CDDA bridge.
+    // A fresh extraction defaults EnableCDDA=0, so running the NO-OP A/B
+    // experiment then silently skips the hook and gives a misleading result.
+    // Fail before any change to the game EXE if the bridge is not requested.
+    if passthru_noop && !enable_cdda {
+        return Err("--passthru-noop requires [Audio] EnableCDDA=1 in CyberGladiatorsFix.ini (game folder); no files were patched".into());
+    }
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
     // If the user explicitly opts into CDDA, copy/upgrade the project's
