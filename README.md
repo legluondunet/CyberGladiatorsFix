@@ -29,6 +29,21 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 - **Optional intro skip:** `CyberGladiatorsFix.ini` (a new plain-text file, **not** the original 32-byte binary `cyber.ini`) contains `[Video] SkipIntro=0` by default. With `SkipIntro=1`, the patched `90 90` at file offset `0x63FB` becomes `EB 2F`, jumping to the introduction function's existing epilogue. All other videos and WinMM/CDDA calls remain unchanged. `--launch` reapplies the selected exact-hash patch before each game start.
 - These offsets **must not** be used with unrecognized releases. Unknown hashes are refused and logged.
 
+## Linux Wine / Proton: Direct3D 9 compatibility investigation (2026-11-04)
+
+The current 1996 3dfx game uses the user-supplied nGlide `glide.dll`.
+Our launcher sets `NGLIDE_BACKEND=0` (automatic) for **both** normal and diagnostic runs. Under GE-Proton, the effective Direct3D 9 implementation matters when nGlide returns from the startup video to 3D.
+
+**Reproduced failing case:** With the introduction enabled (`SkipIntro=0`), the CDDA bridge enabled (`EnableCDDA=1`) and diagnostic Glide hooking disabled (`--launch --trace --no-glide-hook`), the entire 40-second `splash4.avi` played. The first-chance exception observer then captured `0xC00000FD` (stack overflow), in `C:\\windows\\system32\\d3d9.dll` at RVA `0xBA1E8` about 200 ms after video close. The window disappeared and its owner thread exited. Because the hook was disabled, its in-memory slot modification **was not required** for the failure.
+
+**Improved A/B run:** After the user was instructed to select `PROTON_USE_WINED3D=1` in **Lutris system environment variables**, two further `--launch --trace --no-glide-hook` sessions exited with status 0 after approximately 40 and **204 seconds**. The longer session had no captured stack overflow, preserved the main window throughout the sampled interval, and the CDDA bridge decoded/played FLAC tracks 06, 07 and 12, including pause/resume, stop and close commands. This is strong evidence of a graphics-backend-dependent incompatibility, but the submitted logs did not independently record the selected `PROTON_USE_WINED3D` environment variable or identify the exact D3D9 DLL build. Do **not** claim DXVK itself has been proven defective, and do not yet declare full gameplay or native Windows compatibility verified.
+
+**Current GE-Proton workaround to validate:** In the individual game's Lutris system environment settings (applied **before starting Proton**), set `PROTON_USE_WINED3D=1`. Proton documents this as using OpenGL-based WineD3D instead of Vulkan-based DXVK for Direct3D 9. The flag is Proton-specific: **do not** set it or modify `d3d9.dll` on native Windows, and do not inject it from the already-running Windows patcher (Proton has already initialized). Leave `NGLIDE_BACKEND=0`. For a production-style check, run `CyberGladiatorsFix.exe --launch` with the same Lutris setting, first verifying complete menus, 3D gameplay, audio, focus, and clean exit. `--launch --trace --no-glide-hook` remains an investigative control, not the recommended normal launch.
+
+New diagnostic launcher builds record the inherited `PROTON_USE_WINED3D` value in the Wine trace header (marked **launcher environment only**, not a reliable determination of the D3D9 backend actually loaded). Nothing modifies the original game resources, `IQ/`, or system DLLs.
+
+Reference: [Valve Proton 11.0 runtime options](https://github.com/ValveSoftware/Proton/blob/proton_11.0/README.md).
+
 ## CLI
 
 ```text
