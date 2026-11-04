@@ -179,20 +179,17 @@ fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
 }
 /// One shared implementation for normal and trace isolated-intro launch.
-/// The isolated AVI/DXVK approach is user-confirmed; the new black
-/// curtain handoff is pending visual validation under Wine.
+/// The isolated AVI/DXVK approach is user-confirmed; native in-process
+/// video remains reserved for the explicit root-cause diagnostic.
 fn isolated_intro_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
-    // The AVI helper closes MCI and keeps its original black fullscreen
-    // window on screen while the separate DXVK game initializes. A single
-    // topmost curtain hides the Wine desktop AND the patcher's console.
-    let mut curtain=intro::start_handoff(root)?;
+    intro::play_before_game(root)?;
     let exe=root.join(install::DIR).join("cyber.exe");
     let launched=verify::launch_after_external_intro(root,trace,logo);
-    let (mut child,dxvk_logs)=match launched{
+    let (child,dxvk_logs)=match launched{
         Ok(pair)=>pair,
         Err(e)=>{
-            // Failure closes the curtain via IntroHandoff::Drop. Restore the
-            // original known intro variant even when game spawn fails.
+            // Attempt to restore the recognized original intro patch if
+            // game creation failed after applying the skip override.
             let _=patch::set_skip_intro(&exe,false);
             return Err(e);
         }
@@ -201,13 +198,6 @@ fn isolated_intro_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
         "INTRO_EXTERNAL GAME_STARTED pid={} runtime_intro_skip=1 trace={} renderer=nGlide-D3D9 (DXVK when configured)",
         child.id(),trace
     ),root);
-    // Never leave the full-screen curtain visible after an error. If Wine's
-    // HWND detection is unreliable, log the warning, kill the helper and
-    // allow the running game to continue rather than orphaning it.
-    if let Err(e)=curtain.reveal_when_ready(&mut child,root){
-        show(&format!("INTRO_HANDOFF WARNING: {e}; forcing curtain cleanup"),root);
-    }
-    drop(curtain);
     let result=if trace{wait_diagnostic(child,root)}else{wait_game(child,root)};
     report_dxvk_evidence(root,dxvk_logs);
     let restore=patch::set_skip_intro(&exe,false);
