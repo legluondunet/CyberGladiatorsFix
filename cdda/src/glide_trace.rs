@@ -137,6 +137,8 @@ fn install()->Result<(),String>{
         if glide.is_null(){return Err("Glide DLL has not been loaded".into());}
         let exact=GetProcAddress(glide,b"_grSstPassthruMode@4\0".as_ptr());
         if exact.is_null(){return Err("Glide DLL lacks _grSstPassthruMode@4".into());}
+        report(&format!("GLIDE_NATIVE module_base={glide:?} passthru_export={exact:?}"));
+
         let slot=(base+PASSTHRU_SLOT_RVA) as *mut usize;
         let current=std::ptr::read_volatile(slot);
         if current!=exact as usize {
