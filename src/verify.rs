@@ -58,8 +58,11 @@ pub fn verify(root:&Path)->Result<String,String>{
         count+=1;bytes+=size;
     }
     nglide::verify(&game)?;
-    cdda::verify(&game)?;
-    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes) and nGlide + CDDA DLL"))
+    let audio=if patch::cdda_active(&game.join("cyber.exe"))? {
+        cdda::verify(&game)?;
+        "CDDA bridge enabled and verified"
+    }else{"native WinMM (CDDA bypass)"};
+    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}"))
 }
 pub fn launch(root:&Path,logo:bool)->Result<Child,String>{
     let game=root.join(DIR);
@@ -67,10 +70,14 @@ pub fn launch(root:&Path,logo:bool)->Result<Child,String>{
     // SkipIntro=0. Never touch the game's binary cyber.ini.
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
+    let enable_cdda=settings::read_cdda(&game)?;
+    let exe=game.join("cyber.exe");
+    patch::verify_exe(&exe)?;
+    // Prepare the exact import and intro variants *before* verification and
+    // launch; disabled CDDA must not load or require the 32-bit DLL.
+    patch::set_cdda(&exe,enable_cdda)?;
+    patch::set_skip_intro(&exe,skip)?;
     verify(root)?;
-    // Reconcile the exact two-byte intro branch before starting the EXE.
-    // Other videos and CDDA interception are unchanged.
-    patch::set_skip_intro(&game.join("cyber.exe"),skip)?;
     if logo{nglide::check_logo(&game)?;}
     let mut cmd=Command::new(game.join("cyber.exe"));
     cmd.current_dir(&game);
