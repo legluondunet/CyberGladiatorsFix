@@ -149,6 +149,27 @@ Without arguments, looks for exactly one `.cue` in the current working directory
 
 `--launch` verifies first, starts CYBER.EXE in the game directory and waits for exit. Configures nGlide locally for the game, without editing global registry. Optional `--3dfx-logo` requires a separately supplied `3DfxSpl.dll`.
 
+## Wine console output and repeatable CDDA upgrades (2026-11-04)
+
+Wine writes its own `fixme:` diagnostics (e.g. `winediag`, `keyboard`, `xinput`) to the console. Those messages are independent of `CyberGladiatorsFix.exe`. To hide only the noisy Wine `fixme:` class for a **normal** command, while preserving Wine errors/warnings and application messages, run:
+
+```sh
+WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --upgrade-cdda
+```
+
+The optional `CyberGladiatorsFix-Wine.sh` from the same Windows ZIP automates this when invoked with ordinary commands:
+
+```sh
+sh CyberGladiatorsFix-Wine.sh --upgrade-cdda
+sh CyberGladiatorsFix-Wine.sh --launch
+```
+
+It respects any explicitly configured `WINEDEBUG`, uses `wine` by default (override by setting `CYBER_WINE` to a custom runner binary), and **does not change WINEDEBUG for `--trace` runs**. It is a convenience wrapper only; ordinary direct `wine CyberGladiatorsFix.exe ...` remains supported. In Lutris, the same result can be achieved with `WINEDEBUG=fixme-all` in the game's environment settings for ordinary launches.
+
+**CDDA backup name collision fix:** Previous versions refused upgrades whenever `CyberGladiatorsCDDA.dll.previous-<first12sha256>.bak` already existed, even if it contained an exact byte-for-byte copy of the old installed DLL. The updater now checks that such a backup is a regular Windows x86 PE DLL whose **full SHA-256 equals the installed old version**. Only then may it reuse the already-preserved backup, performing the replacement through a separate temporary rollback file. On success, that **new temporary duplicate** alone is removed; the archived backup is never overwritten. If staging files already exist, or the archived backup has the wrong hash, is a symlink, or is not a regular file, the updater still refuses and prints the precise conflicting path. It attempts to restore the installed DLL if publication or receipt update fails. This does not relax the rule against overwriting unknown DLLs without explicit `--upgrade-cdda` consent. No game `IQ/` files or original CD assets are touched.
+
+For an existing install, first copy the latest matching `CyberGladiatorsFix.exe` and `CyberGladiatorsCDDA.dll` from the **same** build beside the patcher. Close the game, then run the command above. If a path-specific conflict remains, preserve the listed file and inspect it before taking any manual action: **do not delete `.bak` or `.tmp` automatically**.
+
 ## Safe CDDA bridge upgrades (v0.2.5)
 
 Version 0.2.4 refused to enable CDDA on an existing installation when the game folder contained a **known v0.2.2** DLL, with SHA-256 `567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0`. This fingerprint was verified against the original v0.2.2 GitHub Actions ZIP; it was not a user-modified library. The upgrade logic recognized only the two earliest broken DLLs and incorrectly classified all later project-owned versions as unknown.
