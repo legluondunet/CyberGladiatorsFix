@@ -165,6 +165,16 @@ fn install()->Result<(),String>{
 }
 pub fn maybe_install(){
     if !enabled(){return;}
+    // Control run: preserve MCI, window, and first-chance exception tracing
+    // but never rewrite the game's imported Glide function pointer.
+    // This lets us distinguish a native renderer failure from probe effects.
+    if std::env::var("CYBER_GLIDE_HOOK_DISABLED").as_deref()==Ok("1"){
+        INSTALLED.get_or_init(||{
+            report("GLIDE_HOOK_DISABLED=1 (control run: no IAT slot modification)");
+            false
+        });
+        return;
+    }
     let installed=*INSTALLED.get_or_init(||{
         report(&format!(
             "diagnostic environment present: trace=1 passthru_noop={}",
