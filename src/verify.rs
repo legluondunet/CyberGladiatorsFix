@@ -64,7 +64,10 @@ pub fn verify(root:&Path)->Result<String,String>{
     }else{"native WinMM (CDDA bypass)"};
     Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}"))
 }
-pub fn launch(root:&Path,logo:bool,trace:bool)->Result<Child,String>{
+pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
+    if passthru_noop && (!trace || logo) {
+        return Err("--passthru-noop is a trace-only diagnostic experiment".into());
+    }
     let game=root.join(DIR);
     // For old installations, generate the absent *patcher* INI with
     // SkipIntro=0. Never touch the game's binary cyber.ini.
@@ -94,12 +97,18 @@ pub fn launch(root:&Path,logo:bool,trace:bool)->Result<Child,String>{
         // The x86 CDDA DLL refuses unknown game/Glide pointers and leaves
         // all game files and normal --launch behavior untouched.
         cmd.env("CYBER_GLIDE_TRACE","1");
+        if passthru_noop {
+            // Explicit A/B experiment: the 32-bit bridge suppresses only
+            // grSstPassthruMode(1), in memory, after the movie has closed.
+            // The option is never enabled on ordinary --launch.
+            cmd.env("CYBER_GLIDE_PASSTHRU_NOOP","1");
+        }
         let log=root.join("CyberGladiatorsFix-WineTrace.log");
         if log.is_symlink(){return Err("Refusing symlink Wine trace log".into());}
         let mut output=fs::OpenOptions::new().create(true).write(true).truncate(true)
             .open(&log).map_err(|e|format!("Cannot create Wine trace log: {e}"))?;
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CDDA enabled={enable_cdda}; SkipIntro={skip}"))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+seh,+loaddll; NGLIDE_BACKEND=0 (auto); CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CDDA enabled={enable_cdda}; SkipIntro={skip}",if passthru_noop{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
