@@ -9,6 +9,36 @@ const SIZE:usize=32;
 const RESOLUTION_OFFSET:usize=16;
 const DETAIL_OFFSET:usize=20;
 
+// Reference: 32-byte CYBER.INI written by the USA game and supplied for
+// analysis. Other six DWORDs are retained from this known parseable sample;
+// their exact meanings have not been independently characterized.
+// At offsets 0x10 and 0x14: screen size index 0 and detail 3 are maximum.
+const USA_INI_TEMPLATE:[u32;8]=[1,2,0,0,0,3,4,1];
+
+fn default_bytes()->[u8;SIZE] {
+    let mut data=[0u8;SIZE];
+    for (index,value) in USA_INI_TEMPLATE.iter().enumerate() {
+        data[index*4..index*4+4].copy_from_slice(&value.to_le_bytes());
+    }
+    data
+}
+
+/// Create a known-format 32-byte CYBER.INI inside the staged installation
+/// while extracting a recognized USA CD. Never overwrite an existing file,
+/// and let the caller remove its own staging directory on any error.
+pub fn create_defaults(game:&Path)->Result<(),String> {
+    let path=game.join("cyber.ini");
+    let mut file=OpenOptions::new().write(true).create_new(true).open(&path)
+        .map_err(|e|format!("Cannot create default CYBER.INI at {}: {e}",path.display()))?;
+    let data=default_bytes();
+    if let Err(e)=file.write_all(&data).and_then(|_|file.sync_all()){
+        drop(file);
+        let _=fs::remove_file(&path);
+        return Err(format!("Cannot write default CYBER.INI: {e}"));
+    }
+    Ok(())
+}
+
 fn u32_at(data:&[u8],offset:usize)->u32{
     u32::from_le_bytes(data[offset..offset+4].try_into().unwrap())
 }
@@ -89,6 +119,33 @@ pub fn maximize_saved(game:&Path)->Result<String,String>{
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn generated_defaults_match_valid_usa_ini_layout(){
+        let template=default_bytes();
+        assert_eq!(template.len(),32);
+        assert_eq!(
+            (0..8).map(|i|u32_at(&template,i*4)).collect::<Vec<_>>(),
+            vec![1,2,0,0,0,3,4,1]);
+        assert_eq!(u32_at(&template,RESOLUTION_OFFSET),0);
+        assert_eq!(u32_at(&template,DETAIL_OFFSET),3);
+        let mut second=template;
+        assert!(!maximize_bytes(&mut second).unwrap());
+        assert_eq!(second,template);
+    }
+    #[test]
+    fn creates_ini_at_extraction_and_refuses_overwrite(){
+        let root=std::env::temp_dir().join(format!(
+            "cyber-defaults-{}-{}",std::process::id(),"ini"));
+        let _=fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        create_defaults(&root).unwrap();
+        let ini=root.join("cyber.ini");
+        assert_eq!(fs::read(&ini).unwrap(),default_bytes().to_vec());
+        let err=create_defaults(&root).unwrap_err();
+        assert!(err.contains("Cannot create default CYBER.INI"));
+        assert_eq!(fs::read(&ini).unwrap(),default_bytes().to_vec());
+        fs::remove_dir_all(&root).unwrap();
+    }
     #[test]
     fn patches_only_graphics_dwords(){
         let mut original=[0x55u8;32];
