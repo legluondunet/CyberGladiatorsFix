@@ -29,6 +29,31 @@ This implementation follows the Windows-console, fail-closed, image-extraction a
 - **Optional intro skip:** `CyberGladiatorsFix.ini` (a new plain-text file, **not** the original 32-byte binary `cyber.ini`) contains `[Video] SkipIntro=0` by default. With `SkipIntro=1`, the patched `90 90` at file offset `0x63FB` becomes `EB 2F`, jumping to the introduction function's existing epilogue. All other videos and WinMM/CDDA calls remain unchanged. `--launch` reapplies the selected exact-hash patch before each game start.
 - These offsets **must not** be used with unrecognized releases. Unknown hashes are refused and logged.
 
+## Controlled DXVK compatibility tests (2026-11-04)
+
+The user requested a DXVK solution rather than requiring WineD3D. The nGlide author's official configuration table documents `NGLIDE_BACKEND=0` (automatic), `1` (DirectX) and `2` (Vulkan). **nGlide DirectX9 and nGlide Vulkan are different renderers**. When DXVK is correctly installed and enabled in Wine, nGlide's DirectX9 path should use DXVK's `d3d9.dll`; the native Vulkan path does not use DXVK for this translation.
+
+The following opt-in commands perform three **controlled A/B tests** with intro and CDDA enabled, 3dfx diagnostic pointer hook disabled, and normal settings untouched. All are trace-only and use the original validated game executable:
+
+```powershell
+# Prerequisite: enable DXVK and remove PROTON_USE_WINED3D=1 in Lutris.
+# 1. Explicit nGlide DirectX9 baseline; verify DXVK is actually loaded.
+CyberGladiatorsFix.exe --launch --trace --nglide-d3d9
+
+# 2. Same DirectX9 path, testing DXVK's documented exclusive-fullscreen
+# compatibility quirk; only changes a child-process environment variable.
+CyberGladiatorsFix.exe --launch --trace --dxvk-dialog
+
+# 3. Control: nGlide native Vulkan, bypasses DXVK's Direct3D9 layer.
+CyberGladiatorsFix.exe --launch --trace --nglide-vulkan
+```
+
+DXVK experiments set `DXVK_HUD=version,devinfo,fps` and `DXVK_LOG_LEVEL=info`. Check for a DXVK HUD or a fresh `cyber_d3d9.log` **in the game directory, beside `cyber.exe`**. nGlide using DirectX does **not** by itself prove that DXVK rather than WineD3D is active. If the HUD/logs are absent, check the runner/prefix DXVK configuration before interpreting an A/B result. The DXVK dialog experiment additionally sets `DXVK_CONFIG=d3d9.enableDialogMode = True` **only on the child process**, which disables D3D9 exclusive fullscreen; this is an unverified hypothesis for the crash when returning from the Cinepak splash to 3dfx rendering, not a confirmed fix.
+
+Do **not** enable `PROTON_USE_WINED3D=1` in the DXVK comparisons. That setting requests WineD3D instead of DXVK when applied by Proton. Normal `CyberGladiatorsFix.exe --launch` continues to use nGlide backend 0, and native Windows support is unaffected. Do not copy, replace or bundle any Direct3D/nGlide DLLs as part of these tests. All original `IQ/` assets remain unchanged.
+
+References: [nGlide backend environment-variable legend](https://zeus-software.com/forum/viewtopic.php?p=4254), [DXVK README: HUD and logs](https://github.com/doitsujin/dxvk/blob/master/README.md), [DXVK configuration](https://github.com/doitsujin/dxvk/wiki/Configuration), [DXVK's dialog-mode option](https://github.com/doitsujin/dxvk/blob/master/dxvk.conf).
+
 ## Linux Wine / Proton: Direct3D 9 compatibility investigation (2026-11-04)
 
 The current 1996 3dfx game uses the user-supplied nGlide `glide.dll`.
