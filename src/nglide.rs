@@ -48,10 +48,63 @@ pub fn check_logo(game:&Path)->Result<(),String>{
     valid_pe32_dll(&game.join("3DfxSpl.dll"))
         .map_err(|e|format!("--3dfx-logo requires the optional 32-bit 3DfxSpl.dll in game folder: {e}"))
 }
-pub fn configure(command:&mut Command,logo:bool){
+/// Match ScorchedPlanetFix's per-process nGlide backend policy.
+/// Finding the Vulkan loader does not guarantee a functioning Vulkan driver;
+/// the renderer may still need a manual fallback for unusual Wine setups.
+#[cfg(windows)]
+fn has_vulkan_loader()->bool{
+    use std::ffi::c_void;
+    #[link(name="kernel32")]
+    extern "system"{
+        fn LoadLibraryW(file:*const u16)->*mut c_void;
+        fn FreeLibrary(handle:*mut c_void)->i32;
+    }
+    let path:Vec<u16>="vulkan-1.dll".encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe{
+        let m=LoadLibraryW(path.as_ptr());
+        if m.is_null(){false}else{FreeLibrary(m);true}
+    }
+}
+fn configure_with_backend(command:&mut Command,logo:bool,backend:&str){
     for (key,value) in [
-        ("NGLIDE_RESOLUTION","1"),("NGLIDE_ASPECT","1"),
-        ("NGLIDE_REFRESH","2"),("NGLIDE_VSYNC","1"),
-        ("NGLIDE_GAMMA","5"),("NGLIDE_SPLASH",if logo{"1"}else{"0"}),
+        ("NGLIDE_BACKEND",backend), // 2=Vulkan if loader present; 0=automatic fallback
+        ("NGLIDE_RESOLUTION","1"), // Desktop resolution
+        ("NGLIDE_ASPECT","1"), // Aspect ratio correction
+        ("NGLIDE_REFRESH","2"), // 60 Hz
+        ("NGLIDE_VSYNC","1"), // On
+        ("NGLIDE_GAMMA","5"), // 1.0
+        ("NGLIDE_SPLASH",if logo{"1"}else{"0"}),
     ]{command.env(key,value);}
+}
+pub fn configure(command:&mut Command,logo:bool){
+    let backend=if has_vulkan_loader(){"2"}else{"0"};
+    configure_with_backend(command,logo,backend);
+}
+
+#[cfg(test)]
+mod process_config_tests {
+    use super::*;
+    use std::ffi::OsStr;
+    fn env_value<'a>(cmd:&'a Command,key:&str)->Option<&'a OsStr>{
+        cmd.get_envs().find(|(k,_)|*k==OsStr::new(key)).and_then(|(_,v)|v)
+    }
+    #[test]
+    fn matches_scorched_planet_process_options(){
+        let mut command=Command::new("cyber.exe");
+        configure_with_backend(&mut command,false,"2");
+        for (key,value) in [
+            ("NGLIDE_BACKEND","2"),("NGLIDE_RESOLUTION","1"),
+            ("NGLIDE_ASPECT","1"),("NGLIDE_REFRESH","2"),
+            ("NGLIDE_VSYNC","1"),("NGLIDE_GAMMA","5"),
+            ("NGLIDE_SPLASH","0"),
+        ]{assert_eq!(env_value(&command,key),Some(OsStr::new(value)));}
+        assert_eq!(command.get_envs().count(),7);
+    }
+    #[test]
+    fn auto_fallback_and_opt_in_logo(){
+        let mut command=Command::new("cyber.exe");
+        configure_with_backend(&mut command,true,"0");
+        assert_eq!(env_value(&command,"NGLIDE_BACKEND"),Some(OsStr::new("0")));
+        assert_eq!(env_value(&command,"NGLIDE_SPLASH"),Some(OsStr::new("1")));
+    }
 }
