@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Minimal, conservative CD image installation built on ScorchedPlanetFix's
 //! ISO parser (isomage) and strict known-executable fingerprint design.
-use crate::{audio,cdda,cue,graphics,nglide,patch};
+use crate::{audio,cdda,cue,graphics,nglide,patch,settings};
 use isomage::{cat_node,detect_and_parse_filesystem,TreeNode};
 use sha2::{Digest,Sha256};
 use std::collections::{BTreeSet, BTreeMap};
@@ -187,6 +187,7 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         // does not contain CYBER.INI; the old Windows 95 installer/game would
         // normally generate it. Never alter an existing installation here.
         graphics::create_defaults(&staged)?;
+        settings::ensure(&staged)?;
         let audio_report=audio::extract(cue_path,&staged)?;
         manifest.push_str(&audio_report.manifest_rows);
         fs::write(staged.join(MANIFEST),manifest).map_err(|e|e.to_string())?;
@@ -194,7 +195,7 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
         let audio_note=format!("{} lossless FLAC tracks saved as TrackNN.flac; {} tracks omitted (missing BIN files)",
             audio_report.extracted,audio_report.missing.len());
-        Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), x86 CDDA bridge installed, nGlide {}. Audio: {}. Installed to {}.",
+        Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0), x86 CDDA bridge installed, nGlide {}. Audio: {}. Installed to {}.",
             files.len(),outcome,if has_glide{"installed"}else{"missing (install separately)"},audio_note,destination.display()))
     })();
     if operation.is_err(){let _=fs::remove_dir_all(&staged);}
