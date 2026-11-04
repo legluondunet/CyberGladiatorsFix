@@ -41,7 +41,7 @@ pub fn verify(root:&Path)->Result<String,String>{
 }
 /// A launch can opt in to exact-path, same-size IQ differences without
 /// rewriting the manifest or asset. --verify always calls the strict mode.
-fn verify_launch_assets(root:&Path)->Result<String,String>{
+pub fn verify_launch_assets(root:&Path)->Result<String,String>{
     let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
     let (summary,warnings)=verify_assets(root,allow)?;
     for message in warnings {crate::show(&message,root);}
@@ -113,7 +113,7 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
 }
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None)
+    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,None)
 }
 /// Proton selects WineD3D before the patcher itself starts; an inline
 /// Windows child environment flag cannot reverse that runtime choice.
@@ -128,6 +128,15 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 /// Each D3D9 experiment writes DXVK logs into its own newly-created folder:
 /// pre-existing DXVK logs can never masquerade as evidence from this run.
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+    launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,None)
+}
+/// The isolated MCI player has already completed successfully. The separate
+/// game process must skip its own AVI or we would still hit the DXVK crash.
+/// Only the exact known SkipIntro hash is applied; the user's INI is unchanged.
+pub fn launch_after_external_intro(root:&Path)->Result<(Child,Option<std::path::PathBuf>),String>{
+    launch_renderer_experiment(root,"1",false,false,Some(true))
+}
+fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,skip_intro_override:Option<bool>)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_renderer_test(Some(backend),dxvk_defer_surface,true,true,false,false,0)?;
     if desktop_refresh && backend!="1" {return Err("Desktop-refresh experiment requires the nGlide DirectX9 backend".into());}
     validate_proton_dxvk_preflight(backend,std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
@@ -138,7 +147,7 @@ pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,deskto
         fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
         Some(dir)
     }else{None};
-    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref())?;
+    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),skip_intro_override)?;
     Ok((child,log_dir))
 }
 fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
@@ -150,8 +159,11 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
     }
     Ok(())
 }
-fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>)->Result<Child,String>{
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,skip_intro_override:Option<bool>)->Result<Child,String>{
     validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
+    if skip_intro_override.is_some() && (skip_intro_override!=Some(true) || backend_override!=Some("1") || !no_glide_hook || !trace){
+        return Err("External intro can only skip the internal AVI in a DXVK trace-only, no-Glide-hook launch".into());
+    }
     if no_glide_hook && (!trace||logo||passthru_noop||video_delay_ms!=0){
         return Err("--no-glide-hook requires --launch --trace without other experiments".into());
     }
@@ -165,7 +177,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // For old installations, generate the absent *patcher* INI with
     // SkipIntro=0. Never touch the game's binary cyber.ini.
     settings::ensure(&game)?;
-    let skip=settings::read(&game)?;
+    let configured_skip=settings::read(&game)?;
+    let skip=skip_intro_override.unwrap_or(configured_skip);
     let enable_cdda=settings::read_cdda(&game)?;
     // --no-glide-hook by itself is an AVI/3dfx-transition probe, so it
     // requires the intro. In a *forced renderer* A/B comparison, permitting
