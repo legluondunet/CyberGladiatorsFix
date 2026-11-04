@@ -7,7 +7,6 @@ use std::ffi::{c_char,c_void,CStr};
 use std::fs::{self,OpenOptions};
 use std::io::{self,Write};
 use std::path::{Path,PathBuf};
-use std::time::SystemTime;
 
 pub const LOG_NAME:&str="CyberGladiatorsFix.log";
 
@@ -77,24 +76,25 @@ fn timestamp()->String{
 fn clean(value:&str)->String {
     // Keep user-supplied driver/CPU strings from forging new log records.
     value.chars().map(|c|if c.is_control(){' '}else{c})
-        .take(160).collect::<String>().trim().to_owned()
+        .take(8192).collect::<String>().trim().to_owned()
 }
 fn utf16_name(value:&[u16])->String{
     let end=value.iter().position(|v|*v==0).unwrap_or(value.len());
     clean(&String::from_utf16_lossy(&value[..end]))
 }
 fn gpu_name()->String{
+    let mut fallback=None;
     for index in 0..8{
         let mut dev:DisplayDeviceW=unsafe{std::mem::zeroed()};
         dev.cb=std::mem::size_of::<DisplayDeviceW>() as u32;
         if unsafe{EnumDisplayDevicesW(std::ptr::null(),index,&mut dev,0)}==0{break;}
-        if dev.state_flags&0x4!=0 {return utf16_name(&dev.device_string);}
-        if index==0 {
-            let name=utf16_name(&dev.device_string);
-            if !name.is_empty(){return name;}
+        let name=utf16_name(&dev.device_string);
+        if !name.is_empty(){
+            if dev.state_flags&0x4!=0{return name;}
+            if fallback.is_none(){fallback=Some(name);}
         }
     }
-    "unavailable".into()
+    fallback.unwrap_or_else(||"unavailable".into())
 }
 fn display_info()->String{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
