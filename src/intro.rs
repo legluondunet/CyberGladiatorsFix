@@ -51,6 +51,7 @@ struct WindowSearch {pid:u32,found:*mut c_void}
 #[link(name="user32")]
 unsafe extern "system" {
     fn EnumWindows(callback:Option<unsafe extern "system" fn(*mut c_void,isize)->i32>,param:isize)->i32;
+    fn EnumChildWindows(parent:*mut c_void,callback:Option<unsafe extern "system" fn(*mut c_void,isize)->i32>,param:isize)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn GetWindowRect(hwnd:*mut c_void,rect:*mut Rect)->i32;
@@ -67,9 +68,23 @@ unsafe extern "system" fn find_game_window(hwnd:*mut c_void,param:isize)->i32{
     query.found=hwnd;
     0 // first visible window belonging to the actual CYBER.EXE PID
 }
+/// Some Wine prefixes place the actual game window under explorer's
+/// virtual-desktop parent. If no top-level window belongs to the game PID,
+/// search descendants too; do not change the user's Wine desktop options.
+unsafe extern "system" fn find_nested_game_window(hwnd:*mut c_void,param:isize)->i32{
+    if find_game_window(hwnd,param)==0{return 0;}
+    let query=&mut *(param as *mut WindowSearch);
+    let _=EnumChildWindows(hwnd,Some(find_game_window),param);
+    if query.found.is_null(){1}else{0}
+}
 fn visible_game_window(pid:u32)->Option<*mut c_void>{
     let mut query=WindowSearch{pid,found:std::ptr::null_mut()};
-    unsafe{EnumWindows(Some(find_game_window),(&mut query as *mut WindowSearch) as isize);}
+    unsafe{
+        EnumWindows(Some(find_game_window),(&mut query as *mut WindowSearch) as isize);
+        if query.found.is_null(){
+            EnumWindows(Some(find_nested_game_window),(&mut query as *mut WindowSearch) as isize);
+        }
+    }
     (!query.found.is_null()).then_some(query.found)
 }
 impl Drop for IntroHandoff {
