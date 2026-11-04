@@ -38,7 +38,7 @@ const BROKEN_BRIDGES:[&str;2]=[
     "055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71", // v0.2.1
     "d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb", // prototype
 ];
-const KNOWN_RELEASED_BRIDGES:[&str;21]=[
+const KNOWN_RELEASED_BRIDGES:[&str;22]=[
     "3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29", // forwarder validation ZIP
     "567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0", // v0.2.2
     "acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13", // v0.2.3
@@ -62,6 +62,7 @@ const KNOWN_RELEASED_BRIDGES:[&str;21]=[
     "22103e79824f21907fdf55d0e46eda840bfa812123d446df4056a0bd3dc69ac7", // CI run 91 (v0.2.9 intermediate)
     "66bb6ecc7ba294fbdecd5e0d4888e8dfd4a8bc531fd2718959244325b6095778", // CI run 92 (v0.2.9 intermediate)
     "c1284c8ad3544ff774c62ec4adbf44cbc9d5b6f010e266e3e112b1510c93279a", // v0.2.10 verified ZIP
+    "c1e9d05936d627c09e4e4d3eaa54d46f0818687f5f3d0affd67ca2e7da754c40", // v0.2.11, archive-verified ZIP
 ];
 fn digest(path:&Path)->Result<String,String>{
     let bytes=fs::read(path).map_err(|e|format!("Cannot hash {}: {e}",path.display()))?;
@@ -225,6 +226,7 @@ mod tests {
             ("22103e79824f21907fdf55d0e46eda840bfa812123d446df4056a0bd3dc69ac7","CI run 91 (v0.2.9 intermediate)"),
             ("66bb6ecc7ba294fbdecd5e0d4888e8dfd4a8bc531fd2718959244325b6095778","CI run 92 (v0.2.9 intermediate)"),
             ("c1284c8ad3544ff774c62ec4adbf44cbc9d5b6f010e266e3e112b1510c93279a","v0.2.10 verified ZIP"),
+            ("c1e9d05936d627c09e4e4d3eaa54d46f0818687f5f3d0affd67ca2e7da754c40","v0.2.11 verified ZIP"),
         ] {
             assert!(replaceable_known_release(hash),"{release}");
             assert!(!broken(hash),"{release} was not an infinite-loop build");
