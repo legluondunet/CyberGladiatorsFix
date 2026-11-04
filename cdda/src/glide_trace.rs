@@ -6,7 +6,7 @@
 //! No file is modified, and normal --launch never installs this observer.
 use std::ffi::c_void;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicUsize,Ordering};
+use std::sync::atomic::{AtomicU32,AtomicUsize,Ordering};
 use std::thread;
 use std::time::{Duration,Instant};
 
@@ -20,6 +20,10 @@ const GWL_EXSTYLE:i32=-20;
 
 static INSTALLED:OnceLock<bool>=OnceLock::new();
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
+static GAME_WINDOW_THREAD:AtomicU32=AtomicU32::new(0);
+const THREAD_QUERY_INFORMATION:u32=0x0040;
+const SYNCHRONIZE:u32=0x0010_0000;
+const WAIT_OBJECT_0:u32=0;
 
 #[link(name="kernel32")]
 extern "system" {
@@ -27,6 +31,11 @@ extern "system" {
     fn GetProcAddress(module:*mut c_void,name:*const u8)->*mut c_void;
     fn VirtualProtect(addr:*mut c_void,bytes:usize,new_protection:u32,old:*mut u32)->i32;
     fn GetCurrentProcessId()->u32;
+    fn OpenThread(access:u32,inherit:i32,thread_id:u32)->*mut c_void;
+    fn GetExitCodeThread(thread:*mut c_void,code:*mut u32)->i32;
+    fn WaitForSingleObject(handle:*mut c_void,timeout_ms:u32)->u32;
+    fn CloseHandle(handle:*mut c_void)->i32;
+    fn GetLastError()->u32;
 }
 #[link(name="user32")]
 extern "system" {
@@ -168,6 +177,35 @@ pub fn maybe_install(){
     }
 }
 
+/// Query the original game window thread even after its HWND has been
+/// destroyed. GetExitCodeThread==259 (STILL_ACTIVE) and WaitForSingleObject
+/// must be reported independently: a real thread can exit with code 259.
+fn game_thread_snapshot(stage:&str) {
+    let tid=GAME_WINDOW_THREAD.load(Ordering::Acquire);
+    if tid==0 {
+        report(&format!("WINDOW_THREAD {stage} thread_id=unavailable"));
+        return;
+    }
+    unsafe {
+        let handle=OpenThread(THREAD_QUERY_INFORMATION|SYNCHRONIZE,0,tid);
+        if handle.is_null() {
+            report(&format!(
+                "WINDOW_THREAD {stage} thread_id={tid} OpenThread failed Win32={}",
+                GetLastError()
+            ));
+            return;
+        }
+        let mut code=0u32;
+        let have_code=GetExitCodeThread(handle,&mut code)!=0;
+        let wait=WaitForSingleObject(handle,0);
+        let _=CloseHandle(handle);
+        report(&format!(
+            "WINDOW_THREAD {stage} tid={tid} exit_code={} code_valid={} signaled={} wait={wait:#x}",
+            if have_code {code.to_string()} else {"unknown".to_owned()},
+            if have_code{1}else{0}, if wait==WAIT_OBJECT_0{1}else{0}
+        ));
+    }
+}
 fn window_snapshot(stage:&str) {
     unsafe {
         let hwnd=std::ptr::read_volatile((EXPECTED_IMAGE_BASE+MAIN_WINDOW_RVA) as *const usize)
@@ -175,9 +213,21 @@ fn window_snapshot(stage:&str) {
         let valid=IsWindow(hwnd)!=0;
         let mut owner_pid=0u32;
         let owner_tid=if valid{GetWindowThreadProcessId(hwnd,&mut owner_pid)}else{0};
+        if valid && owner_pid==GetCurrentProcessId() && owner_tid!=0{
+            let _=GAME_WINDOW_THREAD.compare_exchange(
+                0,owner_tid,Ordering::AcqRel,Ordering::Acquire
+            );
+        }
         let foreground=GetForegroundWindow();
         let voodoo_active=std::ptr::read_volatile(0x0044_727c as *const u32);
         let vga_active=std::ptr::read_volatile(0x0044_7278 as *const u32);
+        let directdraw=std::ptr::read_volatile(0x0044_728c as *const u32);
+        let directdraw_primary=std::ptr::read_volatile(0x0044_7290 as *const u32);
+        let directdraw_secondary=std::ptr::read_volatile(0x0044_7294 as *const u32);
+        let saved_mode=std::ptr::read_volatile(0x0052_8140 as *const u32);
+        report(&format!(
+            "GRAPHICS {stage} dd={directdraw:#x} dd_primary={directdraw_primary:#x} dd_secondary={directdraw_secondary:#x} saved_mode={saved_mode}"
+        ));
         report(&format!(
             "WINDOW {stage} game_hwnd={hwnd:?} valid={} owner_pid={owner_pid} owner_tid={owner_tid} visible={} foreground={foreground:?} state_3dfx={voodoo_active} state_vga={vga_active}",
             if valid{1}else{0},if valid{IsWindowVisible(hwnd)}else{0}
@@ -194,6 +244,7 @@ fn window_snapshot(stage:&str) {
             windows.current_pid,windows.total,windows.sample.join(" | ")
         ));
     }
+    game_thread_snapshot(stage);
 }
 
 /// Observe whether the game restores its 1996 full-screen window style after
