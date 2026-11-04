@@ -159,6 +159,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         let intro=patch::set_skip_intro(&exe,skip_intro)?;
         let glide=nglide::try_install(root,&target)?;
         show(&format!("{status}. {audio}. {intro}. nGlide {}",if glide{"ready"}else{"missing"}),root);
+        show("Installation ready (game not started). Launch with: CyberGladiatorsFix.exe --launch",root);
         return Ok(());
     }
     if upgrade_cdda{return Err("--upgrade-cdda requires an existing game installation".into());}
