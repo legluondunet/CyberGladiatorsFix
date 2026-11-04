@@ -38,7 +38,7 @@ const BROKEN_BRIDGES:[&str;2]=[
     "055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71", // v0.2.1
     "d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb", // prototype
 ];
-const KNOWN_RELEASED_BRIDGES:[&str;9]=[
+const KNOWN_RELEASED_BRIDGES:[&str;21]=[
     "3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29", // forwarder validation ZIP
     "567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0", // v0.2.2
     "acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13", // v0.2.3
@@ -48,6 +48,20 @@ const KNOWN_RELEASED_BRIDGES:[&str;9]=[
     "6d4ffd7ca461b5e41b0bf1ac3cda898d343284febe3085c4e1a40f832defbc6d", // v0.2.7, verified ZIP
     "abf5c9d60ff20d0dc5816c742fbc04ca8a1226385b45fe375288a52d96c9dfca", // v0.2.8, verified ZIP
     "a95c5787f3a9b5dc101e673777111257fcf0482bf4dce8340cb5b91b00f5026a", // v0.2.9, verified ZIP
+    // Additional first-party GitHub Actions archives, exact DLL bytes
+    // downloaded and SHA-256 checked (not guessed from version numbers).
+    "dc305f22d37906ff964b9f382dd48034e5f92cd8ba733e80733fa085499c98cc", // CI run 80 (v0.2.7 intermediate)
+    "00e184c0a23a1c8cf6ae3ab53c503f49a446357ebf6b7bdce75e354581f790db", // CI run 81 (v0.2.8 intermediate)
+    "5825f1a5197dbb9f023b64cada5a5f576b15e2208c8054d9ae3301e64b6aa80f", // CI run 82 (v0.2.8 intermediate)
+    "77b267074e1f3369afe739f9fccfd3e56a90feeeb30ad5ee5bc760afa5665fcb", // CI run 83 (v0.2.8 intermediate)
+    "416ee060d20d221cbfd82d7f20e7db6f88a453de84125af6fe571d0942b1d7ba", // CI run 84 (v0.2.8 intermediate)
+    "18be076cc930991808881e0647cdf2a2b011e3c735ee68671f9b98ab443eb679", // CI run 85 (v0.2.8 intermediate)
+    "f7b26be8cf206e19b80c6418477804b6d25aaef4952e90b75bf7491506c54ab8", // CI run 87 (v0.2.8 diagnostic) USER INSTALLED
+    "74767b741163f3a6424ec3f4b6d100df35c676f5095af53ff45c8792ad3e01da", // CI run 88 (v0.2.9 intermediate)
+    "4a95a4185838ee5b2f6e3c279f17507fef69315d9d35478aed68bde488309e9c", // CI run 90 (v0.2.9 intermediate)
+    "22103e79824f21907fdf55d0e46eda840bfa812123d446df4056a0bd3dc69ac7", // CI run 91 (v0.2.9 intermediate)
+    "66bb6ecc7ba294fbdecd5e0d4888e8dfd4a8bc531fd2718959244325b6095778", // CI run 92 (v0.2.9 intermediate)
+    "c1284c8ad3544ff774c62ec4adbf44cbc9d5b6f010e266e3e112b1510c93279a", // v0.2.10 verified ZIP
 ];
 fn digest(path:&Path)->Result<String,String>{
     let bytes=fs::read(path).map_err(|e|format!("Cannot hash {}: {e}",path.display()))?;
@@ -199,6 +213,18 @@ mod tests {
             ("abf5c9d60ff20d0dc5816c742fbc04ca8a1226385b45fe375288a52d96c9dfca","v0.2.8"),
             ("a95c5787f3a9b5dc101e673777111257fcf0482bf4dce8340cb5b91b00f5026a","v0.2.9"),
             ("3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29","forwarder validation"),
+            ("dc305f22d37906ff964b9f382dd48034e5f92cd8ba733e80733fa085499c98cc","CI run 80 (v0.2.7 intermediate)"),
+            ("00e184c0a23a1c8cf6ae3ab53c503f49a446357ebf6b7bdce75e354581f790db","CI run 81 (v0.2.8 intermediate)"),
+            ("5825f1a5197dbb9f023b64cada5a5f576b15e2208c8054d9ae3301e64b6aa80f","CI run 82 (v0.2.8 intermediate)"),
+            ("77b267074e1f3369afe739f9fccfd3e56a90feeeb30ad5ee5bc760afa5665fcb","CI run 83 (v0.2.8 intermediate)"),
+            ("416ee060d20d221cbfd82d7f20e7db6f88a453de84125af6fe571d0942b1d7ba","CI run 84 (v0.2.8 intermediate)"),
+            ("18be076cc930991808881e0647cdf2a2b011e3c735ee68671f9b98ab443eb679","CI run 85 (v0.2.8 intermediate)"),
+            ("f7b26be8cf206e19b80c6418477804b6d25aaef4952e90b75bf7491506c54ab8","CI run 87 (v0.2.8 diagnostic) USER INSTALLED"),
+            ("74767b741163f3a6424ec3f4b6d100df35c676f5095af53ff45c8792ad3e01da","CI run 88 (v0.2.9 intermediate)"),
+            ("4a95a4185838ee5b2f6e3c279f17507fef69315d9d35478aed68bde488309e9c","CI run 90 (v0.2.9 intermediate)"),
+            ("22103e79824f21907fdf55d0e46eda840bfa812123d446df4056a0bd3dc69ac7","CI run 91 (v0.2.9 intermediate)"),
+            ("66bb6ecc7ba294fbdecd5e0d4888e8dfd4a8bc531fd2718959244325b6095778","CI run 92 (v0.2.9 intermediate)"),
+            ("c1284c8ad3544ff774c62ec4adbf44cbc9d5b6f010e266e3e112b1510c93279a","v0.2.10 verified ZIP"),
         ] {
             assert!(replaceable_known_release(hash),"{release}");
             assert!(!broken(hash),"{release} was not an infinite-loop build");
