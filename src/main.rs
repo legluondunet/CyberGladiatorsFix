@@ -39,7 +39,8 @@ If CyberGladiatorsFix exists, install x86 CDDA DLL and upgrade known USA
 speed/no-CD/intro patches; never re-extract the game or FLACs. Keep cyber.exe.bak.
 --max-graphics edits only two validated quality fields in an existing CYBER.INI
 and saves cyber.ini.bak. The installer creates CYBER.INI on fresh installs;
-CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1.
+CyberGladiatorsFix.ini is separate text: [Video] SkipIntro=0 or 1;
+[Audio] EnableCDDA=0 (safe system WinMM) or 1 (experimental FLAC bridge).
 The --launch command reads SkipIntro before starting the game;
 close the game before manually changing saved settings.
 --verify is read-only; --launch verifies first; --3dfx-logo additionally
@@ -96,12 +97,13 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         // Validate the text settings before modifying the game binary.
         settings::ensure(&target)?;
         let skip_intro=settings::read(&target)?;
-        // Install the x86 bridge before redirecting the game imports.
-        cdda::try_install(root,&target)?;
+        let enable_cdda=settings::read_cdda(&target)?;
+        if enable_cdda {cdda::try_install(root,&target)?;}
         let status=patch::apply(&exe)?;
+        let audio=patch::set_cdda(&exe,enable_cdda)?;
         let intro=patch::set_skip_intro(&exe,skip_intro)?;
         let glide=nglide::try_install(root,&target)?;
-        show(&format!("{status}. {intro}. nGlide {}",if glide{"ready"}else{"missing"}),root);
+        show(&format!("{status}. {audio}. {intro}. nGlide {}",if glide{"ready"}else{"missing"}),root);
         return Ok(());
     }
     let input=if let Some(arg)=args.first(){PathBuf::from(arg)}else{
