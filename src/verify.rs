@@ -301,6 +301,24 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }
     // All DLL/CDDA logs go directly into the launcher-adjacent session log.
     cmd.env("CYBER_LOG_FILE",diagnostics::location(root));
+    // Module digests identify exactly which locally installed compatibility
+    // stack is running. Hash only files already verified as regular assets.
+    for (label,path) in [
+        ("CYBER.EXE",game.join("cyber.exe")),
+        ("nGlide glide.dll",game.join("glide.dll")),
+    ]{
+        if let Ok(hash)=patch::file_hash(&path) {
+            diagnostics::log(root,"MODULE",&format!("{label} sha256={hash}"));
+        }
+    }
+    if enable_cdda {
+        if let Ok(hash)=patch::file_hash(&game.join(cdda::DLL_NAME)){
+            diagnostics::log(root,"MODULE",&format!("CDDA bridge sha256={hash}"));
+        }
+    }
+    if let Ok(iq)=settings::read_allow_modified_iq(&game){
+        diagnostics::log(root,"CONFIG",&format!("effective AllowModifiedIQ={} (strict --verify unaffected)",u8::from(iq)));
+    }
     diagnostics::log(root,"CONFIG",&format!(
         "GAME launch: SkipIntro={} EnableCDDA={} NGLIDE_BACKEND={} NGLIDE_RESOLUTION=1 NGLIDE_ASPECT=1 NGLIDE_REFRESH={} NGLIDE_VSYNC=1 NGLIDE_GAMMA=5 NGLIDE_SPLASH={} DXVK_defer_surface={} trace={}",
         u8::from(skip),u8::from(enable_cdda),backend_override.unwrap_or("0"),
