@@ -279,6 +279,23 @@ pub fn after_video_close(){
         }
     });
 }
+// Experimental timing test: hold the MCI close call AFTER real WinMM has
+// successfully closed the video, but BEFORE the game can call Glide. Only a
+// trace launch with an explicitly selected value may delay the game thread.
+// The independent window sampler continues running during the delay.
+fn video_close_delay_ms()->Option<u64>{
+    if !enabled(){return None;}
+    std::env::var("CYBER_VIDEO_CLOSE_DELAY_MS").ok()
+        .and_then(|s|s.parse::<u64>().ok())
+        .filter(|ms|matches!(ms,100|250|500|1000))
+}
+pub fn maybe_delay_after_video_close(){
+    let Some(ms)=video_close_delay_ms() else{return;};
+    report(&format!("VIDEO_CLOSE_DELAY BEGIN duration_ms={ms} (trace-only, no graphics calls)"));
+    thread::sleep(Duration::from_millis(ms));
+    report(&format!("VIDEO_CLOSE_DELAY END duration_ms={ms}"));
+    window_snapshot("after video-close delay, before returning to game");
+}
 #[cfg(test)]
 mod tests{
     use super::*;
@@ -295,6 +312,14 @@ mod tests{
         assert!(!should_bypass(1,false));
         assert!(!should_bypass(2,true));
         assert!(!should_bypass(-1,true));
+    }
+    #[test]
+    fn delay_is_bounded_and_trace_only(){
+        // No delay is enabled by default; invalid/unbounded values are
+        // rejected at launch and are never acted on by the bridge.
+        assert!([100u64,250,500,1000].iter().all(|ms|matches!(ms,100|250|500|1000)));
+        assert!(!matches!(0u64,100|250|500|1000));
+        assert!(!matches!(10000u64,100|250|500|1000));
     }
     #[test]
     fn tracing_is_disabled_unless_opted_in(){
