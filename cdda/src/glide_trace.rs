@@ -14,6 +14,8 @@ const EXPECTED_IMAGE_BASE:usize=0x0040_0000;
 const PASSTHRU_WRAPPER_RVA:usize=0x0003_519d;
 const PASSTHRU_SLOT_RVA:usize=0x0004_ab4c;
 const MAIN_WINDOW_RVA:usize=0x0012_8018; // game HWND at 0x00528018.
+const ORIGINAL_GAME_WNDPROC_RVA:usize=0x0000_5f82; // confirmed by user's class WndProc
+
 const PAGE_READWRITE:u32=0x04;
 const GWL_STYLE:i32=-16;
 const GWL_EXSTYLE:i32=-20;
@@ -42,11 +44,13 @@ extern "system" {
     fn WaitForSingleObject(handle:*mut c_void,timeout_ms:u32)->u32;
     fn CloseHandle(handle:*mut c_void)->i32;
     fn GetLastError()->u32;
+    fn SetLastError(code:u32);
 }
 #[link(name="user32")]
 extern "system" {
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
     fn GetWindowLongW(hwnd:*mut c_void,index:i32)->i32;
+    fn SetWindowLongA(hwnd:*mut c_void,index:i32,value:i32)->i32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
     fn GetClassLongW(hwnd:*mut c_void,index:i32)->u32;
     fn IsWindowUnicode(hwnd:*mut c_void)->i32;
@@ -204,6 +208,75 @@ pub fn maybe_install(){
     }
 }
 
+/// Experimental diagnosis of a WndProc cycle between WineD3D and DXVK.
+/// The user's source-identified current WndProc is wined3d.dll+0xf4a20,
+/// while the original ANSI window class procedure is cyber.exe+0x5f82.
+/// Only replace the *current live game window's* pointer, on its owning
+/// thread, immediately after WinMM has successfully closed its AVI.
+/// No system DLLs, D3D devices, registry or files are modified.
+fn repair_eligible(base:usize,class_proc:usize,unicode:i32,
+    installed_proc_origin:&str)->bool {
+    base==EXPECTED_IMAGE_BASE && class_proc==base+ORIGINAL_GAME_WNDPROC_RVA
+        && unicode==0
+        && installed_proc_origin.to_ascii_lowercase().starts_with("wined3d.dll")
+}
+pub fn maybe_repair_windowproc_after_video_close(){
+    if !enabled()
+        ||std::env::var("CYBER_WNDPROC_REPAIR_TEST").as_deref()!=Ok("1") {
+        return;
+    }
+    unsafe{
+        let base=GetModuleHandleA(std::ptr::null()) as usize;
+        if base!=EXPECTED_IMAGE_BASE{
+            report(&format!("WNDPROC_REPAIR SKIP unsupported_exe_base={base:#x}"));
+            return;
+        }
+        let hwnd=std::ptr::read_volatile((base+MAIN_WINDOW_RVA) as *const usize)
+            as *mut c_void;
+        let mut owner_pid=0u32;
+        let owner_tid=if IsWindow(hwnd)!=0{
+            GetWindowThreadProcessId(hwnd,&mut owner_pid)
+        }else{0};
+        if owner_pid!=GetCurrentProcessId()||owner_tid!=GetCurrentThreadId(){
+            report("WNDPROC_REPAIR SKIP invalid_window_or_not_owning_thread");
+            return;
+        }
+        let unicode=IsWindowUnicode(hwnd);
+        let class_proc=GetClassLongA(hwnd,GCL_WNDPROC) as usize;
+        let prior=GetWindowLongA(hwnd,GWL_WNDPROC) as u32 as usize;
+        let origin=crate::exception_trace::window_proc_origin(prior);
+        if !repair_eligible(base,class_proc,unicode,&origin){
+            report(&format!(
+                "WNDPROC_REPAIR SKIP unicode={unicode} class={class_proc:#x} current={prior:#x} origin={origin} (guard_rejected)"
+            ));
+            return;
+        }
+        SetLastError(0);
+        let replaced=SetWindowLongA(hwnd,GWL_WNDPROC,class_proc as i32)
+            as u32 as usize;
+        let error=GetLastError();
+        if replaced==0 && error!=0 {
+            report(&format!("WNDPROC_REPAIR ERROR SetWindowLongA_win32={error}"));
+            return;
+        }
+        let current=GetWindowLongA(hwnd,GWL_WNDPROC) as u32 as usize;
+        // Refuse an unexpected race. Restore only if our replacement still
+        // owns the current slot, never trample another WndProc subclass.
+        if replaced!=prior||current!=class_proc{
+            if current==class_proc {
+                let _=SetWindowLongA(hwnd,GWL_WNDPROC,replaced as i32);
+            }
+            report(&format!(
+                "WNDPROC_REPAIR ROLLBACK expected_old={prior:#x} actual_old={replaced:#x} current={current:#x}"
+            ));
+            return;
+        }
+        report(&format!(
+            "WNDPROC_REPAIR APPLIED hwnd={hwnd:?} old={prior:#x} ({origin}) new={class_proc:#x} (cyber.exe original class WndProc) scope=in_process_only experimental=1"
+        ));
+    }
+}
+
 /// Query the original game window thread even after its HWND has been
 /// destroyed. GetExitCodeThread==259 (STILL_ACTIVE) and WaitForSingleObject
 /// must be reported independently: a real thread can exit with code 259.
@@ -344,6 +417,7 @@ mod tests{
         assert_eq!(EXPECTED_IMAGE_BASE+PASSTHRU_WRAPPER_RVA,0x0043_519d);
         assert_eq!(EXPECTED_IMAGE_BASE+PASSTHRU_SLOT_RVA,0x0044_ab4c);
         assert_eq!(EXPECTED_IMAGE_BASE+MAIN_WINDOW_RVA,0x0052_8018);
+        assert_eq!(EXPECTED_IMAGE_BASE+ORIGINAL_GAME_WNDPROC_RVA,0x0040_5f82);
     }
     #[test]
     fn experimental_bypass_only_affects_mode_one(){
@@ -360,6 +434,16 @@ mod tests{
         assert!([100u64,250,500,1000].iter().all(|ms|supported_video_delay(*ms)));
         assert!(!supported_video_delay(0));
         assert!(!supported_video_delay(10000));
+    }
+    #[test]
+    fn repair_rejects_any_unverified_window_procedure(){
+        let base=EXPECTED_IMAGE_BASE;
+        assert!(repair_eligible(base,0x0040_5f82,0,"wined3d.dll base=0x7afa0000"));
+        assert!(!repair_eligible(base,0x0040_5f82,1,"wined3d.dll"));
+        assert!(!repair_eligible(base,0x0040_5f82,0,"d3d9.dll+0xba1d0"));
+        assert!(!repair_eligible(base,0x0040_5f82,0,"cyber.exe+0x5f82"));
+        assert!(!repair_eligible(base,0x0040_5f83,0,"wined3d.dll"));
+        assert!(!repair_eligible(0x0050_0000,0x0040_5f82,0,"wined3d.dll"));
     }
     #[test]
     fn tracing_is_disabled_unless_opted_in(){
