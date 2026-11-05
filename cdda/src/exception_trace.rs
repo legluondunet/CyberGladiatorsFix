@@ -321,11 +321,11 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
                     .try_into().unwrap());
                 // A direct WndProc has (hwnd,msg,wp,lp), but
                 // CallWindowProc has (proc,hwnd,msg,wp,lp). Require
-                // exact HWND/message AND a return address inside USER32.
+                // exact HWND/message and a return address in D3D9's code.
                 let ret=u32::from_le_bytes(pair[4..].try_into().unwrap()) as usize;
                 if word(4)==hwnd && word(8)==message
                     && candidate_module_rva(ret).is_some_and(|name|
-                        name.to_ascii_lowercase().starts_with("user32.dll+")) {
+                        name.to_ascii_lowercase().starts_with("d3d9.dll+")) {
                     if let Some(proc_module)=candidate_module_rva(word(0) as usize) {
                         forwarding_calls+=1;
                         if let Some((_,count))=forwarding_targets.iter_mut()
@@ -361,7 +361,7 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
         let targets=forwarding_targets.iter().take(12)
             .map(|(name,count)|format!("{name}:{count}")).collect::<Vec<_>>().join(", ");
         crate::log(&format!(
-            "DXVK_WNDPROC_FORWARD_TARGETS hwnd={hwnd:#x} message={message:#x} matching_user32_frames={forwarding_calls} target_module_rvas=[{targets}] heuristic_only_callwindowproc_signature_not_symbolized=1"
+            "DXVK_WNDPROC_FORWARD_TARGETS hwnd={hwnd:#x} message={message:#x} matching_d3d9_caller_frames={forwarding_calls} target_module_rvas=[{targets}] heuristic_only_callwindowproc_signature_not_symbolized=1"
         ));
     }
 }
