@@ -24,7 +24,7 @@ const HELP:&str=r"CyberGladiatorsFix — self-contained x64 installer, compatibi
 
 Usage:
   CyberGladiatorsFix.exe [<disc.cue>]    Install/update verified US retail CD
-  CyberGladiatorsFix.exe --launch        Play game (isolated fullscreen intro)
+  CyberGladiatorsFix.exe --launch        Play game (native AVI with CDDA; fallback otherwise)
   CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
   CyberGladiatorsFix.exe --launch --3dfx-logo
   CyberGladiatorsFix.exe --verify        Strict original CD integrity check
@@ -41,10 +41,12 @@ included inside this EXE. A matching native Wine/Proton configuration and
 third-party nGlide are required to play. The game and nGlide are NOT bundled.
 
 A fresh CyberGladiatorsFix.log is written beside this EXE per invocation.
-When [Video] SkipIntro=0 (default), the movie plays in a borderless full-screen
-window; Esc, Enter, Space or any ordinary key skips it. The MCI player exits
-before the D3D9 game process starts. If SkipIntro=1, no video is played.
-Music is optional: [Audio] EnableCDDA=1 enables the embedded FLAC bridge.
+When [Video] SkipIntro=0 and [Audio] EnableCDDA=1, the original game plays
+its native Cinepak AVI. The x86 bridge applies a guarded WineD3D/DXVK window
+procedure repair after AVI close. When CDDA is disabled, the isolated AVI player
+is a temporary compatibility fallback with borderless fullscreen playback and
+keyboard skip. If SkipIntro=1, no video is played.
+Music remains optional: [Audio] EnableCDDA=1 enables FLAC playback.
 Original CD assets and CYBER.EXE.bak are never silently replaced.
 [Integrity] AllowModifiedIQ=1 permits same-size IQ differences on launch only;
 --verify always uses strict original hashes.
