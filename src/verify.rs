@@ -113,7 +113,7 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
 }
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,None,false)
+    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,None,false,false)
 }
 /// Proton selects WineD3D before the patcher itself starts; an inline
 /// Windows child environment flag cannot reverse that runtime choice.
@@ -131,8 +131,11 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 /// repair; no external MCI player is launched. For now it requires the
 /// optional WinMM/CDDA bridge, with the separate-video compatibility path
 /// retained for installations with CDDA disabled.
-pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
+    if avi_4x3 && trace {
+        return Err("The experimental AVI 4:3 host must be tested without graphics tracing".into());
+    }
     if trace {
         // Reuse the established per-run DXVK capture lifecycle, which must
         // be finalized by the caller after the game exits.
@@ -141,7 +144,7 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool)->Result<(Chil
         }
         return launch_renderer_experiment(root,"1",false,false,None,true);
     }
-    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,None,true)
+    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,None,true,avi_4x3)
         .map(|child|(child,None))
 }
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
@@ -159,7 +162,7 @@ pub fn launch_after_external_intro(root:&Path,trace:bool,logo:bool)->Result<(Chi
     // without Wine/Glide/DXVK debug capture or temporary DXVK folders.
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
     if logo{nglide::check_logo(&root.join(DIR))?;}
-    let child=launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,Some(true),false)?;
+    let child=launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,Some(true),false,false)?;
     Ok((child,None))
 }
 fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,skip_intro_override:Option<bool>,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
@@ -175,7 +178,7 @@ fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,de
         fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
         Some(dir)
     }else{None};
-    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),skip_intro_override,wndproc_repair)?;
+    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),skip_intro_override,wndproc_repair,false)?;
     Ok((child,log_dir))
 }
 fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
@@ -187,7 +190,7 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
     }
     Ok(())
 }
-fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,skip_intro_override:Option<bool>,wndproc_repair:bool)->Result<Child,String>{
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,skip_intro_override:Option<bool>,wndproc_repair:bool,avi_4x3:bool)->Result<Child,String>{
     // External intro is not a renderer experiment: its own x86 process
     // has already disposed every MCI device before game startup. Permit
     // this sole, hash-verified route during normal launch as well as trace.
@@ -201,6 +204,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             ||logo||passthru_noop||video_delay_ms!=0||dxvk_defer_surface
             ||desktop_refresh||skip_intro_override.is_some()) {
         return Err("WndProc repair requires native AVI, nGlide D3D9 and a hook-free launch".into());
+    }
+    if avi_4x3 && !normal_repair {
+        return Err("Experimental AVI 4:3 host requires non-tracing native video and guarded DXVK repair".into());
     }
     let isolated=skip_intro_override==Some(true)
         && backend_override==Some("1") && no_glide_hook
@@ -230,6 +236,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     let configured_skip=settings::read(&game)?;
     let skip=skip_intro_override.unwrap_or(configured_skip);
     let enable_cdda=settings::read_cdda(&game)?;
+    if avi_4x3 && (!enable_cdda||skip) {
+        return Err("Experimental AVI 4:3 host requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1; INI not modified".into());
+    }
     // --no-glide-hook by itself is an AVI/3dfx-transition probe, so it
     // requires the intro. In a *forced renderer* A/B comparison, permitting
     // SkipIntro=1 provides an important control: D3D9 rendering without the
@@ -282,8 +291,13 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // our invasive 1996 transition probes in the ordinary game path.
     for key in ["CYBER_VIDEO_CLOSE_DELAY_MS","CYBER_GLIDE_HOOK_DISABLED",
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
-        "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR"]{
+        "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
+        "CYBER_AVI_FULLSCREEN_TEST"]{
         cmd.env_remove(key);
+    }
+    if avi_4x3 {
+        cmd.env("CYBER_AVI_FULLSCREEN_TEST","1");
+        crate::show("AVI_4X3_TEST experimental=1 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 renderer=nGlide_D3D9",root);
     }
     // This is a one-shot, guard-checked in-process fix. No long-running
     // diagnostics, DLL hooks or Wine prefix changes in the normal path.
