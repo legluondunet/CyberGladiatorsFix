@@ -176,12 +176,14 @@ fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     settings::ensure(&game)?;
     if !settings::read(&game)?{
         if settings::read_cdda(&game)? {
-            let child=verify::launch_native_avi_repaired(root,trace,logo)?;
+            let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo)?;
             show(&format!(
                 "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-D3D9 guarded_wndproc_repair=1 trace={trace} external_helper=0",
                 child.id()
             ),root);
-            return if trace{wait_diagnostic(child,root)}else{wait_game(child,root)};
+            let result=if trace{wait_diagnostic(child,root)}else{wait_game(child,root)};
+            report_dxvk_evidence(root,dxvk_logs);
+            return result;
         }
         show("INTRO fallback=isolated_MCI reason=CDDA_bridge_disabled; no window-procedure fix available without the in-process bridge",root);
         return isolated_intro_launch(root,trace,logo);
