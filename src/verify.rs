@@ -376,9 +376,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         cmd.stderr(Stdio::from(errors));
     }else{
         nglide::configure(&mut cmd,logo);
-        if isolated {
-            // The normal user path deliberately selects the same nGlide
-            // Direct3D9 renderer that worked after the isolated intro.
+        if isolated || normal_repair {
+            // Reuse the same nGlide Direct3D9 backend validated under Wine:
+            // the normal native-AVI path must not quietly select Auto/Vulkan.
             cmd.env("NGLIDE_BACKEND","1");
         }
     }
