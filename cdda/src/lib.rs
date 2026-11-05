@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! 32-bit, game-specific WinMM import proxy. Only MCI commands addressed to a
-//! virtual CD-audio device are intercepted. All other functions, especially
-//! MCI string commands used for AVI playback, are forwarded to real WinMM.
+//! virtual CD-audio device are intercepted. MCIAVI commands normally forward
+//! unchanged to real WinMM; an explicit fullscreen 4:3 trial may substitute
+//! only the known original splash-video window handle and destination.
 //! This DLL is loaded by an exact SHA-256-gated import-name patch to CYBER.EXE;
 //! it is never installed as a system-wide winmm.dll.
 #![cfg(windows)]
@@ -355,7 +356,20 @@ pub unsafe extern "system" fn mciSendStringA(
         }
         if let Some(entry)=video_trace::before(text){log(&entry);}
     }
-    let result=native(cmd,out,len,hwnd);
+    // Preserve the game's original MCI timeline and WinMM implementation.
+    // The fullscreen experiment only substitutes the target HWND and 4:3
+    // destination in the three recognized splash-video commands.
+    let substitute=command.as_deref().and_then(video_trace::rewrite_for_4_3);
+    let mut result=native(substitute.as_ref().map_or(cmd,|v|v.as_ptr()),out,len,hwnd);
+    if let Some(ref text)=command {
+        video_trace::on_4_3_command_result(text,substitute.is_some(),result);
+        if result!=0 && substitute.is_some() && video_trace::movie_open_game_hwnd_for_retry(text){
+            // An unsupported child-style MCI driver must not prevent game
+            // startup. Revert to the original AVI open and log the fallback.
+            result=native(cmd,out,len,hwnd);
+            log(&format!("AVI_4X3 MCI_OPEN_FALLBACK original_result={result}"));
+        }
+    }
     if let Some(ref text)=command{
         let reply=if result==0 && !out.is_null() && len>0 {
             // Bounds-check against the actual WinMM output buffer length.
@@ -365,6 +379,8 @@ pub unsafe extern "system" fn mciSendStringA(
         }else{String::new()};
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
         if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
+            // The experiment's popup has already been destroyed before the
+            // existing, user-validated DXVK/WineD3D window procedure repair.
             glide_trace::after_video_close();
             glide_trace::maybe_repair_windowproc_after_video_close();
             glide_trace::maybe_delay_after_video_close();
