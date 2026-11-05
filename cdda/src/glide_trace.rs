@@ -17,6 +17,7 @@ const MAIN_WINDOW_RVA:usize=0x0012_8018; // game HWND at 0x00528018.
 const PAGE_READWRITE:u32=0x04;
 const GWL_STYLE:i32=-16;
 const GWL_EXSTYLE:i32=-20;
+const GWL_WNDPROC:i32=-4;
 
 static INSTALLED:OnceLock<bool>=OnceLock::new();
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
@@ -77,8 +78,9 @@ unsafe extern "system" fn collect_process_windows(hwnd:*mut c_void,context:isize
                 format!("({},{})-({},{})",rect.left,rect.top,rect.right,rect.bottom)
             } else {"unavailable".to_owned()};
             snapshot.sample.push(format!(
-                "hwnd={hwnd:?} tid={tid} visible={} minimized={} style={:#010x} ex_style={:#010x} rect={geometry}",
+                "hwnd={hwnd:?} tid={tid} visible={} minimized={} wndproc={:#010x} style={:#010x} ex_style={:#010x} rect={geometry}",
                 IsWindowVisible(hwnd),IsIconic(hwnd),
+                GetWindowLongA(hwnd,GWL_WNDPROC) as u32,
                 GetWindowLongA(hwnd,GWL_STYLE) as u32,
                 GetWindowLongA(hwnd,GWL_EXSTYLE) as u32
             ));
@@ -255,8 +257,9 @@ fn window_snapshot(stage:&str) {
             "GRAPHICS {stage} dd={directdraw:#x} dd_primary={directdraw_primary:#x} dd_secondary={directdraw_secondary:#x} saved_mode={saved_mode}"
         ));
         report(&format!(
-            "WINDOW {stage} game_hwnd={hwnd:?} valid={} owner_pid={owner_pid} owner_tid={owner_tid} visible={} foreground={foreground:?} state_3dfx={voodoo_active} state_vga={vga_active}",
-            if valid{1}else{0},if valid{IsWindowVisible(hwnd)}else{0}
+            "WINDOW {stage} game_hwnd={hwnd:?} valid={} owner_pid={owner_pid} owner_tid={owner_tid} visible={} wndproc={} foreground={foreground:?} state_3dfx={voodoo_active} state_vga={vga_active}",
+            if valid{1}else{0},if valid{IsWindowVisible(hwnd)}else{0},
+            if valid{format!("{:#x}",GetWindowLongA(hwnd,GWL_WNDPROC) as u32)}else{"unavailable".into()}
         ));
         let mut windows=WindowScan{
             current_pid:GetCurrentProcessId(),
