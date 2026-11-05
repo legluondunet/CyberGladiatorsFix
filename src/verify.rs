@@ -131,9 +131,18 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 /// repair; no external MCI player is launched. For now it requires the
 /// optional WinMM/CDDA bridge, with the separate-video compatibility path
 /// retained for installations with CDDA disabled.
-pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool)->Result<Child,String>{
+pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
-    launch_with_renderer_test(root,logo,trace,false,0,true,Some("1"),false,false,None,None,true)
+    if trace {
+        // Reuse the established per-run DXVK capture lifecycle, which must
+        // be finalized by the caller after the game exits.
+        if logo {
+            return Err("Native AVI repair tracing with --3dfx-logo is not supported".into());
+        }
+        return launch_renderer_experiment(root,"1",false,false,None,true);
+    }
+    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,None,true)
+        .map(|child|(child,None))
 }
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,None,wndproc_repair)
