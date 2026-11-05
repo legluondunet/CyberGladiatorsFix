@@ -26,7 +26,10 @@ const CONTINUE_SEARCH:i32=0;
 const ACCESS_VIOLATION:u32=0xc000_0005;
 const STACK_OVERFLOW:u32=0xc000_00fd;
 // Offsets in the documented 32-bit Windows CONTEXT (x86), not x64.
-// EBP=0xB4, EIP=0xB8, ESP=0xC4. This DLL is built for i686 only.
+// EDI=0x9C, EBX=0xA4, EBP=0xB4, EIP=0xB8, ESP=0xC4.
+// These offsets apply only to the x86 Windows CONTEXT layout.
+const EDI_OFFSET:usize=0x9c;
+const EBX_OFFSET:usize=0xa4;
 const EBP_OFFSET:usize=0xb4;
 const EIP_OFFSET:usize=0xb8;
 const ESP_OFFSET:usize=0xc4;
@@ -42,6 +45,8 @@ static INSTRUCTION:AtomicUsize=AtomicUsize::new(0);
 static CONTEXT_EIP:AtomicU32=AtomicU32::new(0);
 static CONTEXT_ESP:AtomicU32=AtomicU32::new(0);
 static CONTEXT_EBP:AtomicU32=AtomicU32::new(0);
+static CONTEXT_EBX:AtomicU32=AtomicU32::new(0);
+static CONTEXT_EDI:AtomicU32=AtomicU32::new(0);
 static ACCESS_TYPE:AtomicUsize=AtomicUsize::new(0);
 static ACCESS_ADDRESS:AtomicUsize=AtomicUsize::new(0);
 
@@ -96,6 +101,8 @@ unsafe extern "system" fn observe(pointers:*mut ExceptionPointers)->i32 {
         CONTEXT_EIP.store(unsafe{std::ptr::read_unaligned(context.add(EIP_OFFSET) as *const u32)},Ordering::Relaxed);
         CONTEXT_ESP.store(unsafe{std::ptr::read_unaligned(context.add(ESP_OFFSET) as *const u32)},Ordering::Relaxed);
         CONTEXT_EBP.store(unsafe{std::ptr::read_unaligned(context.add(EBP_OFFSET) as *const u32)},Ordering::Relaxed);
+        CONTEXT_EBX.store(unsafe{std::ptr::read_unaligned(context.add(EBX_OFFSET) as *const u32)},Ordering::Relaxed);
+        CONTEXT_EDI.store(unsafe{std::ptr::read_unaligned(context.add(EDI_OFFSET) as *const u32)},Ordering::Relaxed);
     }
     SEQUENCE.fetch_add(1,Ordering::Release);
     CONTINUE_SEARCH // Never consume or alter the exception.
@@ -189,7 +196,45 @@ fn candidate_module_rva(address:usize)->Option<String>{
     if !relevant.iter().any(|n|basename.eq_ignore_ascii_case(n)){return None;}
     Some(format!("{basename}+0x{:x}",address.saturating_sub(module as usize)))
 }
-fn exception_forensics(eip:usize,esp:usize,ebp:usize){
+fn window_message_name(value:u32)->&'static str{
+    match value{
+        0x0002=>"WM_DESTROY",0x0005=>"WM_SIZE",
+        0x0006=>"WM_ACTIVATE",0x001c=>"WM_ACTIVATEAPP",
+        0x0046=>"WM_WINDOWPOSCHANGING",0x0047=>"WM_WINDOWPOSCHANGED",
+        0x007d=>"WM_STYLECHANGED",0x007e=>"WM_DISPLAYCHANGE",
+        0x0083=>"WM_NCCALCSIZE",0x0086=>"WM_NCACTIVATE",
+        0x0112=>"WM_SYSCOMMAND",_=>"unidentified",
+    }
+}
+fn windowproc_fault_probe(eip:usize,ebp:usize,ebx:u32,edi:u32){
+    // GE-Proton DXVK d3d9_window.cpp checks WM_NCCALCSIZE (0x83)
+    // and wparam=1 at the start of its D3D9WindowProc.
+    // This machine-code fingerprint must match before interpreting
+    // EBX as the message and EDI as its wparam.
+    let mut code=[0u8;24];
+    let n=read_memory(eip,&mut code);
+    let signature=n>=9 && code[..9]==[0x89,0x45,0x90,0x81,0xfb,0x83,0,0,0];
+    crate::log(&format!(
+        "DXVK_WINDOWPROC_CANDIDATE signature={} register_ebx={ebx:#x} message={} register_edi={edi:#x} wparam_candidate={} (interpret_only_if_signature_matches)",
+        u8::from(signature),window_message_name(ebx),edi
+    ));
+    if !signature{return;}
+    // The observed x86 function uses an EBP stack frame. The normal
+    // stdcall arguments begin at EBP+8; do not assume the frame survived
+    // the overflow and validate candidates against the register values.
+    let mut args=[0u8;16];
+    if read_memory(ebp.saturating_add(8),&mut args)==args.len(){
+        let arg=|i:usize|u32::from_le_bytes(args[i..i+4].try_into().unwrap());
+        crate::log(&format!(
+            "DXVK_WINDOWPROC_ARGS inferred_hwnd={:#x} inferred_message={:#x} ({}) inferred_wparam={:#x} inferred_lparam={:#x} regs_match={} (unverified_frame)",
+            arg(0),arg(4),window_message_name(arg(4)),arg(8),arg(12),
+            u8::from(arg(4)==ebx&&arg(8)==edi)
+        ));
+    }else{
+        crate::log("DXVK_WINDOWPROC_ARGS unavailable (stack frame unreadable)");
+    }
+}
+fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
     // Record exact machine code *at* the faulting instruction, not a guess
     // about the DXVK symbol or cause. Reading can fail if the process is
     // already tearing down its DLLs.
@@ -205,6 +250,7 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize){
     }else{
         crate::log("DXVK_FAULT_CODE unavailable (faulting code already unmapped)");
     }
+    windowproc_fault_probe(eip,ebp,ebx,edi);
     // Sample a bounded region of the *faulting thread's* stack using
     // ReadProcessMemory. Raw stack data can include private game/user data,
     // so log ONLY recognizable module+RVA address candidates, never the
@@ -263,6 +309,8 @@ pub fn snapshot(stage:&str){
     let eip=CONTEXT_EIP.load(Ordering::Relaxed);
     let esp=CONTEXT_ESP.load(Ordering::Relaxed);
     let ebp=CONTEXT_EBP.load(Ordering::Relaxed);
+    let ebx=CONTEXT_EBX.load(Ordering::Relaxed);
+    let edi=CONTEXT_EDI.load(Ordering::Relaxed);
     let access_type=ACCESS_TYPE.load(Ordering::Relaxed);
     let access_address=ACCESS_ADDRESS.load(Ordering::Relaxed);
     let access=if code==ACCESS_VIOLATION && access_type!=usize::MAX {
@@ -273,7 +321,7 @@ pub fn snapshot(stage:&str){
         resolve_module(address)
     ));
     if code==STACK_OVERFLOW {
-        exception_forensics(eip as usize,esp as usize,ebp as usize);
+        exception_forensics(eip as usize,esp as usize,ebp as usize,ebx,edi);
     }
 }
 pub fn maybe_install(){
@@ -312,6 +360,14 @@ mod tests {
         assert!(interesting(STACK_OVERFLOW));
         assert!(!interesting(0x8000_0003));
         assert!(!interesting(0x4001_0006));
+    }
+    #[test]
+    fn maps_window_messages_used_by_the_dxvk_window_procedure(){
+        assert_eq!(window_message_name(0x83),"WM_NCCALCSIZE");
+        assert_eq!(window_message_name(0x1c),"WM_ACTIVATEAPP");
+        assert_eq!(window_message_name(0x47),"WM_WINDOWPOSCHANGED");
+        assert_eq!(window_message_name(0xffff),"unidentified");
+        assert_eq!((EDI_OFFSET,EBX_OFFSET,EBP_OFFSET),(156,164,180));
     }
     #[test]
     fn x86_context_offsets_are_aligned_and_expected(){
