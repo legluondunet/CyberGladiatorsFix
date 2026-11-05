@@ -282,13 +282,13 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // our invasive 1996 transition probes in the ordinary game path.
     for key in ["CYBER_VIDEO_CLOSE_DELAY_MS","CYBER_GLIDE_HOOK_DISABLED",
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
-        "CYBER_WNDPROC_REPAIR_TEST"]{
+        "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR"]{
         cmd.env_remove(key);
     }
     // This is a one-shot, guard-checked in-process fix. No long-running
     // diagnostics, DLL hooks or Wine prefix changes in the normal path.
     if wndproc_repair {
-        cmd.env("CYBER_WNDPROC_REPAIR_TEST","1");
+        cmd.env(if trace{"CYBER_WNDPROC_REPAIR_TEST"}else{"CYBER_WNDPROC_REPAIR"},"1");
         if !trace {
             crate::show("INTRO_NATIVE repair=enabled only_when_WineD3D_ANSI_WndProc_and_verified_game_class; renderer=nGlide_D3D9",root);
         }
