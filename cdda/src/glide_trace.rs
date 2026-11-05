@@ -223,7 +223,8 @@ fn repair_eligible(base:usize,class_proc:usize,unicode:i32,
 pub fn maybe_repair_windowproc_after_video_close(){
     // Normal launches use the same guarded operation without the invasive
     // tracing sampler; the explicit experiment still sets this same flag.
-    if std::env::var("CYBER_WNDPROC_REPAIR_TEST").as_deref()!=Ok("1") {
+    if std::env::var("CYBER_WNDPROC_REPAIR").as_deref()!=Ok("1")
+        && std::env::var("CYBER_WNDPROC_REPAIR_TEST").as_deref()!=Ok("1") {
         return;
     }
     unsafe{
