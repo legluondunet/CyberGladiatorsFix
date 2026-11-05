@@ -64,6 +64,252 @@ fn after_in(state:&mut MovieState,command:&str,code:u32,reply:&str)->Option<Stri
     Some(format!("MCI_VIDEO END {command:?} result={code} reply={reply:?} elapsed={elapsed}s"))
 }
 
+
+// Opt-in 4:3 native AVI host experiment. These Win32 operations happen inside
+// CYBER.EXE on the original MCI calling thread. The game's own AVI playback
+// and the field-validated after-video WineD3D/DXVK WndProc repair are preserved.
+// No fullscreen window is created during normal launches.
+use std::ffi::{c_void,CString};
+
+const EXPECTED_GAME_BASE:usize=0x0040_0000;
+const GAME_HWND_RVA:usize=0x0012_8018;
+const GAME_CLASS_PROC_RVA:usize=0x0000_5f82;
+const GCL_WNDPROC:i32=-24;
+const MONITOR_DEFAULTTONEAREST:u32=2;
+const WS_POPUP:u32=0x8000_0000;
+const WS_CHILD:u32=0x4000_0000;
+const WS_VISIBLE:u32=0x1000_0000;
+const WS_CLIPCHILDREN:u32=0x0200_0000;
+const SS_BLACKRECT:u32=0x0000_0004;
+const WS_EX_TOOLWINDOW:u32=0x0000_0080;
+const WS_EX_NOACTIVATE:u32=0x0800_0000;
+const WS_EX_TOPMOST:u32=0x0000_0008;
+
+#[repr(C)]
+#[derive(Default,Copy,Clone)]
+struct WinRect {left:i32,top:i32,right:i32,bottom:i32}
+#[repr(C)]
+struct MonitorInfo {
+    cb_size:u32,
+    monitor:WinRect,
+    work:WinRect,
+    flags:u32,
+}
+#[link(name="kernel32")]
+extern "system" {
+    fn GetModuleHandleA(module:*const u8)->*mut c_void;
+    fn GetCurrentProcessId()->u32;
+    fn GetCurrentThreadId()->u32;
+    fn GetLastError()->u32;
+}
+#[link(name="user32")]
+extern "system" {
+    fn IsWindow(hwnd:*mut c_void)->i32;
+    fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
+    fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
+    fn MonitorFromWindow(hwnd:*mut c_void,flags:u32)->*mut c_void;
+    fn GetMonitorInfoA(monitor:*mut c_void,info:*mut MonitorInfo)->i32;
+    fn CreateWindowExA(exstyle:u32,class_name:*const u8,title:*const u8,style:u32,
+        x:i32,y:i32,width:i32,height:i32,parent:*mut c_void,
+        menu:*mut c_void,instance:*mut c_void,param:*mut c_void)->*mut c_void;
+    fn DestroyWindow(hwnd:*mut c_void)->i32;
+    fn GetClientRect(hwnd:*mut c_void,rect:*mut WinRect)->i32;
+}
+#[derive(Clone,Copy)]
+struct NativeHost {
+    host:usize,
+    surface:usize,
+    game:usize,
+    owner_thread:u32,
+    video_width:i32,
+    video_height:i32,
+}
+static VIDEO_HOST:OnceLock<Mutex<Option<NativeHost>>>=OnceLock::new();
+fn video_host()->&'static Mutex<Option<NativeHost>> {
+    VIDEO_HOST.get_or_init(||Mutex::new(None))
+}
+fn video_enabled()->bool {
+    std::env::var("CYBER_AVI_FULLSCREEN_TEST").as_deref()==Ok("1")
+}
+fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
+
+fn fit_4_3(width:i32,height:i32)->Option<(i32,i32,i32,i32)>{
+    if width<=0||height<=0||width>16384||height>16384{return None;}
+    let (w,h)=if i64::from(width)*3 > i64::from(height)*4 {
+        (i64::from(height)*4/3,height)
+    }else{
+        (width,(i64::from(width)*3/4) as i32)
+    };
+    let w=w as i32;
+    Some(((width-w)/2,(height-h)/2,w,h))
+}
+fn movie_open_game_hwnd(text:&str)->Option<usize>{
+    // Restrict to the exact known sequence: never rewrite CD audio, other
+    // AVI files, aliases, or a window handle unrelated to the verified game.
+    let parts:Vec<&str>=text.split_ascii_whitespace().collect();
+    if parts.len()!=8
+        || !parts[..4].iter().zip(["open","splash4.avi","alias","movie"])
+            .all(|(a,b)|a.eq_ignore_ascii_case(b))
+        || !parts[4].eq_ignore_ascii_case("parent")
+        || !parts[6].eq_ignore_ascii_case("style")
+        || !parts[7].eq_ignore_ascii_case("popup") {return None;}
+    parts[5].parse::<usize>().ok()
+}
+fn exact_handle_command(text:&str)->Option<usize>{
+    let parts:Vec<&str>=text.split_ascii_whitespace().collect();
+    if parts.len()!=4 || !parts[..3].iter().zip(["window","movie","handle"])
+        .all(|(a,b)|a.eq_ignore_ascii_case(b)){return None;}
+    parts[3].parse::<usize>().ok()
+}
+fn destination_command(text:&str)->bool {
+    let parts:Vec<&str>=text.split_ascii_whitespace().collect();
+    parts.len()==8
+        && parts[..5].iter().zip(["put","movie","destination","at","0"])
+            .all(|(a,b)|a.eq_ignore_ascii_case(b))
+        && parts[5..]==["0","640","480"]
+}
+unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
+    let base=GetModuleHandleA(std::ptr::null()) as usize;
+    if base!=EXPECTED_GAME_BASE {
+        video_log(&format!("SKIP unsupported_image_base={base:#x}"));
+        return None;
+    }
+    let game=std::ptr::read_volatile((base+GAME_HWND_RVA) as *const usize);
+    let hwnd=game as *mut c_void;
+    let mut pid=0u32;
+    if original_window!=game || IsWindow(hwnd)==0
+        || GetWindowThreadProcessId(hwnd,&mut pid)!=GetCurrentThreadId()
+        || pid!=GetCurrentProcessId()
+        || GetClassLongA(hwnd,GCL_WNDPROC) as usize!=base+GAME_CLASS_PROC_RVA {
+        video_log("SKIP invalid_game_window_or_class_or_thread");
+        return None;
+    }
+    let monitor=MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST);
+    let mut info=MonitorInfo{
+        cb_size:std::mem::size_of::<MonitorInfo>() as u32,
+        monitor:WinRect::default(),work:WinRect::default(),flags:0
+    };
+    if monitor.is_null() || GetMonitorInfoA(monitor,&mut info)==0 {
+        video_log(&format!("SKIP GetMonitorInfoA_failed={}",GetLastError()));
+        return None;
+    }
+    let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
+    let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
+    let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
+    // STATIC SS_BLACKRECT paints black without introducing a custom WndProc
+    // to the already delicate DXVK/Wine subclass chain.
+    let host=CreateWindowExA(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,
+        b"STATIC\0".as_ptr(),b"\0".as_ptr(),
+        WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN|SS_BLACKRECT,
+        info.monitor.left,info.monitor.top,screen_w,screen_h,
+        hwnd,std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
+    if host.is_null() {
+        video_log(&format!("SKIP fullscreen_host_create_failed={}",GetLastError()));
+        return None;
+    }
+    let surface=CreateWindowExA(0,b"STATIC\0".as_ptr(),b"\0".as_ptr(),
+        WS_CHILD|WS_VISIBLE|SS_BLACKRECT,x,y,w,h,host,
+        std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
+    if surface.is_null(){
+        let err=GetLastError();
+        DestroyWindow(host);
+        video_log(&format!("SKIP video_surface_create_failed={err}"));
+        return None;
+    }
+    let mut client=WinRect::default();
+    if GetClientRect(surface,&mut client)==0
+        || client.right!=w || client.bottom!=h {
+        DestroyWindow(host);
+        video_log("SKIP unexpected_video_surface_client_size");
+        return None;
+    }
+    video_log(&format!(
+        "HOST_CREATED game={game:#x} host={:#x} surface={:#x} monitor=({},{} {}x{}) video_4_3=({x},{y} {w}x{h}) fullscreen_black=1 no_activate=1",
+        host as usize,surface as usize,
+        info.monitor.left,info.monitor.top,screen_w,screen_h));
+    Some(NativeHost{
+        host:host as usize,surface:surface as usize,game,owner_thread:GetCurrentThreadId(),
+        video_width:w,video_height:h
+    })
+}
+fn close_host(reason:&str){
+    let previous=video_host().lock().unwrap_or_else(|e|e.into_inner()).take();
+    if let Some(h)=previous{
+        unsafe {
+            if GetCurrentThreadId()!=h.owner_thread{
+                video_log(&format!("WARNING host_not_destroyed_other_thread reason={reason}"));
+                return;
+            }
+            let destroyed=DestroyWindow(h.host as *mut c_void);
+            video_log(&format!("HOST_CLOSED reason={reason} destroy_result={destroyed}"));
+        }
+    }
+}
+/// Called before the real system WinMM entry point. Returns an alternative
+/// MCI string only for the precise original splash-video command sequence.
+pub fn rewrite_for_4_3(text:&str)->Option<CString>{
+    if !video_enabled(){return None;}
+    if let Some(game)=movie_open_game_hwnd(text){
+        if video_host().lock().unwrap_or_else(|e|e.into_inner()).is_some(){
+            video_log("SKIP previous_video_host_still_active");
+            return None;
+        }
+        let h=unsafe{prepare_host(game)}?;
+        let rewritten=format!("open splash4.avi alias movie parent {} style child",h.surface);
+        let Ok(encoded)=CString::new(rewritten) else{
+            unsafe{DestroyWindow(h.host as *mut c_void);}
+            return None;
+        };
+        *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
+        video_log(&format!("MCI_REWRITE open_style=child target_surface={:#x}",h.surface));
+        return Some(encoded);
+    }
+    let guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let h=(*guard)?;
+    if exact_handle_command(text)==Some(h.game){
+        video_log(&format!("MCI_REWRITE window_handle={:#x} (video_surface)",h.surface));
+        return CString::new(format!("window movie handle {}",h.surface)).ok();
+    }
+    if destination_command(text){
+        video_log(&format!("MCI_REWRITE destination=0,0 {}x{} (surface-relative)",h.video_width,h.video_height));
+        return CString::new(format!(
+            "put movie destination at 0 0 {} {}",h.video_width,h.video_height
+        )).ok();
+    }
+    None
+}
+pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
+    if !video_enabled(){return;}
+    if rewritten && movie_open_game_hwnd(text).is_some() && result!=0{
+        video_log(&format!("MCI_OPEN_REWRITTEN_FAILED code={result}; original_command_retry"));
+        close_host("rewritten_MCI_open_failed");
+    }
+    if text.trim().eq_ignore_ascii_case("close avivideo"){
+        close_host(if result==0{"after_MCI_close"}else{"MCI_close_failed"});
+    }
+}
+#[cfg(test)]
+mod fullscreen_tests {
+    use super::*;
+    #[test]
+    fn aspect_ratio_letterboxes_without_stretching(){
+        assert_eq!(fit_4_3(1920,1080),Some((240,0,1440,1080)));
+        assert_eq!(fit_4_3(1280,720),Some((160,0,960,720)));
+        assert_eq!(fit_4_3(1024,768),Some((0,0,1024,768)));
+        assert_eq!(fit_4_3(1920,1200),Some((160,0,1600,1200)));
+        assert_eq!(fit_4_3(0,1080),None);
+    }
+    #[test]
+    fn rewrite_matches_only_the_game_splash_sequence(){
+        assert_eq!(movie_open_game_hwnd(
+            "open splash4.avi alias movie parent 131252 style popup"),Some(131252));
+        assert_eq!(exact_handle_command("window movie handle 131252"),Some(131252));
+        assert!(destination_command("put movie destination at 0 0 640 480"));
+        assert!(!destination_command("put movie destination at 10 0 640 480"));
+        assert_eq!(movie_open_game_hwnd("open other.avi alias movie parent 131252 style popup"),None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
