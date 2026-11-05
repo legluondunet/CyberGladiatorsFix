@@ -308,6 +308,11 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
     let mut forwarding_targets:Vec<(String,usize)>=Vec::new();
     let mut forwarding_return_modules:Vec<(String,usize)>=Vec::new();
     let mut forwarding_frame_indices=Vec::new();
+    let mut forwarding_edges=Vec::new();
+    let mut direct_dxvk_self_edges=0usize;
+    // The faulting instruction is at +0x18 in the identified DXVK WndProc
+    // entry in this binary. This is a candidate fingerprint, not a symbol.
+    let dxvk_wndproc_entry=eip.saturating_sub(0x18);
     // Count possible reentrant window procedures without logging arbitrary
     // stack arguments. Validate against the same HWND/message observed at
     // the fault. Both this traversal and the matches remain heuristic.
@@ -346,8 +351,24 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
                     }else{
                         forwarding_return_modules.push((caller_module,1));
                     }
-                    let target=candidate_module_rva(word(0) as usize)
-                        .unwrap_or_else(||"unmapped_or_special_thunk".into());
+                    let target_ptr=word(0) as usize;
+                    let target=candidate_module_rva(target_ptr)
+                        .unwrap_or_else(|| {
+                            if (target_ptr >> 16)==0xffff {
+                                format!("winproc_thunk:{target_ptr:#x}")
+                            }else{
+                                format!("unmapped_ptr:{target_ptr:#x}")
+                            }
+                        });
+                    let dxvk_self=caller.to_ascii_lowercase().starts_with("d3d9.dll+")
+                        && target_ptr==dxvk_wndproc_entry;
+                    if dxvk_self{direct_dxvk_self_edges+=1;}
+                    if forwarding_edges.len()<32 {
+                        forwarding_edges.push(format!(
+                            "frame={} return={caller} target={target} dxvk_self={}",
+                            scanned_frames-1,u8::from(dxvk_self)
+                        ));
+                    }
                     if let Some((_,count))=forwarding_targets.iter_mut()
                         .find(|(name,_)|name==&target) {
                         *count+=1;
@@ -384,6 +405,12 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
             .map(|(name,count)|format!("{name}:{count}")).collect::<Vec<_>>().join(", ");
         crate::log(&format!(
             "DXVK_WNDPROC_FORWARD_CANDIDATES hwnd={hwnd:#x} message={message:#x} all_matching_frames={forwarding_candidates} d3d9_return_frames={forwarding_d3d9_returns} first_frame_indices={forwarding_frame_indices:?} caller_modules=[{callers}] candidate_proc_targets=[{targets}] unverified_stdcall_layout=1"
+        ));
+        crate::log(&format!(
+            "DXVK_WNDPROC_FORWARD_EDGES candidate_dxvk_entry={} direct_dxvk_self_edges={direct_dxvk_self_edges} frames=[{}] heuristic_only_not_symbolized=1",
+            candidate_module_rva(dxvk_wndproc_entry)
+                .unwrap_or_else(||"unavailable".into()),
+            forwarding_edges.join(" | ")
         ));
     }
 }
