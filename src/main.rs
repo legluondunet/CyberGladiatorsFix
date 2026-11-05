@@ -32,6 +32,7 @@ Usage:
   CyberGladiatorsFix.exe --upgrade-cdda  Approve backed-up unknown DLL upgrade
   CyberGladiatorsFix.exe --check-bundle  Validate embedded 32-bit components
   CyberGladiatorsFix.exe --dxvk-rootcause  Reproduce native AVI/DXVK crash (diagnostic)
+  CyberGladiatorsFix.exe --dxvk-wndproc-repair-test  Test restoring original game WndProc after AVI (experimental)
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
@@ -212,7 +213,7 @@ fn isolated_intro_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
 /// This explicitly bypasses our external-video curtain. No invasive Glide
 /// pointer hook is enabled. The first-chance observer in the optional CDDA
 /// bridge collects the faulting instruction and a bounded stack fingerprint.
-fn diagnose_dxvk(root:&Path)->Result<(),String>{
+fn diagnose_dxvk(root:&Path,wndproc_repair:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     if settings::read(&game)? {
@@ -222,8 +223,12 @@ fn diagnose_dxvk(root:&Path)->Result<(),String>{
         return Err("DXVK root-cause stack observer requires [Audio] EnableCDDA=1 to load the 32-bit diagnostic bridge; no other file is modified".into());
     }
     show("DXVK_ROOTCAUSE BEGIN mode=native_in_game_AVI renderer=nGlide_D3D9 diagnostic_glide_hook=OFF external_video=OFF dxvk_deferred_surface=OFF",root);
-    show("DXVK_ROOTCAUSE Purpose: observe first-chance 0xC00000FD, capture fault instruction bytes, candidate x86 stack addresses and fresh DXVK D3D9 log; no fixes or workarounds applied",root);
-    let (child,dxvk_dir)=verify::launch_renderer_ab(root,"1",false,false)?;
+    if wndproc_repair {
+        show("DXVK_WNDPROC_REPAIR_TEST experimental=1 scope=game_process_only: after native AVI closes, restore original game ANSI window class proc ONLY if current Win32 WndProc resolves to WineD3D; abort on unexpected module, HWND, thread, Unicode or game class. No DXVK/Wine DLL or game files are modified",root);
+    }else{
+        show("DXVK_ROOTCAUSE Purpose: observe first-chance 0xC00000FD, capture fault instruction bytes, candidate x86 stack addresses and fresh DXVK D3D9 log; no fixes or workarounds applied",root);
+    }
+    let (child,dxvk_dir)=verify::launch_renderer_ab(root,"1",false,false,wndproc_repair)?;
     show(&format!("DXVK_ROOTCAUSE GAME_STARTED pid={} native_avi=ON (may reproduce known crash)",child.id()),root);
     let result=wait_diagnostic(child,root);
     report_dxvk_evidence(root,dxvk_dir);
@@ -235,7 +240,8 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     match args{
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
-        [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root),
+        [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
+        [one] if one.to_str()==Some("--dxvk-wndproc-repair-test")=>return diagnose_dxvk(root,true),
         [one] if one.to_str()==Some("--check-bundle")=>{
             let report=bundle::describe()?;
             show(&report,root);
@@ -274,7 +280,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
                 "--nglide-vulkan"=>("2",false,false,"nGlide native Vulkan control"),
                 _=>unreachable!(),
             };
-            let (child,dxvk_log_dir)=verify::launch_renderer_ab(root,backend,dialog,desktop_refresh)?;
+            let (child,dxvk_log_dir)=verify::launch_renderer_ab(root,backend,dialog,desktop_refresh,false)?;
             show(&format!(
                 "Started CYBER.EXE {label} (no Glide probe, PID {}); renderer={} NGLIDE_REFRESH={} DXVK_DEFER_SURFACE={} Wine trace at {}; isolated DXVK log folder={}",
                 child.id(),backend,if desktop_refresh{"1 (desktop)"}else{"2 (60 Hz)"},dialog,root.join("CyberGladiatorsFix.log").display(),
@@ -376,7 +382,8 @@ mod diagnostics_tests {
     #[test]
     fn help_lists_only_public_single_file_controls(){
         for expected in ["--launch","--trace","--verify","--max-graphics",
-            "--upgrade-cdda","--check-bundle","--dxvk-rootcause","--3dfx-logo","--version","--help",
+            "--upgrade-cdda","--check-bundle","--dxvk-rootcause",
+            "--dxvk-wndproc-repair-test","--3dfx-logo","--version","--help",
             "CyberGladiatorsFix.log","isolated AVI player"]{
             assert!(HELP.contains(expected),"{expected}");
         }
