@@ -192,9 +192,25 @@ fn candidate_module_rva(address:usize)->Option<String>{
     let path=String::from_utf8_lossy(&name[..len]);
     let basename=path.rsplit(['\\','/']).next().unwrap_or("unknown");
     let relevant=["d3d9.dll","glide.dll","cyber.exe","ddraw.dll",
-        "winmm.dll","user32.dll","ntdll.dll","gdi32.dll","dxgi.dll"];
+        "winmm.dll","user32.dll","win32u.dll","ntdll.dll","gdi32.dll","dxgi.dll"];
     if !relevant.iter().any(|n|basename.eq_ignore_ascii_case(n)){return None;}
     Some(format!("{basename}+0x{:x}",address.saturating_sub(module as usize)))
+}
+/// Resolve an in-process Win32 WndProc to a mapped PE module, if possible.
+//// GetWindowLong may also supply special internal dispatch values that are
+//// valid only for CallWindowProc and have no image-backed module.
+pub(crate) fn window_proc_origin(value:usize)->String{
+    if value==0{return "null".into();}
+    if let Some(module)=candidate_module_rva(value){return module;}
+    // Distinguish an otherwise-loaded PE image from a Wine/internal thunk:
+    // the broad resolver uses the same address-based GetModuleHandleExA.
+    let resolved=resolve_module(value);
+    if resolved=="unmapped_or_non_image"{
+        return format!("non_image_or_dispatch_handle({value:#x})");
+    }
+    // This path can include the Wine prefix. Keep only a basename and RVA.
+    let basename=resolved.rsplit(['\\','/']).next().unwrap_or("module_unknown");
+    basename.to_owned()
 }
 fn window_message_name(value:u32)->&'static str{
     match value{
@@ -352,14 +368,7 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
                         forwarding_return_modules.push((caller_module,1));
                     }
                     let target_ptr=word(0) as usize;
-                    let target=candidate_module_rva(target_ptr)
-                        .unwrap_or_else(|| {
-                            if (target_ptr >> 16)==0xffff {
-                                format!("winproc_thunk:{target_ptr:#x}")
-                            }else{
-                                format!("unmapped_ptr:{target_ptr:#x}")
-                            }
-                        });
+                    let target=window_proc_origin(target_ptr);
                     let dxvk_self=caller.to_ascii_lowercase().starts_with("d3d9.dll+")
                         && target_ptr==dxvk_wndproc_entry;
                     if dxvk_self{direct_dxvk_self_edges+=1;}
