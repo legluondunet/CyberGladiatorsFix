@@ -199,6 +199,7 @@ fn candidate_module_rva(address:usize)->Option<String>{
 fn window_message_name(value:u32)->&'static str{
     match value{
         0x0002=>"WM_DESTROY",0x0005=>"WM_SIZE",
+        0x000f=>"WM_PAINT",0x0014=>"WM_ERASEBKGND",
         0x0006=>"WM_ACTIVATE",0x001c=>"WM_ACTIVATEAPP",
         0x0046=>"WM_WINDOWPOSCHANGING",0x0047=>"WM_WINDOWPOSCHANGED",
         0x007d=>"WM_STYLECHANGED",0x007e=>"WM_DISPLAYCHANGE",
@@ -206,7 +207,15 @@ fn window_message_name(value:u32)->&'static str{
         0x0112=>"WM_SYSCOMMAND",_=>"unidentified",
     }
 }
-fn windowproc_fault_probe(eip:usize,ebp:usize,ebx:u32,edi:u32){
+fn matches_hwnd_message_pair(args:&[u8],hwnd:u32,message:u32)->bool {
+    if args.len()<8{return false;}
+    let found_hwnd=u32::from_le_bytes(args[..4].try_into().unwrap());
+    let found_message=u32::from_le_bytes(args[4..8].try_into().unwrap());
+    found_hwnd==hwnd && found_message==message
+}
+/// Return a verified HWND/message pair only when the DXVK instruction
+/// fingerprint AND the live x86 arguments agree with the captured registers.
+fn windowproc_fault_probe(eip:usize,ebp:usize,ebx:u32,edi:u32)->Option<(u32,u32)>{
     // GE-Proton DXVK d3d9_window.cpp checks WM_NCCALCSIZE (0x83)
     // and wparam=1 at the start of its D3D9WindowProc.
     // This machine-code fingerprint must match before interpreting
@@ -218,21 +227,24 @@ fn windowproc_fault_probe(eip:usize,ebp:usize,ebx:u32,edi:u32){
         "DXVK_WINDOWPROC_CANDIDATE signature={} register_ebx={ebx:#x} message={} register_edi={edi:#x} wparam_candidate={} (interpret_only_if_signature_matches)",
         u8::from(signature),window_message_name(ebx),edi
     ));
-    if !signature{return;}
+    if !signature{return None;}
     // The observed x86 function uses an EBP stack frame. The normal
     // stdcall arguments begin at EBP+8; do not assume the frame survived
     // the overflow and validate candidates against the register values.
     let mut args=[0u8;16];
     if read_memory(ebp.saturating_add(8),&mut args)==args.len(){
         let arg=|i:usize|u32::from_le_bytes(args[i..i+4].try_into().unwrap());
+        let matches=arg(4)==ebx&&arg(8)==edi;
         crate::log(&format!(
             "DXVK_WINDOWPROC_ARGS inferred_hwnd={:#x} inferred_message={:#x} ({}) inferred_wparam={:#x} inferred_lparam={:#x} regs_match={} (unverified_frame)",
             arg(0),arg(4),window_message_name(arg(4)),arg(8),arg(12),
-            u8::from(arg(4)==ebx&&arg(8)==edi)
+            u8::from(matches)
         ));
+        if matches{return Some((arg(0),arg(4)));}
     }else{
         crate::log("DXVK_WINDOWPROC_ARGS unavailable (stack frame unreadable)");
     }
+    None
 }
 fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
     // Record exact machine code *at* the faulting instruction, not a guess
@@ -250,7 +262,7 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
     }else{
         crate::log("DXVK_FAULT_CODE unavailable (faulting code already unmapped)");
     }
-    windowproc_fault_probe(eip,ebp,ebx,edi);
+    let verified_window_message=windowproc_fault_probe(eip,ebp,ebx,edi);
     // Sample a bounded region of the *faulting thread's* stack using
     // ReadProcessMemory. Raw stack data can include private game/user data,
     // so log ONLY recognizable module+RVA address candidates, never the
@@ -281,22 +293,45 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
     // so absence of a chain is inconclusive.
     let mut frame=ebp;
     let mut chain=Vec::new();
-    for _ in 0..20{
+    let mut scanned_frames=0usize;
+    let mut same_window_message_frames=0usize;
+    let mut d3d9_returns=0usize;
+    let mut user32_returns=0usize;
+    // Count possible reentrant window procedures without logging arbitrary
+    // stack arguments. Validate against the same HWND/message observed at
+    // the fault. Both this traversal and the matches remain heuristic.
+    for _ in 0..64{
         if frame<0x10000 {break;}
         let mut pair=[0u8;8];
         if read_memory(frame,&mut pair)!=pair.len(){break;}
+        scanned_frames+=1;
+        if let Some((hwnd,message))=verified_window_message {
+            let mut args=[0u8;8];
+            if read_memory(frame.saturating_add(8),&mut args)==args.len()
+                && matches_hwnd_message_pair(&args,hwnd,message) {
+                same_window_message_frames+=1;
+            }
+        }
         let next=u32::from_le_bytes(pair[..4].try_into().unwrap()) as usize;
         let ret=u32::from_le_bytes(pair[4..].try_into().unwrap()) as usize;
         if let Some(name)=candidate_module_rva(ret){
-            chain.push(name);
+            if name.starts_with("d3d9.dll+"){d3d9_returns+=1;}
+            if name.starts_with("USER32.dll+"){user32_returns+=1;}
+            if chain.len()<20{chain.push(name);}
         }
         if next<=frame || next-frame>0x100000{break;}
         frame=next;
     }
     crate::log(&format!(
-        "DXVK_EBP_CHAIN starting_ebp={ebp:#x} probable_returns={} [{}] optimized_code_may_omit_ebp=1",
+        "DXVK_EBP_CHAIN starting_ebp={ebp:#x} sampled_frames={scanned_frames} first_probable_returns={} [{}] optimized_code_may_omit_ebp=1",
         chain.len(),chain.join(" <- ")
     ));
+    if let Some((hwnd,message))=verified_window_message {
+        crate::log(&format!(
+            "DXVK_WNDPROC_REENTRY hwnd={hwnd:#x} message={message:#x} ({}) possible_matching_frames={same_window_message_frames} scanned_frames={scanned_frames} d3d9_returns={d3d9_returns} user32_returns={user32_returns} heuristic_only_not_symbolized_backtrace=1",
+            window_message_name(message)
+        ));
+    }
 }
 /// Called by the existing, read-only AVI-close sampler on a different thread.
 /// Do not log from the vectored exception callback: stack may be exhausted.
@@ -364,10 +399,22 @@ mod tests {
     #[test]
     fn maps_window_messages_used_by_the_dxvk_window_procedure(){
         assert_eq!(window_message_name(0x83),"WM_NCCALCSIZE");
+        assert_eq!(window_message_name(0x0f),"WM_PAINT");
+        assert_eq!(window_message_name(0x14),"WM_ERASEBKGND");
         assert_eq!(window_message_name(0x1c),"WM_ACTIVATEAPP");
         assert_eq!(window_message_name(0x47),"WM_WINDOWPOSCHANGED");
         assert_eq!(window_message_name(0xffff),"unidentified");
         assert_eq!((EDI_OFFSET,EBX_OFFSET,EBP_OFFSET),(156,164,180));
+    }
+    #[test]
+    fn matching_window_messages_are_only_counted_for_identical_hwnd_and_message(){
+        let mut bytes=[0u8;8];
+        bytes[..4].copy_from_slice(&0x200b4u32.to_le_bytes());
+        bytes[4..].copy_from_slice(&0x0fu32.to_le_bytes());
+        assert!(matches_hwnd_message_pair(&bytes,0x200b4,0x0f));
+        assert!(!matches_hwnd_message_pair(&bytes,0x200b5,0x0f));
+        assert!(!matches_hwnd_message_pair(&bytes,0x200b4,0x83));
+        assert!(!matches_hwnd_message_pair(&bytes[..4],0x200b4,0x0f));
     }
     #[test]
     fn x86_context_offsets_are_aligned_and_expected(){
