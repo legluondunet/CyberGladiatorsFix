@@ -155,6 +155,9 @@ fn movie_open_game_hwnd(text:&str)->Option<usize>{
         || !parts[7].eq_ignore_ascii_case("popup") {return None;}
     parts[5].parse::<usize>().ok()
 }
+pub fn movie_open_game_hwnd_for_retry(text:&str)->bool{
+    movie_open_game_hwnd(text).is_some()
+}
 fn exact_handle_command(text:&str)->Option<usize>{
     let parts:Vec<&str>=text.split_ascii_whitespace().collect();
     if parts.len()!=4 || !parts[..3].iter().zip(["window","movie","handle"])
