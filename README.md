@@ -6,13 +6,13 @@
 
 ## What's included?
 
-The Windows download contains **one file: `CyberGladiatorsFix.exe` (64-bit)**. It embeds both project-owned 32-bit runtime components: the WinMM/CDDA FLAC bridge DLL and the isolated Cinepak AVI player. They run as 32-bit components because `CYBER.EXE` is 32-bit. During play, the video helper is extracted to a private temporary directory and removed after it exits. The DLL is installed beside the game only when `EnableCDDA=1`. The original game and nGlide are **not** bundled.
+The Windows download contains **one file: `CyberGladiatorsFix.exe` (64-bit)**. It embeds two project-owned x86 components: the WinMM/CDDA FLAC bridge DLL (also providing the guarded WndProc repair) and, temporarily, a fallback Cinepak AVI player. Both target x86 because `CYBER.EXE` is 32-bit. The helper is only used when CDDA is disabled and is extracted to a private temporary directory and removed after it exits. The DLL is installed beside the game when `EnableCDDA=1`. The original game and nGlide are **not** bundled.
 
 CyberGladiatorsFix can:
 
 - Install a verified **US retail CUE/BIN** data track, preserving the original CD resources and creating a backed-up, validated `CYBER.EXE` with compatibility/no-CD patches.
 - Extract CD-audio tracks as lossless `TrackNN.flac` files and emulate legacy CD-audio MCI via a 32-bit WinMM forwarding DLL (optional).
-- Start the original game's **640×480 Cinepak introduction** in a separate, borderless fullscreen window. It plays at the screen's size while preserving **4:3 aspect ratio**. **Esc, Enter, Space or any ordinary key** skips the movie. The separate AVI player closes fully before the game starts with DXVK, avoiding the in-process AVI/Direct3D9 crash. The attempted seamless black-curtain handoff was removed after field feedback; investigating the original DXVK failure now takes priority.
+- Start the original game's **640×480 Cinepak introduction in the game process** when [Video] SkipIntro=0 and [Audio] EnableCDDA=1. A guarded Win32 window-procedure repair after AVI close addresses the WineD3D/DXVK subclass cycle that previously caused a stack overflow under Wine. The user confirmed reaching and playing the game in the repaired diagnostic build. The ordinary launcher now uses the same native-video path for this configuration, pending regression testing; when CDDA is disabled, the previously tested separate fullscreen player remains as a temporary compatibility fallback (4:3 aspect ratio, keyboard skip).
 - Start the game with nGlide Direct3D9, which uses DXVK when correctly installed in Wine/Proton. On native Windows it uses the platform's Direct3D9 provider.
 - Store **all launcher, video, CDDA, Wine, and collected DXVK diagnostics in one `CyberGladiatorsFix.log` beside the launcher**, with a fresh header describing the relevant effective user/hardware/game configuration.
 
@@ -39,7 +39,7 @@ CyberGladiatorsFix.exe --version
 CyberGladiatorsFix.exe --help
 ```
 
-**Video is automatic:** If `SkipIntro=0`, the launcher plays `splash4.avi` in an isolated full-screen player and then starts the game, with the in-game intro skipped *only for that launch*. If `SkipIntro=1`, the video is omitted. Both paths preserve the user's INI and use exact recognized executable patches. The former `--launch --trace --external-intro` option remains accepted as a developer diagnostic alias.
+**Video is automatic:** When `SkipIntro=0` and `EnableCDDA=1`, the game plays its original `splash4.avi` natively and the x86 bridge attempts a one-shot, strictly validated WineD3D window-procedure repair after AVI close (no extra player). When `EnableCDDA=0`, a temporary compatibility path plays the intro in an isolated helper and skips it inside the game. If `SkipIntro=1`, the intro is omitted. These paths preserve the user's INI and recognize only supported executable variants. `--dxvk-rootcause` remains an unmodified diagnostic control.
 
 ### Wine / Proton
 
@@ -68,7 +68,7 @@ AllowModifiedIQ=0
 ```
 
 - `SkipIntro=0`: play and optionally skip the intro via keyboard; `1`: omit the movie.
-- `EnableCDDA=1`: use the embedded CDDA bridge to play extracted FLAC music; `0`: use the original system WinMM behavior. The installed default currently keeps **0**; change to **1** after verifying audio support.
+- `EnableCDDA=1`: use the embedded CDDA bridge to play extracted FLAC music, and enable the native in-game AVI transition repair under Wine; `0`: use original WinMM behavior and temporarily keep the isolated-AVI fallback. The installed default currently keeps **0**, pending release-wide validation.
 - `AllowModifiedIQ=0`: require the CD's exact original resource hashes; `1`: explicitly allow **same-size** changes to `iq/iq00.dat…iq99.dat` during **launch only**. The `--verify` command **always remains strict**. The game itself may update some IQ records; never modify or overwrite these game files as part of the patcher refactor.
 
 The internal video size/detail in the game's separate `cyber.ini` can be checked and adjusted using `--max-graphics`. nGlide normally scales 3D graphics to desktop resolution, preserving aspect ratio.
@@ -78,6 +78,10 @@ The internal video size/detail in the game's separate `cyber.ini` can be checked
 The original installer never silently overwrites an unrecognized 32-bit DLL, a modified executable, or an original CD asset. A previously recorded verified receipt or known first-party DLL hash permits a backed-up update. Otherwise use **`--upgrade-cdda`** explicitly, after checking the installed DLL. Existing SHA-qualified `.bak` files are reused only if their complete SHA-256 matches the version being preserved. Interrupted `.tmp` staging files are not deleted automatically. The embedded DLL is validated before it is written to the game folder.
 
 **Do not remove or modify any `IQ/` original game data files** to resolve integrity errors. Preserve their current contents and inspect the mismatch in the log.
+
+### Native AVI integration status (development build)
+
+On **2026-11-05**, a Wine 11.0 / GE-Proton DXVK test with `--dxvk-wndproc-repair-test` confirmed normal video completion, native D3D9 initialization, FLAC playback, gameplay and a clean process exit. The fix identified `wined3d.dll+0xf4a20` as the active WndProc and restored the original game's `cyber.exe+0x5f82` before Direct3D9 installed its own WndProc. The ordinary `--launch` flow now prefers this native-video route **when CDDA is enabled**. That new default route still requires an ordinary-launch regression check, including video skip, gameplay, Alt+Tab, input, and exit; native Windows behavior is not field-validated. The isolated x86 AVI helper remains bundled for the disabled-CDDA fallback until that mode has a safe bridge-independent solution.
 
 ### DXVK native-intro root-cause investigation (developer only)
 
