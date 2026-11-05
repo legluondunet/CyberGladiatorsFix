@@ -127,6 +127,14 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 /// versus nGlide's direct Vulkan renderer. Never assume D3D9 implies DXVK.
 /// Each D3D9 experiment writes DXVK logs into its own newly-created folder:
 /// pre-existing DXVK logs can never masquerade as evidence from this run.
+/// Normal native AVI path verified with the guarded WineD3D/DXVK WndProc
+/// repair; no external MCI player is launched. For now it requires the
+/// optional WinMM/CDDA bridge, with the separate-video compatibility path
+/// retained for installations with CDDA disabled.
+pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool)->Result<Child,String>{
+    validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
+    launch_with_renderer_test(root,logo,trace,false,0,true,Some("1"),false,false,None,None,true)
+}
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,None,wndproc_repair)
 }
@@ -174,23 +182,30 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // External intro is not a renderer experiment: its own x86 process
     // has already disposed every MCI device before game startup. Permit
     // this sole, hash-verified route during normal launch as well as trace.
-    if wndproc_repair && (!trace||!no_glide_hook||backend_override!=Some("1")
-        ||logo||passthru_noop||video_delay_ms!=0||dxvk_defer_surface
-        ||desktop_refresh||skip_intro_override.is_some()) {
-        return Err("WndProc repair experiment requires native AVI, nGlide D3D9 and the hook-free diagnostic runner".into());
+    let normal_repair=wndproc_repair && !trace
+        && no_glide_hook && backend_override==Some("1")
+        && !passthru_noop && video_delay_ms==0 && !dxvk_defer_surface
+        && !desktop_refresh && skip_intro_override.is_none()
+        && dxvk_log_dir.is_none();
+    if wndproc_repair && !normal_repair
+        && (!trace||!no_glide_hook||backend_override!=Some("1")
+            ||logo||passthru_noop||video_delay_ms!=0||dxvk_defer_surface
+            ||desktop_refresh||skip_intro_override.is_some()) {
+        return Err("WndProc repair requires native AVI, nGlide D3D9 and a hook-free launch".into());
     }
     let isolated=skip_intro_override==Some(true)
         && backend_override==Some("1") && no_glide_hook
         && (!logo||!trace) && !passthru_noop && video_delay_ms==0
         && !dxvk_defer_surface && !desktop_refresh
         && (trace||dxvk_log_dir.is_none());
-    if !isolated {
+    if !isolated && !normal_repair {
         validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
     }
     if skip_intro_override.is_some() && !isolated {
         return Err("External intro requires the isolated MCI player followed by the verified nGlide D3D9 game path".into());
     }
-    if no_glide_hook && !isolated && (!trace||logo||passthru_noop||video_delay_ms!=0){
+    if no_glide_hook && !isolated && !normal_repair
+        && (!trace||logo||passthru_noop||video_delay_ms!=0){
         return Err("--no-glide-hook requires --launch --trace without other experiments".into());
     }
     if video_delay_ms!=0 && (!trace||logo||passthru_noop||!matches!(video_delay_ms,100|250|500|1000)){
@@ -260,6 +275,14 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
         "CYBER_WNDPROC_REPAIR_TEST"]{
         cmd.env_remove(key);
+    }
+    // This is a one-shot, guard-checked in-process fix. No long-running
+    // diagnostics, DLL hooks or Wine prefix changes in the normal path.
+    if wndproc_repair {
+        cmd.env("CYBER_WNDPROC_REPAIR_TEST","1");
+        if !trace {
+            crate::show("INTRO_NATIVE repair=enabled only_when_WineD3D_ANSI_WndProc_and_verified_game_class; renderer=nGlide_D3D9",root);
+        }
     }
     if trace {
         // Diagnoses graphics/exception handling without modifying game bytes
