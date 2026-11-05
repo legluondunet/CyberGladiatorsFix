@@ -297,12 +297,17 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
     let mut same_window_message_frames=0usize;
     let mut d3d9_returns=0usize;
     let mut user32_returns=0usize;
-    let mut forwarding_calls=0usize;
-    // A CallWindowProc(A/W) frame has five stdcall arguments:
-    // (previous_proc, hwnd, message, wparam, lparam). When the validated
-    // window and message match, classify *only* its procedure argument.
-    // Never log the raw stack contents or assume the frame is a known symbol.
+    let mut forwarding_candidates=0usize;
+    let mut forwarding_d3d9_returns=0usize;
+    // The previous probe was over-constrained: EBP+8 can contain the
+    // application WndProc arguments, while CallWindowProc's 5 arguments
+    // appear only on specific frames. Requiring a D3D9 return address
+    // produced a zero count even though 24 WndProc argument pairs match.
+    // Log both signatures independently and label the result heuristic.
+    // Do not log arbitrary game stack DWORDs or user-memory contents.
     let mut forwarding_targets:Vec<(String,usize)>=Vec::new();
+    let mut forwarding_return_modules:Vec<(String,usize)>=Vec::new();
+    let mut forwarding_frame_indices=Vec::new();
     // Count possible reentrant window procedures without logging arbitrary
     // stack arguments. Validate against the same HWND/message observed at
     // the fault. Both this traversal and the matches remain heuristic.
@@ -319,21 +324,35 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
                 }
                 let word=|offset:usize|u32::from_le_bytes(args[offset..offset+4]
                     .try_into().unwrap());
-                // A direct WndProc has (hwnd,msg,wp,lp), but
-                // CallWindowProc has (proc,hwnd,msg,wp,lp). Require
-                // exact HWND/message and a return address in D3D9's code.
-                let ret=u32::from_le_bytes(pair[4..].try_into().unwrap()) as usize;
-                if word(4)==hwnd && word(8)==message
-                    && candidate_module_rva(ret).is_some_and(|name|
-                        name.to_ascii_lowercase().starts_with("d3d9.dll+")) {
-                    if let Some(proc_module)=candidate_module_rva(word(0) as usize) {
-                        forwarding_calls+=1;
-                        if let Some((_,count))=forwarding_targets.iter_mut()
-                            .find(|(name,_)|name==&proc_module) {
-                            *count+=1;
-                        }else{
-                            forwarding_targets.push((proc_module,1));
-                        }
+                // A direct WndProc has (hwnd,msg,wp,lp); a forwarding
+                // CallWindowProc has (proc,hwnd,msg,wp,lp). Do not require
+                // a particular return module at this point: Wine's USER32
+                // dispatcher may introduce additional frames.
+                if word(4)==hwnd && word(8)==message {
+                    forwarding_candidates+=1;
+                    if forwarding_frame_indices.len()<12 {
+                        forwarding_frame_indices.push(scanned_frames-1);
+                    }
+                    let ret=u32::from_le_bytes(pair[4..].try_into().unwrap()) as usize;
+                    let caller=candidate_module_rva(ret)
+                        .unwrap_or_else(||"unmapped_or_unknown".into());
+                    if caller.to_ascii_lowercase().starts_with("d3d9.dll+") {
+                        forwarding_d3d9_returns+=1;
+                    }
+                    let caller_module=caller.split('+').next().unwrap_or("unknown").to_string();
+                    if let Some((_,count))=forwarding_return_modules.iter_mut()
+                        .find(|(name,_)|name==&caller_module) {
+                        *count+=1;
+                    }else{
+                        forwarding_return_modules.push((caller_module,1));
+                    }
+                    let target=candidate_module_rva(word(0) as usize)
+                        .unwrap_or_else(||"unmapped_or_special_thunk".into());
+                    if let Some((_,count))=forwarding_targets.iter_mut()
+                        .find(|(name,_)|name==&target) {
+                        *count+=1;
+                    }else{
+                        forwarding_targets.push((target,1));
                     }
                 }
             }
@@ -358,10 +377,13 @@ fn exception_forensics(eip:usize,esp:usize,ebp:usize,ebx:u32,edi:u32){
             window_message_name(message)
         ));
         forwarding_targets.sort_by(|a,b|b.1.cmp(&a.1));
+        forwarding_return_modules.sort_by(|a,b|b.1.cmp(&a.1));
         let targets=forwarding_targets.iter().take(12)
             .map(|(name,count)|format!("{name}:{count}")).collect::<Vec<_>>().join(", ");
+        let callers=forwarding_return_modules.iter().take(12)
+            .map(|(name,count)|format!("{name}:{count}")).collect::<Vec<_>>().join(", ");
         crate::log(&format!(
-            "DXVK_WNDPROC_FORWARD_TARGETS hwnd={hwnd:#x} message={message:#x} matching_d3d9_caller_frames={forwarding_calls} target_module_rvas=[{targets}] heuristic_only_callwindowproc_signature_not_symbolized=1"
+            "DXVK_WNDPROC_FORWARD_CANDIDATES hwnd={hwnd:#x} message={message:#x} all_matching_frames={forwarding_candidates} d3d9_return_frames={forwarding_d3d9_returns} first_frame_indices={forwarding_frame_indices:?} caller_modules=[{callers}] candidate_proc_targets=[{targets}] unverified_stdcall_layout=1"
         ));
     }
 }
