@@ -18,6 +18,7 @@ const PAGE_READWRITE:u32=0x04;
 const GWL_STYLE:i32=-16;
 const GWL_EXSTYLE:i32=-20;
 const GWL_WNDPROC:i32=-4;
+const GCL_WNDPROC:i32=-24;
 
 static INSTALLED:OnceLock<bool>=OnceLock::new();
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
@@ -45,6 +46,10 @@ extern "system" {
 #[link(name="user32")]
 extern "system" {
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
+    fn GetWindowLongW(hwnd:*mut c_void,index:i32)->i32;
+    fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
+    fn GetClassLongW(hwnd:*mut c_void,index:i32)->u32;
+    fn IsWindowUnicode(hwnd:*mut c_void)->i32;
     fn IsWindow(hwnd:*mut c_void)->i32;
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn IsIconic(hwnd:*mut c_void)->i32;
@@ -272,6 +277,18 @@ fn window_snapshot(stage:&str) {
             "WINDOW_SCAN {stage} pid={} enum_result={enumerated} top_level_total={} entries=[{}]",
             windows.current_pid,windows.total,windows.sample.join(" | ")
         ));
+        if valid && (stage=="immediately after MCI close"||stage=="100 ms after MCI close") {
+            let instance_a=GetWindowLongA(hwnd,GWL_WNDPROC) as u32 as usize;
+            let instance_w=GetWindowLongW(hwnd,GWL_WNDPROC) as u32 as usize;
+            let class_a=GetClassLongA(hwnd,GCL_WNDPROC) as usize;
+            let class_w=GetClassLongW(hwnd,GCL_WNDPROC) as usize;
+            let origin=crate::exception_trace::window_proc_origin;
+            report(&format!(
+                "WNDPROC_PROVENANCE {stage} unicode={} hwnd={hwnd:?} instance_a={instance_a:#x} ({}) instance_w={instance_w:#x} ({}) class_a={class_a:#x} ({}) class_w={class_w:#x} ({}) read_only=1",
+                IsWindowUnicode(hwnd),origin(instance_a),origin(instance_w),
+                origin(class_a),origin(class_w)
+            ));
+        }
     }
     game_thread_snapshot(stage);
 }
