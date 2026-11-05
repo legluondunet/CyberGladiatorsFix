@@ -70,6 +70,7 @@ fn after_in(state:&mut MovieState,command:&str,code:u32,reply:&str)->Option<Stri
 // and the field-validated after-video WineD3D/DXVK WndProc repair are preserved.
 // No fullscreen window is created during normal launches.
 use std::ffi::{c_void,CString};
+use std::sync::atomic::{AtomicBool,AtomicU32,Ordering};
 
 const EXPECTED_GAME_BASE:usize=0x0040_0000;
 const GAME_HWND_RVA:usize=0x0012_8018;
@@ -84,6 +85,18 @@ const SS_BLACKRECT:u32=0x0000_0004;
 const WS_EX_TOOLWINDOW:u32=0x0000_0080;
 const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
+const WM_PAINT:u32=0x000f;
+const WM_ERASEBKGND:u32=0x0014;
+const BLACK_BRUSH:i32=4;
+const WH_KEYBOARD:i32=2;
+const VK_ESCAPE:usize=0x1b;
+const VK_RETURN:usize=0x0d;
+const VK_SPACE:usize=0x20;
+const HOST_CLASS:&[u8]=b"CyberGladiatorsFix_AVI_4x3_Host_v2\0";
+static HOST_CLASS_REGISTERED:OnceLock<bool>=OnceLock::new();
+static KEY_FILTER_ACTIVE:AtomicBool=AtomicBool::new(false);
+static KEY_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
+static KEY_FILTER_ALLOWED:AtomicU32=AtomicU32::new(0);
 
 #[repr(C)]
 #[derive(Default,Copy,Clone)]
@@ -95,6 +108,19 @@ struct MonitorInfo {
     work:WinRect,
     flags:u32,
 }
+#[repr(C)]
+struct WndClassA {
+    style:u32,
+    wnd_proc:Option<unsafe extern "system" fn(*mut c_void,u32,usize,isize)->isize>,
+    class_extra:i32,window_extra:i32,
+    instance:*mut c_void,icon:*mut c_void,cursor:*mut c_void,
+    background:*mut c_void,menu_name:*const u8,class_name:*const u8,
+}
+#[repr(C)]
+struct PaintStruct {
+    dc:*mut c_void,erase:i32,paint:WinRect,
+    restore:i32,inc_update:i32,reserved:[u8;32],
+}
 #[link(name="kernel32")]
 extern "system" {
     fn GetModuleHandleA(module:*const u8)->*mut c_void;
@@ -102,8 +128,24 @@ extern "system" {
     fn GetCurrentThreadId()->u32;
     fn GetLastError()->u32;
 }
+#[link(name="gdi32")]
+extern "system" {
+    fn GetStockObject(index:i32)->*mut c_void;
+}
 #[link(name="user32")]
 extern "system" {
+    fn DefWindowProcA(hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize)->isize;
+    fn RegisterClassA(class:*const WndClassA)->u16;
+    fn BeginPaint(hwnd:*mut c_void,paint:*mut PaintStruct)->*mut c_void;
+    fn EndPaint(hwnd:*mut c_void,paint:*const PaintStruct)->i32;
+    fn FillRect(dc:*mut c_void,rect:*const WinRect,brush:*mut c_void)->i32;
+    fn InvalidateRect(hwnd:*mut c_void,rect:*const WinRect,erase:i32)->i32;
+    fn UpdateWindow(hwnd:*mut c_void)->i32;
+    fn SetWindowsHookExA(id_hook:i32,
+        callback:Option<unsafe extern "system" fn(i32,usize,isize)->isize>,
+        module:*mut c_void,thread_id:u32)->*mut c_void;
+    fn CallNextHookEx(hook:*mut c_void,code:i32,wparam:usize,lparam:isize)->isize;
+    fn UnhookWindowsHookEx(hook:*mut c_void)->i32;
     fn IsWindow(hwnd:*mut c_void)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
@@ -123,6 +165,7 @@ struct NativeHost {
     owner_thread:u32,
     video_width:i32,
     video_height:i32,
+    keyboard_hook:usize,
 }
 static VIDEO_HOST:OnceLock<Mutex<Option<NativeHost>>>=OnceLock::new();
 fn video_host()->&'static Mutex<Option<NativeHost>> {
@@ -132,6 +175,102 @@ fn video_enabled()->bool {
     std::env::var("CYBER_AVI_FULLSCREEN_TEST").as_deref()==Ok("1")
 }
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
+
+// A top-level STATIC SS_BLACKRECT window can leave its uncovered client area
+// white in Wine. Give the 4:3 host its own black-background Win32 class and
+// explicitly paint on both erase and paint messages. This is a *separate*
+// temporary HWND; the game's original WndProc is never subclassed here.
+unsafe extern "system" fn black_host_proc(
+    hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
+)->isize{
+    match msg{
+        WM_ERASEBKGND=>{
+            let mut rect=WinRect::default();
+            if GetClientRect(hwnd,&mut rect)!=0 {
+                let _=FillRect(wparam as *mut c_void,&rect,GetStockObject(BLACK_BRUSH));
+            }
+            1
+        }
+        WM_PAINT=>{
+            let mut paint=PaintStruct{
+                dc:std::ptr::null_mut(),erase:0,paint:WinRect::default(),
+                restore:0,inc_update:0,reserved:[0;32]
+            };
+            let dc=BeginPaint(hwnd,&mut paint);
+            if !dc.is_null(){
+                let mut rect=WinRect::default();
+                if GetClientRect(hwnd,&mut rect)!=0 {
+                    let _=FillRect(dc,&rect,GetStockObject(BLACK_BRUSH));
+                }
+                EndPaint(hwnd,&paint);
+            }
+            0
+        }
+        _=>DefWindowProcA(hwnd,msg,wparam,lparam),
+    }
+}
+unsafe fn register_black_host_class(instance:*mut c_void)->bool{
+    *HOST_CLASS_REGISTERED.get_or_init(||{
+        let class=WndClassA{
+            style:0, wnd_proc:Some(black_host_proc),
+            class_extra:0,window_extra:0,instance,
+            icon:std::ptr::null_mut(),cursor:std::ptr::null_mut(),
+            background:GetStockObject(BLACK_BRUSH),
+            menu_name:std::ptr::null(),class_name:HOST_CLASS.as_ptr()
+        };
+        let atom=RegisterClassA(&class);
+        if atom==0{
+            video_log(&format!("HOST_CLASS_FAILED win32={}",GetLastError()));
+            false
+        }else{
+            video_log("HOST_CLASS registered background=BLACK_BRUSH wm_paint=explicit");
+            true
+        }
+    })
+}
+// Only the three explicitly approved skip keys reach the original game's
+// keyboard message loop while the native AVI is playing. A thread-local
+// WH_KEYBOARD hook is intentionally limited to the game's UI thread: no
+// global keyboard hooks, persistent changes, or DXVK WndProc modifications.
+// GetAsyncKeyState/DirectInput bypass this API; validation under Wine is needed.
+fn allowed_movie_skip_key(virtual_key:usize)->bool{
+    matches!(virtual_key,VK_ESCAPE|VK_RETURN|VK_SPACE)
+}
+unsafe extern "system" fn movie_keyboard_filter(
+    code:i32,key:usize,flags:isize
+)->isize{
+    if code>=0 && KEY_FILTER_ACTIVE.load(Ordering::Relaxed){
+        if allowed_movie_skip_key(key){
+            KEY_FILTER_ALLOWED.fetch_add(1,Ordering::Relaxed);
+        }else{
+            KEY_FILTER_BLOCKED.fetch_add(1,Ordering::Relaxed);
+            return 1;
+        }
+    }
+    CallNextHookEx(std::ptr::null_mut(),code,key,flags)
+}
+fn enable_movie_keys(){
+    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(host)=guard.as_mut() else{return;};
+    unsafe{
+        if host.owner_thread!=GetCurrentThreadId(){
+            video_log("KEY_FILTER_FAILED wrong_video_thread");
+            return;
+        }
+        if host.keyboard_hook!=0{return;}
+        KEY_FILTER_BLOCKED.store(0,Ordering::Relaxed);
+        KEY_FILTER_ALLOWED.store(0,Ordering::Relaxed);
+        let hook=SetWindowsHookExA(WH_KEYBOARD,Some(movie_keyboard_filter),
+            std::ptr::null_mut(),host.owner_thread);
+        if hook.is_null(){
+            video_log(&format!("KEY_FILTER_FAILED win32={}",GetLastError()));
+            return;
+        }
+        host.keyboard_hook=hook as usize;
+        KEY_FILTER_ACTIVE.store(true,Ordering::Release);
+        video_log("KEY_FILTER_ACTIVE allow=[ESC,ENTER,SPACE] other_game_thread_key_events=suppressed");
+    }
+}
 
 fn fit_4_3(width:i32,height:i32)->Option<(i32,i32,i32,i32)>{
     if width<=0||height<=0||width>16384||height>16384{return None;}
@@ -199,13 +338,14 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
     let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
     let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
-    // STATIC SS_BLACKRECT paints black without introducing a custom WndProc
-    // to the already delicate DXVK/Wine subclass chain.
+    // Keep the custom class separate from the game's known subclass chain.
+    // The explicitly black-painted background covers both pillarboxes.
+    if !register_black_host_class(base as *mut c_void){return None;}
     let host=CreateWindowExA(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,
-        b"STATIC\0".as_ptr(),b"\0".as_ptr(),
-        WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN|SS_BLACKRECT,
+        HOST_CLASS.as_ptr(),b"\0".as_ptr(),
+        WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN,
         info.monitor.left,info.monitor.top,screen_w,screen_h,
-        hwnd,std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
+        hwnd,std::ptr::null_mut(),base as *mut c_void,std::ptr::null_mut());
     if host.is_null() {
         video_log(&format!("SKIP fullscreen_host_create_failed={}",GetLastError()));
         return None;
@@ -226,22 +366,34 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log("SKIP unexpected_video_surface_client_size");
         return None;
     }
+    // Force a fresh black paint before Wine's MCI window becomes visible.
+    let _=InvalidateRect(host,std::ptr::null(),1);
+    let _=UpdateWindow(host);
     video_log(&format!(
-        "HOST_CREATED game={game:#x} host={:#x} surface={:#x} monitor=({},{} {}x{}) video_4_3=({x},{y} {w}x{h}) fullscreen_black=1 no_activate=1",
+        "HOST_CREATED game={game:#x} host={:#x} surface={:#x} monitor=({},{} {}x{}) video_4_3=({x},{y} {w}x{h}) fullscreen_black=painted no_activate=1",
         host as usize,surface as usize,
         info.monitor.left,info.monitor.top,screen_w,screen_h));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,game,owner_thread:GetCurrentThreadId(),
-        video_width:w,video_height:h
+        video_width:w,video_height:h,keyboard_hook:0
     })
 }
 fn close_host(reason:&str){
     let previous=video_host().lock().unwrap_or_else(|e|e.into_inner()).take();
     if let Some(h)=previous{
         unsafe {
+            KEY_FILTER_ACTIVE.store(false,Ordering::Release);
             if GetCurrentThreadId()!=h.owner_thread{
                 video_log(&format!("WARNING host_not_destroyed_other_thread reason={reason}"));
                 return;
+            }
+            if h.keyboard_hook!=0{
+                let unhooked=UnhookWindowsHookEx(h.keyboard_hook as *mut c_void);
+                video_log(&format!(
+                    "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={}",
+                    KEY_FILTER_ALLOWED.load(Ordering::Relaxed),
+                    KEY_FILTER_BLOCKED.load(Ordering::Relaxed)
+                ));
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
             video_log(&format!("HOST_CLOSED reason={reason} destroy_result={destroyed}"));
@@ -287,6 +439,9 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
         video_log(&format!("MCI_OPEN_REWRITTEN_FAILED code={result}; original_command_retry"));
         close_host("rewritten_MCI_open_failed");
     }
+    if text.trim().eq_ignore_ascii_case("play movie window") && result==0{
+        enable_movie_keys();
+    }
     if text.trim().eq_ignore_ascii_case("close avivideo"){
         close_host(if result==0{"after_MCI_close"}else{"MCI_close_failed"});
     }
@@ -294,6 +449,15 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
+    #[test]
+    fn skip_filter_accepts_only_three_virtual_keys(){
+        for key in [VK_ESCAPE,VK_RETURN,VK_SPACE]{
+            assert!(allowed_movie_skip_key(key));
+        }
+        for key in [0x41,0x5a,0x09,0x08,0x25,0x26,0x70,0x12,0x10,0]{
+            assert!(!allowed_movie_skip_key(key),"{key:#x}");
+        }
+    }
     #[test]
     fn aspect_ratio_letterboxes_without_stretching(){
         assert_eq!(fit_4_3(1920,1080),Some((240,0,1440,1080)));
