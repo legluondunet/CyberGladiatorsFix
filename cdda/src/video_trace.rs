@@ -136,7 +136,7 @@ fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
 fn fit_4_3(width:i32,height:i32)->Option<(i32,i32,i32,i32)>{
     if width<=0||height<=0||width>16384||height>16384{return None;}
     let (w,h)=if i64::from(width)*3 > i64::from(height)*4 {
-        (i64::from(height)*4/3,height)
+        ((i64::from(height)*4/3) as i32,height)
     }else{
         (width,(i64::from(width)*3/4) as i32)
     };
