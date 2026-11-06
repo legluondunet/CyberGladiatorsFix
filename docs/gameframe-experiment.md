@@ -38,6 +38,43 @@ immediately after successful MCI close, BEFORE the GameFrame OpenGL
 renderer starts. The nGlide-specific WineD3D WndProc replacement is OFF.
 Other launch commands and the validated nGlide Direct3D9 path are unchanged.
 
+GAMEFRAME AVI-IN-WINDOW COMPARISON (NEW EXPERIMENT)
+GameFrame does not decode splash4.avi: the game's original Cinepak AVI
+continues to be decoded by the Windows/Wine WinMM/MCI video driver.
+However, the alternative command displays it inside the SAME original
+GameFrame OpenGL game window, via a 4:3 centered native Win32 child:
+  CyberGladiatorsFix.exe --launch --gameframe-test --avi-in-game-window
+
+Unlike the existing --launch --gameframe-test (control), this option
+does NOT create a separate, independent, topmost fullscreen MCI host.
+Before MCI opens, the native game HWND is made desktop-sized, and the
+movie's black host is a CHILD of that HWND. After MCI closes, ONLY that
+child is destroyed; the parent game HWND and its OpenGL context survive.
+The movie's sound, skip keys, original assets and 60 FPS GameFrame
+limiter are unchanged. We preserve its native MCI decoder, not an
+unverified new OpenGL AVI texture decoder.
+
+This mode is intended to compare the visible AVI-to-3D transition and
+focus/window behavior on Wine with our previous nGlide experiments.
+The existing --launch --gameframe-test WITHOUT the extra flag stays
+unchanged for A/B testing and rollback. If the new in-window path
+renders video black, hides the picture, changes focus, or crashes,
+re-run the standard GameFrame test command from the SAME matched
+archive; no reinstall or rollback is necessary.
+
+Log markers:
+  GAMEFRAME_VIDEO_IN_WINDOW enabled via launcher
+  GAMEFRAME_HANDOFF_PREPARE stage=before_MCI_AVIVIDEO_open
+  GAMEFRAME_IN_WINDOW_CREATED parent_is_game=1 independent_top_level=0
+  GAMEFRAME_HANDOFF_PREPARE stage=after_MCI_close_before_host_destroy
+  HOST_CLOSED reason=gameframe_in_window_movie_closed
+
+This experiment is not true texture-based decoding in OpenGL. If it
+still shows a compositor glitch, a separate decoded-frame upload to
+GameFrame's GL framebuffer could be investigated later, subject to
+proving the necessary codecs/decoding and frame timing are reliable
+under both Windows and Wine.
+
 HOW TO TEST (SAFE, REVERSIBLE)
 1. Fully exit Cyber Gladiators and Wine processes for this game.
 2. Back up the currently installed CyberGladiatorsFix.exe (the launcher).
