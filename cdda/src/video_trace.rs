@@ -1105,7 +1105,7 @@ mod fullscreen_tests {
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
     }
     #[test]
-    fn 3d_handoff_has_readiness_grace_and_bounded_fallback(){
+    fn handoff_3d_has_readiness_grace_and_bounded_fallback(){
         assert_eq!(decide_handoff(100,None,true),"wait");
         assert_eq!(decide_handoff(600,Some(HANDOFF_STABLE_3D_MS-1),true),"wait");
         assert_eq!(decide_handoff(600,Some(HANDOFF_STABLE_3D_MS),true),"3dfx_stable");
