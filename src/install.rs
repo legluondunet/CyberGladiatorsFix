@@ -184,10 +184,13 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         // existing INIs are never modified by the launcher/update path.
         settings::ensure(&staged)?;
         let enable_cdda=settings::read_cdda(&staged)?;
-        if enable_cdda {cdda::try_install(root,&staged)?;}
+        // WinMM is always proxied to keep fullscreen AVI, the DXVK repair
+        // and optional FLAC playback in one x86 DLL. Audio emulation is
+        // selected independently by the child process environment at launch.
+        cdda::try_install(root,&staged)?;
         let exe=staged.join("cyber.exe");
         let outcome=patch::apply(&exe)?;
-        patch::set_cdda(&exe,enable_cdda)?;
+        patch::set_cdda(&exe,true)?;
         patch::set_skip_intro(&exe,settings::read(&staged)?)?;
         // Provide graphics preferences on the first boot. The original CD
         // does not contain CYBER.INI; preserve the valid 32-byte layout.
