@@ -77,6 +77,14 @@ const EXPECTED_GAME_BASE:usize=0x0040_0000;
 const GAME_HWND_RVA:usize=0x0012_8018;
 const GAME_CLASS_PROC_RVA:usize=0x0000_5f82;
 const GCL_WNDPROC:i32=-24;
+const GWL_WNDPROC:i32=-4;
+const FROM_ADDRESS:u32=0x0000_0004;
+const UNCHANGED_REFCOUNT:u32=0x0000_0002;
+const INPUT_KEYBOARD:u32=1;
+const KEYEVENTF_KEYUP:u32=2;
+const VK_MENU:u16=0x12;
+const WM_VULKAN_RECOVERY_DELAY_MS:u64=900;
+const WM_VULKAN_RECOVERY_SETTLE_MS:u64=1000;
 const MONITOR_DEFAULTTONEAREST:u32=2;
 const WS_POPUP:u32=0x8000_0000;
 const WS_CHILD:u32=0x4000_0000;
@@ -186,12 +194,24 @@ struct PaintStruct {
     dc:*mut c_void,erase:i32,paint:WinRect,
     restore:i32,inc_update:i32,reserved:[u8;32],
 }
+// Win32 x86 INPUT: DWORD type followed by a 24-byte union. The binary
+// shipped to CYBER.EXE is a verified x86 DLL; do not assume x64 layout.
+#[repr(C)]
+#[derive(Copy,Clone)]
+struct WinInput { kind:u32,payload:[u32;6] }
+fn keyboard_input(vkey:u16,release:bool)->WinInput {
+    let mut payload=[0u32;6];
+    payload[0]=u32::from(vkey);
+    payload[1]=if release{KEYEVENTF_KEYUP}else{0};
+    WinInput{kind:INPUT_KEYBOARD,payload}
+}
 #[link(name="kernel32")]
 extern "system" {
     fn GetModuleHandleA(module:*const u8)->*mut c_void;
     fn GetCurrentProcessId()->u32;
     fn GetCurrentThreadId()->u32;
     fn GetLastError()->u32;
+    fn GetModuleHandleExA(flags:u32,address:*const u8,module:*mut *mut c_void)->i32;
 }
 #[link(name="gdi32")]
 extern "system" {
@@ -220,6 +240,10 @@ extern "system" {
         context:isize)->i32;
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
+    fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
+    fn GetForegroundWindow()->*mut c_void;
+    fn IsIconic(hwnd:*mut c_void)->i32;
+    fn SendInput(count:u32,inputs:*const WinInput,input_size:i32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
     fn MonitorFromWindow(hwnd:*mut c_void,flags:u32)->*mut c_void;
     fn GetMonitorInfoA(monitor:*mut c_void,info:*mut MonitorInfo)->i32;
@@ -604,6 +628,119 @@ unsafe fn stop_movie_input(h:&mut NativeHost){
         ));
         h.mouse_hook=0;
     }
+}
+/// Only the explicit Vulkan+early-release+auto-fullscreen experiment can
+/// attempt the exact nGlide keyboard mode toggle observed to work manually.
+fn vulkan_fullscreen_recovery_opted_in()->bool {
+    smooth_enabled()
+        && std::env::var("CYBER_VULKAN_EARLY_HOST_RELEASE").as_deref()==Ok("1")
+        && std::env::var("CYBER_VULKAN_AUTO_FULLSCREEN").as_deref()==Ok("1")
+}
+fn game_window_for_vulkan_recovery(hwnd:*mut c_void)->Result<(WinRect,WinRect),&'static str>{
+    unsafe {
+        if IsWindow(hwnd)==0||IsWindowVisible(hwnd)==0||IsIconic(hwnd)!=0 {
+            return Err("game_window_not_visible_or_minimized");
+        }
+        let mut pid=0u32;
+        if GetWindowThreadProcessId(hwnd,&mut pid)==0||pid!=GetCurrentProcessId(){
+            return Err("unexpected_game_window_owner");
+        }
+        if GetForegroundWindow()!=hwnd{return Err("game_not_foreground");}
+        let glide=GetModuleHandleA(b"glide.dll\0".as_ptr());
+        if glide.is_null(){return Err("nglide_not_loaded");}
+        let wndproc=GetWindowLongA(hwnd,GWL_WNDPROC) as u32 as usize;
+        let mut owner=std::ptr::null_mut();
+        if wndproc<0x10000
+            || GetModuleHandleExA(FROM_ADDRESS|UNCHANGED_REFCOUNT,
+                wndproc as *const u8,&mut owner)==0
+            || owner!=glide {
+            return Err("game_wndproc_not_nglide");
+        }
+        let monitor=MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST);
+        if monitor.is_null(){return Err("no_monitor");}
+        let mut info=MonitorInfo{
+            cb_size:std::mem::size_of::<MonitorInfo>() as u32,
+            monitor:WinRect::default(),work:WinRect::default(),flags:0,
+        };
+        let mut rect=WinRect::default();
+        if GetMonitorInfoA(monitor,&mut info)==0||GetWindowRect(hwnd,&mut rect)==0 {
+            return Err("monitor_or_window_rect_unavailable");
+        }
+        Ok((rect,info.monitor))
+    }
+}
+fn send_nglide_alt_enter(hwnd:*mut c_void,attempt:u32)->bool {
+    let Ok((before,monitor))=game_window_for_vulkan_recovery(hwnd) else{
+        video_log(&format!("VULKAN_AUTO_FULLSCREEN attempt={attempt} SKIP reason=window_or_focus_changed"));
+        return false;
+    };
+    if covers_monitor(before,monitor){
+        video_log(&format!("VULKAN_AUTO_FULLSCREEN attempt={attempt} SKIP reason=already_fullscreen"));
+        return false;
+    }
+    // The same Alt+Enter hotkey documented by nGlide, not forced window
+    // resizing. SendInput sets Win32 keyboard state, unlike PostMessage.
+    // Never inject input when another application owns the foreground.
+    let inputs=[
+        keyboard_input(VK_MENU,false),keyboard_input(VK_RETURN as u16,false),
+        keyboard_input(VK_RETURN as u16,true),keyboard_input(VK_MENU,true),
+    ];
+    let sent=unsafe{SendInput(
+        inputs.len() as u32,inputs.as_ptr(),std::mem::size_of::<WinInput>() as i32
+    )};
+    video_log(&format!(
+        "VULKAN_AUTO_FULLSCREEN attempt={attempt} sent={sent}/4 before=({},{})-({},{}) monitor=({},{})-({},{}) input=Alt+Enter foreground_verified=1",
+        before.left,before.top,before.right,before.bottom,
+        monitor.left,monitor.top,monitor.right,monitor.bottom
+    ));
+    sent==4
+}
+fn start_vulkan_fullscreen_recovery(){
+    if !vulkan_fullscreen_recovery_opted_in(){return;}
+    // This is the verified original CYBER.EXE and its original window pointer.
+    // Never change the game's WndProc, patch nGlide or touch other processes.
+    if unsafe{GetModuleHandleA(std::ptr::null())} as usize!=EXPECTED_GAME_BASE {
+        video_log("VULKAN_AUTO_FULLSCREEN SKIP unexpected_exe_base");
+        return;
+    }
+    let hwnd=unsafe{std::ptr::read_volatile(
+        (EXPECTED_GAME_BASE+GAME_HWND_RVA) as *const usize)} as *mut c_void;
+    let hwnd_value=hwnd as usize;
+    video_log("VULKAN_AUTO_FULLSCREEN scheduled=1 initial_wait_ms=900 max_toggles=2 monitor_checked=1 foreground_guard=1 independent_game_thread=1");
+    std::thread::spawn(move||{
+        std::thread::sleep(Duration::from_millis(WM_VULKAN_RECOVERY_DELAY_MS));
+        let hwnd=hwnd_value as *mut c_void;
+        match game_window_for_vulkan_recovery(hwnd){
+            Ok((rect,screen)) if covers_monitor(rect,screen)=>{
+                video_log("VULKAN_AUTO_FULLSCREEN SKIP already_fullscreen_after_900ms");
+                return;
+            },
+            Err(reason)=>{
+                video_log(&format!("VULKAN_AUTO_FULLSCREEN SKIP reason={reason}"));
+                return;
+            },
+            Ok(_)=>{},
+        };
+        for attempt in 1..=2 {
+            if !send_nglide_alt_enter(hwnd,attempt){break;}
+            std::thread::sleep(Duration::from_millis(WM_VULKAN_RECOVERY_SETTLE_MS));
+            match game_window_for_vulkan_recovery(hwnd){
+                Ok((rect,screen))=>{
+                    let fullscreen=covers_monitor(rect,screen);
+                    video_log(&format!(
+                        "VULKAN_AUTO_FULLSCREEN RESULT attempt={attempt} rect=({},{})-({},{}) fullscreen={} next={}",
+                        rect.left,rect.top,rect.right,rect.bottom,
+                        u8::from(fullscreen),if fullscreen{"stop"}else if attempt<2{"second_toggle"}else{"stop_limit"}
+                    ));
+                    if fullscreen{break;}
+                },
+                Err(reason)=>{
+                    video_log(&format!("VULKAN_AUTO_FULLSCREEN RESULT attempt={attempt} SKIP reason={reason}"));
+                    break;
+                },
+            }
+        }
+    });
 }
 fn close_host(reason:&str){
     let previous=video_host().lock().unwrap_or_else(|e|e.into_inner()).take();
@@ -1122,6 +1259,7 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
         if early_release {
             video_log("VULKAN_EARLY_RELEASE after_native_MCI_close=1 no_black_postroll=1 no_handoff_timer=1 renderer_can_initialize_without_host=1");
             close_host("vulkan_early_release_ab");
+            start_vulkan_fullscreen_recovery();
         }else if !(should_arm_curtain(smooth_enabled(),result) && start_transition_curtain()){
             close_host(if result==0{"after_MCI_close"}else{"MCI_close_failed"});
         }
@@ -1130,6 +1268,18 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
+    #[test]
+    fn x86_sendinput_layout_and_alt_enter_events(){
+        assert_eq!(std::mem::size_of::<WinInput>(),28);
+        let inputs=[
+            keyboard_input(VK_MENU,false),keyboard_input(VK_RETURN as u16,false),
+            keyboard_input(VK_RETURN as u16,true),keyboard_input(VK_MENU,true),
+        ];
+        assert_eq!(inputs[0].payload[0],u32::from(VK_MENU));
+        assert_eq!(inputs[1].payload[0],VK_RETURN as u32);
+        assert_eq!(inputs[2].payload[1],KEYEVENTF_KEYUP);
+        assert_eq!(inputs[3].payload[1],KEYEVENTF_KEYUP);
+    }
     #[test]
     fn initial_frame_cover_releases_after_elapsed_time_not_window_timer(){
         let start=Instant::now();
