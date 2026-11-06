@@ -369,6 +369,10 @@ pub unsafe extern "system" fn mciSendStringA(
     // Preserve the original WinMM timeline. 4:3 is established by rewriting
     // only three recognized MCI window/rectangle commands. The opt-in smooth
     // experiment prepares a black host earlier and releases it later.
+    // The temporary host must exist BEFORE the native WinMM "open avivideo"
+    // can briefly paint its uninitialized gray window. This is strictly
+    // opt-in, and falls back harmlessly if the verified game HWND is absent.
+    if let Some(ref text)=command {video_trace::before_mci_open(text);}
     let substitute=command.as_deref().and_then(video_trace::rewrite_for_4_3);
     // Opt-in trial: hold the already-painted black AVI host for one second
     // before starting the original MCI movie. In the validated normal launch
