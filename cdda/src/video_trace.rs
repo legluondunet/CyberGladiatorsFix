@@ -475,33 +475,99 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         holding_for_transition:false
     })
 }
+// The game must regain its keyboard and mouse immediately after MCI closes,
+// even if the opt-in curtain stays in front of the 3D startup for a short
+// period. Never continue filtering while 3D input is active.
+unsafe fn stop_movie_input(h:&mut NativeHost){
+    KEY_FILTER_ACTIVE.store(false,Ordering::Release);
+    if h.keyboard_hook!=0{
+        let unhooked=UnhookWindowsHookEx(h.keyboard_hook as *mut c_void);
+        video_log(&format!(
+            "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={}",
+            KEY_FILTER_ALLOWED.load(Ordering::Relaxed),
+            KEY_FILTER_BLOCKED.load(Ordering::Relaxed)
+        ));
+        h.keyboard_hook=0;
+    }
+    if h.mouse_hook!=0{
+        let unhooked=UnhookWindowsHookEx(h.mouse_hook as *mut c_void);
+        video_log(&format!(
+            "MOUSE_FILTER_STOPPED unhooked={unhooked} blocked_events={}",
+            MOUSE_FILTER_BLOCKED.load(Ordering::Relaxed)
+        ));
+        h.mouse_hook=0;
+    }
+}
 fn close_host(reason:&str){
     let previous=video_host().lock().unwrap_or_else(|e|e.into_inner()).take();
-    if let Some(h)=previous{
-        unsafe {
+    if let Some(mut h)=previous{
+        unsafe{
             KEY_FILTER_ACTIVE.store(false,Ordering::Release);
             if GetCurrentThreadId()!=h.owner_thread{
                 video_log(&format!("WARNING host_not_destroyed_other_thread reason={reason}"));
                 return;
             }
-            if h.keyboard_hook!=0{
-                let unhooked=UnhookWindowsHookEx(h.keyboard_hook as *mut c_void);
-                video_log(&format!(
-                    "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={}",
-                    KEY_FILTER_ALLOWED.load(Ordering::Relaxed),
-                    KEY_FILTER_BLOCKED.load(Ordering::Relaxed)
-                ));
-            }
-            if h.mouse_hook!=0{
-                let unhooked=UnhookWindowsHookEx(h.mouse_hook as *mut c_void);
-                video_log(&format!(
-                    "MOUSE_FILTER_STOPPED unhooked={unhooked} blocked_events={}",
-                    MOUSE_FILTER_BLOCKED.load(Ordering::Relaxed)
-                ));
+            stop_movie_input(&mut h);
+            if h.holding_for_transition {
+                let _=KillTimer(h.host as *mut c_void,TRANSITION_TIMER_ID);
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
             video_log(&format!("HOST_CLOSED reason={reason} destroy_result={destroyed}"));
+            timing("HOST_DESTROYED");
         }
+    }
+}
+/// One optional no-activate curtain: retain the existing black host after
+/// the AVI has closed, hide only its MCI surface, and release the host via
+/// a bounded Win32 timer on the owning game thread. We do not intercept D3D9,
+/// guess a first-present signal or change the proven WndProc repair order.
+/// WM_TIMER is delivered when the game pumps UI messages: a game thread which
+/// *never* pumps cannot be rescued by a timer, so this is trial-only.
+fn start_transition_curtain()->bool {
+    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=guard.as_mut() else{return false;};
+    unsafe{
+        if GetCurrentThreadId()!=h.owner_thread || IsWindow(h.host as *mut c_void)==0{
+            video_log("SMOOTH_ABORT invalid_owner_or_host");
+            return false;
+        }
+        stop_movie_input(h);
+        let _=ShowWindow(h.surface as *mut c_void,SW_HIDE);
+        let timer=SetTimer(h.host as *mut c_void,TRANSITION_TIMER_ID,
+            TRANSITION_DELAY_MS,std::ptr::null());
+        if timer==0 {
+            video_log(&format!("SMOOTH_ABORT SetTimer_failed win32={}",GetLastError()));
+            return false;
+        }
+        h.holding_for_transition=true;
+        video_log(&format!(
+            "SMOOTH_CURTAIN_ACTIVE timer_ms={} max_wait=message_pump no_D3D9_hook=1 first_present_not_detected=1",
+            TRANSITION_DELAY_MS
+        ));
+        timing("CURTAIN_ARMED_AFTER_AVI_CLOSE");
+        true
+    }
+}
+/// Attempt to cover the earliest transition BEFORE the game's splash open.
+/// Failing here is harmless: the existing open-splash handler still creates
+/// the ordinary 4:3 host and preserves the validated game path.
+fn early_black_host() {
+    if !smooth_enabled(){return;}
+    if video_host().lock().unwrap_or_else(|e|e.into_inner()).is_some(){return;}
+    unsafe{
+        let base=GetModuleHandleA(std::ptr::null()) as usize;
+        if base!=EXPECTED_GAME_BASE{
+            video_log("SMOOTH_EARLY_SKIP unknown_game_image");
+            return;
+        }
+        let game=std::ptr::read_volatile((base+GAME_HWND_RVA) as *const usize);
+        let Some(h)=prepare_host(game) else{
+            video_log("SMOOTH_EARLY_SKIP game_window_not_ready; fallback=normal_MCI_open");
+            return;
+        };
+        video_log("SMOOTH_EARLY_BLACK_READY before_splash_open=1");
+        timing("EARLY_BLACK_HOST_READY");
+        *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
     }
 }
 /// Called before the real system WinMM entry point. Returns an alternative
@@ -509,18 +575,28 @@ fn close_host(reason:&str){
 pub fn rewrite_for_4_3(text:&str)->Option<CString>{
     if !video_enabled(){return None;}
     if let Some(game)=movie_open_game_hwnd(text){
-        if video_host().lock().unwrap_or_else(|e|e.into_inner()).is_some(){
-            video_log("SKIP previous_video_host_still_active");
-            return None;
-        }
-        let h=unsafe{prepare_host(game)}?;
+        // The optional smooth test may have already painted the black host
+        // at "open avivideo". Reuse it; never create two competing popups.
+        let existing=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+        let h=if let Some(h)=existing{
+            if !smooth_enabled()||h.game!=game||h.owner_thread!=unsafe{GetCurrentThreadId()}{
+                video_log("SMOOTH_EARLY_HOST_MISMATCH fallback=original_MCI");
+                return None;
+            }
+            video_log("SMOOTH_EARLY_HOST_REUSED for_splash_open=1");
+            h
+        }else{
+            let h=unsafe{prepare_host(game)}?;
+            *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
+            h
+        };
         let rewritten=format!("open splash4.avi alias movie parent {} style child",h.surface);
         let Ok(encoded)=CString::new(rewritten) else{
-            unsafe{DestroyWindow(h.host as *mut c_void);}
+            close_host("MCI_open_rewrite_failed");
             return None;
         };
-        *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
         video_log(&format!("MCI_REWRITE open_style=child target_surface={:#x}",h.surface));
+        timing("AVI_OPEN_COMMAND_REWRITTEN");
         return Some(encoded);
     }
     let guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
@@ -539,15 +615,27 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
 }
 pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     if !video_enabled(){return;}
+    let command=text.trim();
+    if command.eq_ignore_ascii_case("open avivideo") && result==0 {
+        timing("MCI_AVIVIDEO_OPENED");
+        early_black_host();
+    }
     if rewritten && movie_open_game_hwnd(text).is_some() && result!=0{
         video_log(&format!("MCI_OPEN_REWRITTEN_FAILED code={result}; original_command_retry"));
         close_host("rewritten_MCI_open_failed");
     }
-    if text.trim().eq_ignore_ascii_case("play movie window") && result==0{
+    if command.eq_ignore_ascii_case("play movie window") && result==0{
+        timing("MCI_PLAY_RETURNED");
         enable_movie_keys();
     }
-    if text.trim().eq_ignore_ascii_case("close avivideo"){
-        close_host(if result==0{"after_MCI_close"}else{"MCI_close_failed"});
+    if command.eq_ignore_ascii_case("close movie"){
+        timing("MCI_MOVIE_CLOSED");
+    }
+    if command.eq_ignore_ascii_case("close avivideo"){
+        timing("MCI_AVIVIDEO_CLOSED");
+        if !(result==0 && smooth_enabled() && start_transition_curtain()){
+            close_host(if result==0{"after_MCI_close"}else{"MCI_close_failed"});
+        }
     }
 }
 #[cfg(test)]
