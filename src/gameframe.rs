@@ -37,7 +37,8 @@ fn known_project_gameframe(hash:&str)->bool{
         "72dfef957a6f97d8a18aec0103d8fe19e1a7397342ae48267ce3bf3252a34b1c" | // build 76
         "25f97548c42d2344794a738d22dd108dede43294215a14ba7a285afca11fab19" | // build 78-80
         "63f030a23c61a8f6e691d4fe4c654f4e2e812217d62267e1bf104a67099d9697" | // build 81
-        "70a6c54624ca818143e75736828ce2c2a3241919d77d611d436aefca39858966"   // build 83
+        "70a6c54624ca818143e75736828ce2c2a3241919d77d611d436aefca39858966" | // build 83
+        "65ecc8df4147306a78f88a248b16d91386f379b3c32d93166b6b2dea534f5338"   // build 84
     )
 }
 fn retired_experiment(target:&Path,hash:&str)->PathBuf{
