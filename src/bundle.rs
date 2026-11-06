@@ -7,7 +7,7 @@ use sha2::{Digest,Sha256};
 
 pub const CDDA_DLL:&[u8]=include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsCDDA.dll"
+    "/cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsFix.dll"
 ));
 /// The Apache-2.0 GameFrame wrapper is bundled ONLY in the corresponding
 /// Windows build. Proprietary nGlide is never included in any build.
