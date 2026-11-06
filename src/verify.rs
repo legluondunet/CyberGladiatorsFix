@@ -117,7 +117,7 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
 }
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,None,false,false)
+    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,false,false)
 }
 /// Proton selects WineD3D before the patcher itself starts; an inline
 /// Windows child environment flag cannot reverse that runtime choice.
@@ -145,30 +145,15 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool)-
         if logo {
             return Err("Native AVI repair tracing with --3dfx-logo is not supported".into());
         }
-        return launch_renderer_experiment(root,"1",false,false,None,true);
+        return launch_renderer_experiment(root,"1",false,false,true);
     }
-    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,None,true,avi_4x3)
+    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3)
         .map(|child|(child,None))
 }
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
-    launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,None,wndproc_repair)
+    launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,wndproc_repair)
 }
-/// The isolated MCI player has already completed successfully. The separate
-/// game process must skip its own AVI or we would still hit the DXVK crash.
-/// Only the exact known SkipIntro hash is applied; the user's INI is unchanged.
-pub fn launch_after_external_intro(root:&Path,trace:bool,logo:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
-    if trace {
-        if logo{return Err("The optional 3dfx logo is not supported together with the external intro diagnostic mode".into());}
-        return launch_renderer_experiment(root,"1",false,false,Some(true),false);
-    }
-    // Normal launch: same validated isolated-AVI -> nGlide D3D9 path,
-    // without Wine/Glide/DXVK debug capture or temporary DXVK folders.
-    validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
-    if logo{nglide::check_logo(&root.join(DIR))?;}
-    let child=launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,Some(true),false,false)?;
-    Ok((child,None))
-}
-fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,skip_intro_override:Option<bool>,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_renderer_test(Some(backend),dxvk_defer_surface,true,true,false,false,0)?;
     if desktop_refresh && backend!="1" {return Err("Desktop-refresh experiment requires the nGlide DirectX9 backend".into());}
     validate_proton_dxvk_preflight(backend,std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
@@ -181,7 +166,7 @@ fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,de
         fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
         Some(dir)
     }else{None};
-    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),skip_intro_override,wndproc_repair,false)?;
+    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),wndproc_repair,false)?;
     Ok((child,log_dir))
 }
 fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
@@ -193,36 +178,26 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
     }
     Ok(())
 }
-fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,skip_intro_override:Option<bool>,wndproc_repair:bool,avi_4x3:bool)->Result<Child,String>{
-    // External intro is not a renderer experiment: its own x86 process
-    // has already disposed every MCI device before game startup. Permit
-    // this sole, hash-verified route during normal launch as well as trace.
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool)->Result<Child,String>{
+    // The normal game path uses one x86 WinMM bridge with a guarded native
+    // AVI handoff. Trace-only backend tests follow a separate validated path.
     let normal_repair=wndproc_repair && !trace
         && no_glide_hook && backend_override==Some("1")
         && !passthru_noop && video_delay_ms==0 && !dxvk_defer_surface
-        && !desktop_refresh && skip_intro_override.is_none()
-        && dxvk_log_dir.is_none();
+        && !desktop_refresh && dxvk_log_dir.is_none();
     if wndproc_repair && !normal_repair
         && (!trace||!no_glide_hook||backend_override!=Some("1")
             ||logo||passthru_noop||video_delay_ms!=0||dxvk_defer_surface
-            ||desktop_refresh||skip_intro_override.is_some()) {
+            ||desktop_refresh) {
         return Err("WndProc repair requires native AVI, nGlide D3D9 and a hook-free launch".into());
     }
     if avi_4x3 && !normal_repair {
         return Err("Fullscreen native AVI host requires non-tracing video and guarded DXVK repair".into());
     }
-    let isolated=skip_intro_override==Some(true)
-        && backend_override==Some("1") && no_glide_hook
-        && (!logo||!trace) && !passthru_noop && video_delay_ms==0
-        && !dxvk_defer_surface && !desktop_refresh
-        && (trace||dxvk_log_dir.is_none());
-    if !isolated && !normal_repair {
+    if !normal_repair {
         validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
     }
-    if skip_intro_override.is_some() && !isolated {
-        return Err("External intro requires the isolated MCI player followed by the verified nGlide D3D9 game path".into());
-    }
-    if no_glide_hook && !isolated && !normal_repair
+    if no_glide_hook && !normal_repair
         && (!trace||logo||passthru_noop||video_delay_ms!=0){
         return Err("--no-glide-hook requires --launch --trace without other experiments".into());
     }
@@ -236,8 +211,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // For old installations, generate the absent *patcher* INI with
     // SkipIntro=0. Never touch the game's binary cyber.ini.
     settings::ensure(&game)?;
-    let configured_skip=settings::read(&game)?;
-    let skip=skip_intro_override.unwrap_or(configured_skip);
+    let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     if avi_4x3 && skip {
         return Err("Native AVI 4:3 host requires [Video] SkipIntro=0; INI not modified".into());
@@ -245,7 +219,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // The WinMM bridge is always installed for video; audio/music remains
     // opt-in or opt-out independently. Require the video when a particular
     // diagnostic is observing the video-to-Glide transition.
-    if no_glide_hook && !isolated && skip && backend_override.is_none(){
+    if no_glide_hook && skip && backend_override.is_none(){
         return Err("--no-glide-hook requires [Video] SkipIntro=0 unless running a forced renderer comparison".into());
     }
     if wndproc_repair && skip {
@@ -392,7 +366,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         cmd.stderr(Stdio::from(errors));
     }else{
         nglide::configure(&mut cmd,logo);
-        if isolated || normal_repair {
+        if normal_repair {
             // Reuse the same nGlide Direct3D9 backend validated under Wine:
             // the normal native-AVI path must not quietly select Auto/Vulkan.
             cmd.env("NGLIDE_BACKEND","1");
