@@ -330,7 +330,6 @@ macro_rules! forward_winmm {
         #[allow(non_snake_case)]
         pub unsafe extern "system" fn $function($($arg:$typ),*)->$return {
             mark_trace_session_once();
-    display_guard::report_once();
             let Some(address)=system_proc(concat!(stringify!($function),"\0").as_bytes()) else {
                 return $failure;
             };
@@ -351,6 +350,8 @@ pub unsafe extern "system" fn mciSendStringA(
 )->u32 {
     let entry=std::time::Instant::now();
     mark_trace_session_once();
+    // Passive diagnostic only: report at first native movie command.
+    display_guard::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
     };
