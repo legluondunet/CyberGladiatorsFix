@@ -111,7 +111,7 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
 }
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,false,false)
+    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,false,false,false)
 }
 /// Proton selects WineD3D before the patcher itself starts; an inline
 /// Windows child environment flag cannot reverse that runtime choice.
@@ -128,8 +128,11 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 /// Native AVI and the guarded WineD3D/DXVK repair always run through the
 /// x86 WinMM bridge; the INI EnableCDDA switch controls only virtual FLAC
 /// music, never the original Cinepak player or its full-screen presentation.
-pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,smooth_test:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
+    if smooth_test && (trace||!avi_4x3||logo){
+        return Err("Smooth-video trial requires regular native 4:3 AVI and guarded WndProc repair".into());
+    }
     if trace {
         // Reuse the established per-run DXVK capture lifecycle, which must
         // be finalized by the caller after the game exits.
@@ -138,7 +141,7 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool)-
         }
         return launch_renderer_experiment(root,"1",false,false,true,avi_4x3);
     }
-    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3)
+    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3,smooth_test)
         .map(|child|(child,None))
 }
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
@@ -157,7 +160,7 @@ fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,de
         fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
         Some(dir)
     }else{None};
-    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),wndproc_repair,avi_4x3)?;
+    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),wndproc_repair,avi_4x3,false)?;
     Ok((child,log_dir))
 }
 fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
@@ -169,7 +172,7 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
     }
     Ok(())
 }
-fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool)->Result<Child,String>{
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool,smooth_test:bool)->Result<Child,String>{
     // The normal game path uses one x86 WinMM bridge with a guarded native
     // AVI handoff. Trace-only backend tests follow a separate validated path.
     let normal_repair=wndproc_repair && !trace
@@ -187,6 +190,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         && !logo && !passthru_noop && video_delay_ms==0
         && !dxvk_defer_surface && !desktop_refresh
         && dxvk_log_dir.is_some();
+    if smooth_test && (!normal_repair||!avi_4x3||trace){
+        return Err("Smooth-video test may only run with the normal, guarded fullscreen AVI path".into());
+    }
     if avi_4x3 && !normal_repair && !diagnostic_fullscreen {
         return Err("Fullscreen native AVI host requires a guarded native-video launch with nGlide Direct3D9".into());
     }
@@ -260,12 +266,16 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     for key in ["CYBER_VIDEO_CLOSE_DELAY_MS","CYBER_GLIDE_HOOK_DISABLED",
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
         "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
-        "CYBER_AVI_FULLSCREEN","CYBER_CDDA_MUSIC"]{
+        "CYBER_AVI_FULLSCREEN","CYBER_CDDA_MUSIC","CYBER_AVI_SMOOTH_TEST"]{
         cmd.env_remove(key);
     }
     if avi_4x3 {
         cmd.env("CYBER_AVI_FULLSCREEN","1");
         crate::show("AVI_4X3 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 only_skip_keys=ESC_ENTER_SPACE mouse_buttons_suppressed=1 renderer=nGlide_D3D9",root);
+    }
+    if smooth_test {
+        cmd.env("CYBER_AVI_SMOOTH_TEST","1");
+        crate::show("VIDEO_SMOOTH_TEST enabled=1 earlier_black_host=1 bounded_black_handoff=1 max_hold_ms=350 NGLIDE_REFRESH=2 (60Hz, unchanged) no_D3D9_hook=1",root);
     }
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
     // This is a one-shot, guard-checked in-process fix. No long-running
