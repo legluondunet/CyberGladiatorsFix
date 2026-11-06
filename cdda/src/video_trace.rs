@@ -100,6 +100,16 @@ const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
 // verified game can return to nGlide / resume its 3D display.
 const INITIAL_FRAME_COVER_MS:u32=300; // trial: let Cinepak decode behind black
 const TRANSITION_DELAY_MS:u64=1000; // only used by --smooth-video-test
+// Never expose the desktop between the final black host and nGlide startup.
+// Once the 1-second hold ends, let 3D initialize underneath the retained host.
+// The original game's 3dfx-state DWORD comes from the existing trace module.
+// This flag is not a first-present detector: demand a stable grace interval
+// and impose a bounded timeout, rather than leaving an opaque popup forever.
+const GAME_3DFX_ACTIVE_RVA:usize=0x0004_727c;
+const HANDOFF_TIMER_ID:usize=0x435c;
+const HANDOFF_POLL_MS:u32=50;
+const HANDOFF_STABLE_3D_MS:u64=300;
+const HANDOFF_MAX_MS:u64=2500;
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
@@ -216,6 +226,8 @@ extern "system" {
         menu:*mut c_void,instance:*mut c_void,param:*mut c_void)->*mut c_void;
     fn DestroyWindow(hwnd:*mut c_void)->i32;
     fn GetClientRect(hwnd:*mut c_void,rect:*mut WinRect)->i32;
+    fn SetTimer(hwnd:*mut c_void,id:usize,timeout_ms:u32,callback:*const c_void)->usize;
+    fn KillTimer(hwnd:*mut c_void,id:usize)->i32;
 }
 #[derive(Clone,Copy)]
 struct NativeHost {
@@ -230,6 +242,10 @@ struct NativeHost {
     keyboard_hook:usize,
     mouse_hook:usize,
     holding_for_transition:bool,
+    handoff_poll_armed:bool,
+    handoff_started:Option<Instant>,
+    handoff_3dfx_since:Option<Instant>,
+    handoff_polls:u32,
     curtain_raise_attempts:u32,
     curtain_raise_failures:u32,
 }
@@ -253,6 +269,10 @@ unsafe extern "system" fn black_host_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg{
+        WM_TIMER if wparam==HANDOFF_TIMER_ID=>{
+            poll_3d_handoff();
+            0
+        }
         WM_ERASEBKGND=>{
             let mut rect=WinRect::default();
             if GetClientRect(hwnd,&mut rect)!=0 {
@@ -554,6 +574,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
         holding_for_transition:false,
+        handoff_poll_armed:false,handoff_started:None,
+        handoff_3dfx_since:None,handoff_polls:0,
         curtain_raise_attempts:0,
         curtain_raise_failures:0
     })
@@ -591,10 +613,14 @@ fn close_host(reason:&str){
                 return;
             }
             stop_movie_input(&mut h);
+            if h.handoff_poll_armed {
+                let _=KillTimer(h.host as *mut c_void,HANDOFF_TIMER_ID);
+                h.handoff_poll_armed=false;
+            }
             if h.holding_for_transition {
                 video_log(&format!(
-                    "CURTAIN_TOPMOST_SUMMARY attempts={} failures={} mode=synchronous_before_3d",
-                    h.curtain_raise_attempts,h.curtain_raise_failures
+                    "CURTAIN_TOPMOST_SUMMARY attempts={} failures={} mode=synchronous_then_3d_ready_handoff polls={}",
+                    h.curtain_raise_attempts,h.curtain_raise_failures,h.handoff_polls
                 ));
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
@@ -661,12 +687,66 @@ unsafe fn promote_curtain(h:&mut NativeHost)->i32 {
     }
     promoted
 }
+// The game's existing trace code identifies this exact (verified x86 EXE)
+// state field as state_3dfx. A nonzero value is a *startup hint*, not proof
+// that nGlide has already submitted a visible buffer.
+fn decide_handoff(elapsed_ms:u64,stable_3dfx_ms:Option<u64>,game_valid:bool)->&'static str {
+    if !game_valid{return "game_window_gone";}
+    if stable_3dfx_ms.is_some_and(|age|age>=HANDOFF_STABLE_3D_MS){
+        return "3dfx_stable";
+    }
+    if elapsed_ms>=HANDOFF_MAX_MS{return "bounded_timeout";}
+    "wait"
+}
+fn poll_3d_handoff(){
+    if !smooth_enabled(){return;}
+    let outcome={
+        let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+        let Some(h)=guard.as_mut() else{return;};
+        if !h.handoff_poll_armed || !h.holding_for_transition
+            || h.owner_thread!=unsafe{GetCurrentThreadId()}{return;}
+        let Some(start)=h.handoff_started else{return;};
+        let now=Instant::now();
+        let game_valid=unsafe{IsWindow(h.game as *mut c_void)}!=0;
+        let game_visible=game_valid&&unsafe{IsWindowVisible(h.game as *mut c_void)}!=0;
+        let flag=if game_valid{
+            unsafe{std::ptr::read_volatile(
+                (EXPECTED_GAME_BASE+GAME_3DFX_ACTIVE_RVA) as *const u32)}
+        }else{0};
+        h.handoff_polls=h.handoff_polls.saturating_add(1);
+        if flag!=0 && game_visible{
+            if h.handoff_3dfx_since.is_none(){
+                h.handoff_3dfx_since=Some(now);
+                video_log(&format!(
+                    "HANDOFF_3DFX_STATE_READY flag={flag} game_visible=1 polling_for_stability_ms={HANDOFF_STABLE_3D_MS}"
+                ));
+                timing("HANDOFF_3DFX_STATE_READY");
+            }
+        }else{
+            h.handoff_3dfx_since=None;
+        }
+        let elapsed=now.saturating_duration_since(start).as_millis() as u64;
+        let stable=h.handoff_3dfx_since
+            .map(|t|now.saturating_duration_since(t).as_millis() as u64);
+        let decision=decide_handoff(elapsed,stable,game_valid);
+        if decision=="wait"{return;}
+        Some((decision.to_owned(),elapsed,flag,game_visible,h.handoff_polls))
+    };
+    if let Some((reason,elapsed,flag,visible,polls))=outcome{
+        video_log(&format!(
+            "HANDOFF_RELEASE reason={reason} elapsed_ms={elapsed} game_3dfx_flag={flag} game_visible={} polls={polls}",
+            u8::from(visible)
+        ));
+        timing("HANDOFF_RELEASE");
+        close_host(&format!("3d_handoff_{reason}"));
+    }
+}
 /// Called after the original guarded WineD3D/DXVK WndProc repair, before
-/// returning to CYBER.EXE from `mciSendStringA("close avivideo")`. The game
-/// cannot yet enter its 3dfx/D3D9 next phase, so the already-painted black
-/// fullscreen host remains the stable front surface for the requested 2 s.
-/// This intentionally delays all subsequent game work and CDDA initialization
-/// until after the transition; there is no extra helper or timer thread.
+/// returning to CYBER.EXE from `mciSendStringA("close avivideo")`.
+/// Hold for the user-validated one second, then let CYBER.EXE initialize
+/// its original nGlide renderer BEHIND the retained full-monitor black host.
+/// Release that host only after the game's 3dfx flag has been nonzero for a
+/// stable grace interval, or after a bounded fallback timeout (no hooks).
 pub fn hold_post_video_black_before_3d(){
     if !smooth_enabled(){return;}
     let armed={
@@ -692,8 +772,8 @@ pub fn hold_post_video_black_before_3d(){
     video_log(&format!(
         "POST_VIDEO_BLACK_HOLD mode=synchronous_before_3d requested_ms={TRANSITION_DELAY_MS}"
     ));
-    // As with the validated 1-second AVI pre-roll, never keep the host mutex
-    // locked during Sleep: no window dispatch from this game thread is needed.
+    // No host mutex is held while blocking the game, just like the verified
+    // one-second pre-video black hold.
     let started=Instant::now();
     std::thread::sleep(Duration::from_millis(TRANSITION_DELAY_MS));
     video_log(&format!(
@@ -701,7 +781,42 @@ pub fn hold_post_video_black_before_3d(){
         started.elapsed().as_millis()
     ));
     timing("POST_VIDEO_BLACK_HOLD_END");
-    close_host("post_video_sync_hold_complete");
+
+    // The old path closed the host HERE and exposed the compositor desktop
+    // before nGlide's first framebuffer was ready. Do not close it until
+    // 3D startup has had a chance to complete, with an explicit timeout.
+    let polling={
+        let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+        if let Some(h)=guard.as_mut(){
+            if h.holding_for_transition
+                && h.owner_thread==unsafe{GetCurrentThreadId()}
+                && unsafe{IsWindow(h.host as *mut c_void)}!=0{
+                let timer=unsafe{SetTimer(h.host as *mut c_void,HANDOFF_TIMER_ID,
+                    HANDOFF_POLL_MS,std::ptr::null())};
+                if timer!=0{
+                    h.handoff_poll_armed=true;
+                    h.handoff_started=Some(Instant::now());
+                    h.handoff_3dfx_since=None;
+                    h.handoff_polls=0;
+                    true
+                }else{
+                    video_log(&format!(
+                        "HANDOFF_POLL_FAILED win32={} fallback=immediate_host_close",
+                        unsafe{GetLastError()}
+                    ));
+                    false
+                }
+            }else{false}
+        }else{false}
+    };
+    if polling{
+        video_log(&format!(
+            "HANDOFF_WAIT_BEGIN mode=retain_black_host_while_3d_initializes poll_ms={HANDOFF_POLL_MS} stable_ms={HANDOFF_STABLE_3D_MS} max_ms={HANDOFF_MAX_MS} first_present_verified=0"
+        ));
+        timing("HANDOFF_WAIT_BEGIN");
+    }else{
+        close_host("post_video_sync_hold_poll_unavailable");
+    }
 }
 fn start_transition_curtain()->bool {
     let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
@@ -990,7 +1105,17 @@ mod fullscreen_tests {
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
     }
     #[test]
-    fn transition_curtain_holds_exactly_two_seconds_before_3d_resume(){
+    fn 3d_handoff_has_readiness_grace_and_bounded_fallback(){
+        assert_eq!(decide_handoff(100,None,true),"wait");
+        assert_eq!(decide_handoff(600,Some(HANDOFF_STABLE_3D_MS-1),true),"wait");
+        assert_eq!(decide_handoff(600,Some(HANDOFF_STABLE_3D_MS),true),"3dfx_stable");
+        assert_eq!(decide_handoff(HANDOFF_MAX_MS,None,true),"bounded_timeout");
+        assert_eq!(decide_handoff(10,None,false),"game_window_gone");
+        assert!(HANDOFF_POLL_MS<=100);
+        assert!(HANDOFF_MAX_MS<=3000);
+    }
+    #[test]
+    fn transition_curtain_holds_exactly_one_second_before_3d_resume(){
         assert_eq!(TRANSITION_DELAY_MS,1000);
         assert_eq!(VIDEO_LEAD_IN_MS,1000);
         assert_eq!(Duration::from_millis(TRANSITION_DELAY_MS),Duration::from_millis(VIDEO_LEAD_IN_MS));
