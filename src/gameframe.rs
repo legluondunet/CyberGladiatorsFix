@@ -124,9 +124,10 @@ impl Session{
                 crate::show("GAMEFRAME_RESTORE original_glide_dll_restored=1 original_bytes_preserved=1",&self.root);
             },
             None=>{
-                fs::remove_file(&self.target).map_err(|e|format!("Cannot remove temporary Glide DLL: {e}"))?;
+                // No pre-existing third-party DLL: leave the validated
+                // GameFrame wrapper installed after clean first boot.
                 self.active=false;
-                crate::show("GAMEFRAME_RESTORE temporary_glide_dll_removed=1 original_was_missing=1",&self.root);
+                crate::show("GAMEFRAME_RESTORE embedded_gameframe_glide_retained=1 original_was_missing=1",&self.root);
             }
         }
         Ok(())
@@ -167,7 +168,7 @@ mod tests{
         let mut session=Session::begin(&d,&d).unwrap();
         assert!(target.exists());
         session.restore().unwrap();
-        assert!(!target.exists());
+        assert_eq!(fs::read(&target).unwrap(),crate::bundle::GAMEFRAME_GLIDE_DLL);
         // The one-log contract intentionally creates a session journal
         // beside the fixture. This directory was freshly generated only
         // for this test; clean it without touching external user files.
