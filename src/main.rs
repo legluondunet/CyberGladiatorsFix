@@ -26,6 +26,7 @@ Usage:
   CyberGladiatorsFix.exe --launch        Play game with native fullscreen AVI
   CyberGladiatorsFix.exe --launch --smooth-video-test  Test earlier black intro and bounded video-to-3D curtain
   CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan  Experimental native Vulkan with same smooth video
+  CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release  Isolate Vulkan from the AVI's retained fullscreen black host
   CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
   CyberGladiatorsFix.exe --launch --3dfx-logo
   CyberGladiatorsFix.exe --verify        Strict original CD integrity check
@@ -204,17 +205,17 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 /// Opt-in comparison of the validated smooth D3D9 handoff against nGlide's
 /// Vulkan renderer, retaining the same native MCI AVI, black curtain and
 /// guard-checked WndProc repair. No changes to the validated default launch.
-fn smooth_vulkan_launch(root:&Path)->Result<(),String>{
+fn smooth_vulkan_launch(root:&Path,early_release:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     if settings::read(&game)?{
         return Err("--smooth-video-test --nglide-vulkan requires [Video] SkipIntro=0; INI unchanged".into());
     }
     let enable_cdda=settings::read_cdda(&game)?;
-    let child=verify::launch_smooth_vulkan(root)?;
+    let child=verify::launch_smooth_vulkan(root,early_release)?;
     show(&format!(
-        "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-Vulkan smooth_video=1 guarded_wndproc_repair=1 trace=false external_helper=0 music_flac={}",
-        child.id(),u8::from(enable_cdda)
+        "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-Vulkan smooth_video=1 early_host_release={} guarded_wndproc_repair=1 trace=false external_helper=0 music_flac={}",
+        child.id(),u8::from(early_release),u8::from(enable_cdda)
     ),root);
     wait_game(child,root)
 }
@@ -266,7 +267,12 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--smooth-video-test")
             && three.to_str()==Some("--nglide-vulkan")=>
-            return smooth_vulkan_launch(root),
+            return smooth_vulkan_launch(root,false),
+        [one,two,three,four] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--smooth-video-test")
+            && three.to_str()==Some("--nglide-vulkan")
+            && four.to_str()==Some("--vulkan-early-release")=>
+            return smooth_vulkan_launch(root,true),
         [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>
             return user_launch(root,true,false,false),
@@ -398,6 +404,7 @@ mod diagnostics_tests {
         }
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
         assert!(HELP.contains("--launch --smooth-video-test --nglide-vulkan"));
+        assert!(HELP.contains("--vulkan-early-release"));
         assert!(!HELP.contains("--avi-4x3-test"));
         assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(!HELP.contains("--video-delay="));
