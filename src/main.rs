@@ -24,6 +24,7 @@ const HELP:&str=r"CyberGladiatorsFix — self-contained x64 installer, compatibi
 Usage:
   CyberGladiatorsFix.exe [<disc.cue>]    Install/update verified US retail CD
   CyberGladiatorsFix.exe --launch        Play game with native fullscreen AVI
+  CyberGladiatorsFix.exe --launch --smooth-video-test  Test earlier black intro and bounded video-to-3D curtain
   CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
   CyberGladiatorsFix.exe --launch --3dfx-logo
   CyberGladiatorsFix.exe --verify        Strict original CD integrity check
@@ -172,17 +173,20 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
 /// black host in the normal path. One x86 WinMM bridge provides video and
 /// the guarded DXVK repair; EnableCDDA controls only music emulation.
 /// Original game video and resource bytes remain untouched.
-fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
+fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
+    if smooth_test && (skip||trace||logo) {
+        return Err("--smooth-video-test requires SkipIntro=0 without --trace or --3dfx-logo; INI unchanged".into());
+    }
     if !skip {
         // Native AVI always stays in the original game process, regardless
         // of whether FLAC CDDA music was enabled in the existing user INI.
         // --trace retains the same 4:3 layout while capturing diagnostics;
         // --dxvk-rootcause remains the original unmodified MCI control.
-        let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,true)?;
+        let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,true,smooth_test)?;
         show(&format!(
             "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-D3D9 guarded_wndproc_repair=1 trace={trace} external_helper=0 music_flac={}",
             child.id(),u8::from(enable_cdda)
@@ -238,10 +242,12 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let r=graphics::maximize_saved(&root.join(install::DIR))?;
             show(&r,root);return Ok(());
         },
-        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false),
-        [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false),
+        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
+        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
+            return user_launch(root,false,false,true),
+        [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>
-            return user_launch(root,true,false),
+            return user_launch(root,true,false,false),
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
             && three.to_str()==Some("--no-glide-hook")=>{
@@ -291,7 +297,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             return wait_diagnostic(child,root);
         },
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>
-            return user_launch(root,false,true),
+            return user_launch(root,false,true,false),
         _=>{},
     }
     let upgrade_cdda=matches!(args,[one] if one.to_str()==Some("--upgrade-cdda"));
@@ -364,7 +370,7 @@ mod diagnostics_tests {
     fn help_lists_only_public_single_file_controls(){
         for expected in ["--launch","--trace","--verify","--max-graphics",
             "--upgrade-cdda","--check-bundle","--dxvk-rootcause",
-            "--dxvk-wndproc-repair-test","--3dfx-logo","--version","--help",
+            "--dxvk-wndproc-repair-test","--smooth-video-test","--3dfx-logo","--version","--help",
             "CyberGladiatorsFix.log","one verified x86 WinMM"]{
             assert!(HELP.contains(expected),"{expected}");
         }
