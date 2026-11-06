@@ -30,6 +30,7 @@ If the installation already exists, running the patcher without arguments perfor
 ```text
 CyberGladiatorsFix.exe               # install/update (from CUE directory)
 CyberGladiatorsFix.exe --launch      # play the game
+CyberGladiatorsFix.exe --launch --smooth-video-test # experimental intro/3D transition
 CyberGladiatorsFix.exe --verify      # strict verification of original assets
 CyberGladiatorsFix.exe --trace       # play with extended Wine/DXVK diagnostics
 CyberGladiatorsFix.exe --max-graphics
@@ -40,6 +41,18 @@ CyberGladiatorsFix.exe --help
 ```
 
 **Video is automatic:** When `SkipIntro=0` and `EnableCDDA=1`, the game plays its original `splash4.avi` in a fullscreen 4:3 host, with black sidebars and skip limited to Escape/Enter/Space. The x86 bridge then attempts a one-shot, strictly validated WineD3D window-procedure repair after AVI close (no extra player). When `EnableCDDA=0`, the in-process AVI still plays, but CD-audio MCI commands are forwarded to system WinMM instead of decoded from FLAC. If `SkipIntro=1`, the intro is omitted. These paths preserve the user's INI and recognize only supported executable variants. `--dxvk-rootcause` remains an unmodified diagnostic control.
+
+### Smoother AVI → 3D handoff (experimental, 60 Hz retained)
+
+The **normal `--launch` is unchanged**. To test a more continuous visual transition without touching the original game or Wine registry:
+
+```sh
+wine CyberGladiatorsFix.exe --launch --smooth-video-test
+```
+
+The test prepares the existing black fullscreen 4:3 video host earlier, after the original `open avivideo` succeeds but before `splash4.avi` is opened. After `close avivideo`, it immediately unhooks the keyboard and mouse, hides the Cinepak surface and keeps the already-painted black host visible **until a 350 ms Win32 window timer is processed**; the existing WineD3D/DXVK WndProc repair still runs at the original point. The timer releases the host on the game's UI thread. **This is not a true first-3D-frame detection**, and a game whose UI message loop hangs cannot be recovered by a UI-thread timer alone. The experiment adds no D3D9/Glide hook and does not change `NGLIDE_REFRESH=2` (60 Hz), vsync, resolution, music, game EXE bytes or IQ assets.
+
+Both normal and experimental runs now log monotonic `AVI_4X3 TIMING` milestones plus `VIDEO_TIMING` MCI command durations into the **one** `CyberGladiatorsFix.log`. In the experiment, inspect `SMOOTH_EARLY_BLACK_READY`, `SMOOTH_CURTAIN_ACTIVE`, `WNDPROC_REPAIR APPLIED`, `CURTAIN_TIMER_FIRED` and `HOST_CLOSED`. Confirm the actual movie image, black pillarboxes, skip keys, no mouse skip, DXVK gameplay, Alt+Tab and clean exit, especially if the curtain might remain visible. The previous normal `--launch` remains the immediate-reveal fallback. When an accurate first-present signal is available, a later iteration can replace the timer without guessing from Win32 paint notifications.
 
 ### Wine / Proton
 
