@@ -31,7 +31,13 @@ jobs:
       - name: Install 32-bit Windows Rust target
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: i686-pc-windows-msvc
+          targets: i686-pc-windows-msvc, x86_64-pc-windows-msvc
+
+      - name: Apply narrow Cyber Gladiators adaptations to pinned GameFrame sources
+        shell: pwsh
+        run: |
+          python tools/gameframe/patch_gameframe.py third_party/game-frame
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame integration patch failed; upstream source drift?" }
 
       - name: Compile upstream Glide wrapper using MSVC and decorated Win32 exports
         shell: pwsh
@@ -61,12 +67,33 @@ jobs:
           python tools/gameframe/audit_exports.py $dll third_party/game-frame/wrappers/glide/glide2x.def
           if ($LASTEXITCODE -ne 0) { throw "GameFrame DLL export check failed" }
 
+      - name: Build matching standalone GameFrame x64 launcher and embedded x86 WinMM bridge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
+          $env:CYBER_GAMEFRAME_GLIDE_SHA256 = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          cargo build --release --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build embedded WinMM bridge" }
+          cargo test --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "WinMM bridge tests failed" }
+          cargo build --release --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame launcher build failed" }
+          cargo test --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame launcher unit tests failed" }
+          & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --help
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame help smoke failed" }
+          & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle
+          if ($LASTEXITCODE -ne 0) { throw "Embedded CDDA bridge bundle mismatch" }
+          Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
+
       - name: Package experimental Glide DLL and upstream notices
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path dist/GameFrame-Glide-EXPERIMENTAL -Force | Out-Null
           Copy-Item 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll' 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll'
+          Copy-Item 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' 'dist/GameFrame-Glide-EXPERIMENTAL/CyberGladiatorsFix.exe'
           Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
           Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
           Get-FileHash 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll' -Algorithm SHA256 | Format-List | Out-String | Write-Host
