@@ -97,7 +97,6 @@ const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
 const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
 const TRANSITION_TIMER_ID:usize=0x4359;
-const INITIAL_FRAME_TIMER_ID:usize=0x435a;
 const INITIAL_FRAME_COVER_MS:u32=300; // trial: let Cinepak decode behind black
 const TRANSITION_DELAY_MS:u32=2000; // only used by --smooth-video-test
 const WM_PAINT:u32=0x000f;
@@ -224,7 +223,7 @@ struct NativeHost {
     host:usize,
     surface:usize,
     first_frame_cover:usize, // smooth test only; opaque sibling above video
-    first_frame_timer:bool,
+    first_frame_cover_started:Option<Instant>,
     game:usize,
     owner_thread:u32,
     video_width:i32,
@@ -253,10 +252,6 @@ unsafe extern "system" fn black_host_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg{
-        WM_TIMER if wparam==INITIAL_FRAME_TIMER_ID=>{
-            uncover_initial_frame("initial_frame_timer");
-            0
-        }
         WM_TIMER if wparam==TRANSITION_TIMER_ID=>{
             timing("CURTAIN_TIMER_FIRED");
             close_host("transition_timer");
@@ -548,7 +543,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         info.monitor.left,info.monitor.top,screen_w,screen_h,u8::from(smooth)));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,
-        first_frame_cover,first_frame_timer:false,
+        first_frame_cover,first_frame_cover_started:None,
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
         holding_for_transition:false
@@ -587,9 +582,6 @@ fn close_host(reason:&str){
                 return;
             }
             stop_movie_input(&mut h);
-            if h.first_frame_timer {
-                let _=KillTimer(h.host as *mut c_void,INITIAL_FRAME_TIMER_ID);
-            }
             if h.holding_for_transition {
                 let _=KillTimer(h.host as *mut c_void,TRANSITION_TIMER_ID);
             }
@@ -605,26 +597,38 @@ fn close_host(reason:&str){
 /// guess a first-present signal or change the proven WndProc repair order.
 /// WM_TIMER is delivered when the game pumps UI messages: a game thread which
 /// *never* pumps cannot be rescued by a timer, so this is trial-only.
-// We cannot infer a first decoded frame from the successful MCI play
-// return code alone. Reveal after a short UI-thread timer, *not* by
-// blocking or delaying native playback. The black overlay never touches
-// the MCI child HWND, the WineD3D WndProc or game window style.
-fn uncover_initial_frame(reason:&str){
-    let cover={
+// The original game polls mciSendStringA("status movie mode") many times
+// per second while its UI thread is NOT pumping ordinary Win32 WM_TIMER
+// messages. Unlike the after-video curtain, a Win32 timer cannot reliably
+// uncover the first decoded image during playback. Use the verified MCI
+// status-poll callback instead, on the same owning game UI thread.
+// This is a bounded time-based heuristic, NOT real first-frame detection.
+fn first_frame_cover_is_due(start:Instant,now:Instant)->bool{
+    now.saturating_duration_since(start)>=Duration::from_millis(u64::from(INITIAL_FRAME_COVER_MS))
+}
+fn maybe_release_first_frame_cover(command:&str){
+    if !smooth_enabled()||!command.eq_ignore_ascii_case("status movie mode"){return;}
+    let due={
         let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
-        let Some(host)=guard.as_mut() else{return;};
-        if !host.first_frame_timer || host.owner_thread!=unsafe{GetCurrentThreadId()}{
+        let Some(h)=guard.as_mut() else{return;};
+        if h.owner_thread!=unsafe{GetCurrentThreadId()}{
             return;
         }
-        host.first_frame_timer=false;
-        (host.host,host.first_frame_cover)
+        let Some(start)=h.first_frame_cover_started else{return;};
+        let now=Instant::now();
+        if !first_frame_cover_is_due(start,now){return;}
+        h.first_frame_cover_started=None;
+        Some((h.first_frame_cover,now.saturating_duration_since(start).as_millis()))
     };
-    unsafe {
-        let _=KillTimer(cover.0 as *mut c_void,INITIAL_FRAME_TIMER_ID);
-        if cover.1!=0 && IsWindow(cover.1 as *mut c_void)!=0 {
-            let _=ShowWindow(cover.1 as *mut c_void,SW_HIDE);
-            video_log(&format!("FIRST_FRAME_COVER_RELEASED reason={reason}"));
-            timing("FIRST_FRAME_COVER_RELEASED");
+    if let Some((cover,elapsed))=due{
+        unsafe{
+            if cover!=0 && IsWindow(cover as *mut c_void)!=0{
+                let hidden=ShowWindow(cover as *mut c_void,SW_HIDE);
+                video_log(&format!(
+                    "FIRST_FRAME_COVER_RELEASED reason=mci_status_poll elapsed_ms={elapsed} previously_visible={hidden}"
+                ));
+                timing("FIRST_FRAME_COVER_RELEASED");
+            }
         }
     }
 }
@@ -640,12 +644,11 @@ fn start_transition_curtain()->bool {
             return false;
         }
         stop_movie_input(h);
-        // Playback may have been skipped before 300 ms. Ensure its initial
-        // reveal timer cannot run during the two-second exit curtain.
-        if h.first_frame_timer {
-            let _=KillTimer(h.host as *mut c_void,INITIAL_FRAME_TIMER_ID);
-            h.first_frame_timer=false;
-            video_log("FIRST_FRAME_COVER_CANCELLED reason=movie_closed");
+        // Playback can end before the 300 ms initial cover has elapsed.
+        // Since it is released by MCI status polling rather than WM_TIMER,
+        // simply cancel its deadline and continue the validated exit curtain.
+        if h.first_frame_cover_started.take().is_some(){
+            video_log("FIRST_FRAME_COVER_CANCELLED reason=movie_closed before_status_poll_release");
         }
         let _=ShowWindow(h.surface as *mut c_void,SW_HIDE);
         let timer=SetTimer(h.host as *mut c_void,TRANSITION_TIMER_ID,
@@ -768,24 +771,20 @@ fn reveal_playing_video() {
         if IsWindow(cover)==0{return;}
         let stacked=SetWindowPos(cover,std::ptr::null_mut(),0,0,0,0,
             SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);
-        let timer=if stacked!=0 {
-            SetTimer(h.host as *mut c_void,INITIAL_FRAME_TIMER_ID,
-                INITIAL_FRAME_COVER_MS,std::ptr::null())
-        } else {0};
-        if timer!=0 {
+        if stacked!=0 {
             let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
             if let Some(active)=guard.as_mut(){
                 if active.host==h.host {
-                    active.first_frame_timer=true;
+                    active.first_frame_cover_started=Some(Instant::now());
                 }
             }
             video_log(&format!(
-                "FIRST_FRAME_COVER_ACTIVE delay_ms={INITIAL_FRAME_COVER_MS} cover_above_mci=1 timer=1"
+                "FIRST_FRAME_COVER_ACTIVE delay_ms={INITIAL_FRAME_COVER_MS} cover_above_mci=1 release_on=mci_status_poll"
             ));
             timing("FIRST_FRAME_COVER_ARMED");
         }else{
             video_log(&format!(
-                "FIRST_FRAME_COVER_FAILED setpos={stacked} timer={timer} win32={} fallback=immediate_reveal",
+                "FIRST_FRAME_COVER_FAILED setpos={stacked} win32={} fallback=immediate_reveal",
                 GetLastError()
             ));
             let _=ShowWindow(cover,SW_HIDE);
@@ -845,6 +844,9 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
 pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     if !video_enabled(){return;}
     let command=text.trim();
+    // Called after each native WinMM status poll on the original game
+    // thread: reliable even while that thread does not dispatch WM_TIMER.
+    maybe_release_first_frame_cover(command);
     if command.eq_ignore_ascii_case("open avivideo") {
         if result==0{
             timing("MCI_AVIVIDEO_OPENED");
@@ -884,8 +886,14 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 mod fullscreen_tests {
     use super::*;
     #[test]
-    fn initial_frame_cover_uses_separate_timer_and_is_experimental(){
-        assert_ne!(INITIAL_FRAME_TIMER_ID,TRANSITION_TIMER_ID);
+    fn initial_frame_cover_releases_after_elapsed_time_not_window_timer(){
+        let start=Instant::now();
+        assert!(!first_frame_cover_is_due(start,start));
+        assert!(!first_frame_cover_is_due(start,
+            start+Duration::from_millis(u64::from(INITIAL_FRAME_COVER_MS)-1)));
+        assert!(first_frame_cover_is_due(start,
+            start+Duration::from_millis(u64::from(INITIAL_FRAME_COVER_MS))));
+        assert!(first_frame_cover_is_due(start,start+Duration::from_secs(1)));
         assert!(INITIAL_FRAME_COVER_MS>=200);
         assert!(INITIAL_FRAME_COVER_MS<=500);
         assert_eq!(TRANSITION_DELAY_MS,2000);
