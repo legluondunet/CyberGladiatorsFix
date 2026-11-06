@@ -102,8 +102,11 @@ jobs:
         run: |
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
-          & $exe --version
-          if ($LASTEXITCODE -ne 0) { throw 'Version smoke test failed' }
+          $sourceSha = (git rev-parse --short=8 HEAD).Trim()
+          $version = (& $exe --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or !$version.EndsWith("-$sourceSha")) {
+            throw "Version does not identify the checked-out source commit: version=$version source=$sourceSha"
+          }
           & $exe --verify 2>&1 | Out-Null
           if ($LASTEXITCODE -eq 0) { throw 'Strict --verify unexpectedly succeeded without retail assets' }
           $log = Join-Path (Split-Path -Parent $exe) 'CyberGladiatorsFix.log'
@@ -165,6 +168,9 @@ jobs:
             "$digest  $name"
           }
           $checksums | Set-Content (Join-Path $release 'SHA256SUMS.txt') -Encoding ascii
+          if ((Get-Content (Join-Path $release 'SHA256SUMS.txt')).Count -ne 4) {
+            throw 'Pre-release SHA256SUMS.txt must cover the executable and all three documents'
+          }
           $executables = @(Get-ChildItem $release -File | Where-Object { $_.Extension -eq '.exe' -or $_.Extension -eq '.dll' })
           if ($executables.Count -ne 1 -or $executables[0].Name -ne 'CyberGladiatorsFix.exe') {
             throw "One-file distribution must contain exactly one executable and no external DLL"
