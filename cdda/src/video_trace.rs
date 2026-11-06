@@ -108,7 +108,7 @@ const TRANSITION_DELAY_MS:u64=1000; // only used by --smooth-video-test
 const GAME_3DFX_ACTIVE_RVA:usize=0x0004_727c;
 const HANDOFF_TIMER_ID:usize=0x435c;
 const HANDOFF_POLL_MS:u32=50;
-const HANDOFF_STABLE_3D_MS:u64=300;
+const HANDOFF_STABLE_3D_MS:u64=500;
 const HANDOFF_MAX_MS:u64=2500;
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
@@ -216,6 +216,8 @@ extern "system" {
     fn SetWindowPos(hwnd:*mut c_void,insert_after:*mut c_void,
         x:i32,y:i32,width:i32,height:i32,flags:u32)->i32;
     fn GetWindowRect(hwnd:*mut c_void,rect:*mut WinRect)->i32;
+    fn EnumWindows(callback:Option<unsafe extern "system" fn(*mut c_void,isize)->i32>,
+        context:isize)->i32;
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
@@ -244,7 +246,7 @@ struct NativeHost {
     holding_for_transition:bool,
     handoff_poll_armed:bool,
     handoff_started:Option<Instant>,
-    handoff_3dfx_since:Option<Instant>,
+    handoff_fullscreen_since:Option<Instant>,
     handoff_polls:u32,
     curtain_raise_attempts:u32,
     curtain_raise_failures:u32,
@@ -575,7 +577,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
         holding_for_transition:false,
         handoff_poll_armed:false,handoff_started:None,
-        handoff_3dfx_since:None,handoff_polls:0,
+        handoff_fullscreen_since:None,handoff_polls:0,
         curtain_raise_attempts:0,
         curtain_raise_failures:0
     })
@@ -687,6 +689,47 @@ unsafe fn promote_curtain(h:&mut NativeHost)->i32 {
     }
     promoted
 }
+// A stable 3dfx flag alone does not mean Wine has put the fullscreen 3D
+// window on screen: removing our topmost curtain can expose the desktop panel
+// (a brief light strip at the bottom). Before releasing the curtain, inspect
+// *other* visible top-level windows belonging to CYBER.EXE and require one
+// to cover the monitor occupied by our temporary host. This is read-only:
+// do not activate, resize, or reorder any game/nGlide window.
+fn covers_monitor(rect:WinRect,monitor:WinRect)->bool{
+    rect.left<=monitor.left.saturating_add(1)
+        && rect.top<=monitor.top.saturating_add(1)
+        && rect.right>=monitor.right.saturating_sub(1)
+        && rect.bottom>=monitor.bottom.saturating_sub(1)
+}
+struct FullscreenScan {
+    pid:u32,
+    curtain:usize,
+    monitor:WinRect,
+    fullscreen:usize,
+}
+unsafe extern "system" fn scan_fullscreen_window(hwnd:*mut c_void,context:isize)->i32{
+    let scan=&mut *(context as *mut FullscreenScan);
+    if hwnd as usize==scan.curtain || IsWindowVisible(hwnd)==0{return 1;}
+    let mut pid=0;
+    let _=GetWindowThreadProcessId(hwnd,&mut pid);
+    if pid!=scan.pid{return 1;}
+    let mut rect=WinRect::default();
+    if GetWindowRect(hwnd,&mut rect)!=0 && covers_monitor(rect,scan.monitor){
+        scan.fullscreen=hwnd as usize;
+        return 0;
+    }
+    1
+}
+unsafe fn visible_fullscreen_game_window(h:&NativeHost)->Option<usize>{
+    let mut monitor=WinRect::default();
+    if GetWindowRect(h.host as *mut c_void,&mut monitor)==0{return None;}
+    let mut scan=FullscreenScan{
+        pid:GetCurrentProcessId(),curtain:h.host,monitor,fullscreen:0,
+    };
+    let _=EnumWindows(Some(scan_fullscreen_window),
+        (&mut scan as *mut FullscreenScan) as isize);
+    (scan.fullscreen!=0).then_some(scan.fullscreen)
+}
 // The game's existing trace code identifies this exact (verified x86 EXE)
 // state field as state_3dfx. A nonzero value is a *startup hint*, not proof
 // that nGlide has already submitted a visible buffer.
@@ -714,28 +757,33 @@ fn poll_3d_handoff(){
                 (EXPECTED_GAME_BASE+GAME_3DFX_ACTIVE_RVA) as *const u32)}
         }else{0};
         h.handoff_polls=h.handoff_polls.saturating_add(1);
-        if flag!=0 && game_visible{
-            if h.handoff_3dfx_since.is_none(){
-                h.handoff_3dfx_since=Some(now);
+        // A visible game HWND can still be a small window while Wine/nGlide
+        // is rearranging the compositor. Wait for a monitor-sized HWND too.
+        let fullscreen=if flag!=0 && game_visible{
+            unsafe{visible_fullscreen_game_window(h)}
+        }else{None};
+        if let Some(fullscreen_hwnd)=fullscreen{
+            if h.handoff_fullscreen_since.is_none(){
+                h.handoff_fullscreen_since=Some(now);
                 video_log(&format!(
-                    "HANDOFF_3DFX_STATE_READY flag={flag} game_visible=1 polling_for_stability_ms={HANDOFF_STABLE_3D_MS}"
+                    "HANDOFF_FULLSCREEN_READY flag={flag} game_visible=1 fullscreen_hwnd={fullscreen_hwnd:#x} polling_for_stability_ms={HANDOFF_STABLE_3D_MS}"
                 ));
-                timing("HANDOFF_3DFX_STATE_READY");
+                timing("HANDOFF_FULLSCREEN_READY");
             }
         }else{
-            h.handoff_3dfx_since=None;
+            h.handoff_fullscreen_since=None;
         }
         let elapsed=now.saturating_duration_since(start).as_millis() as u64;
-        let stable=h.handoff_3dfx_since
+        let stable=h.handoff_fullscreen_since
             .map(|t|now.saturating_duration_since(t).as_millis() as u64);
         let decision=decide_handoff(elapsed,stable,game_valid);
         if decision=="wait"{return;}
-        Some((decision.to_owned(),elapsed,flag,game_visible,h.handoff_polls))
+        Some((decision.to_owned(),elapsed,flag,game_visible,fullscreen,h.handoff_polls))
     };
-    if let Some((reason,elapsed,flag,visible,polls))=outcome{
+    if let Some((reason,elapsed,flag,visible,fullscreen,polls))=outcome{
         video_log(&format!(
-            "HANDOFF_RELEASE reason={reason} elapsed_ms={elapsed} game_3dfx_flag={flag} game_visible={} polls={polls}",
-            u8::from(visible)
+            "HANDOFF_RELEASE reason={reason} elapsed_ms={elapsed} game_3dfx_flag={flag} game_visible={} fullscreen_hwnd={:#x} polls={polls}",
+            u8::from(visible),fullscreen.unwrap_or(0)
         ));
         timing("HANDOFF_RELEASE");
         close_host(&format!("3d_handoff_{reason}"));
@@ -746,7 +794,8 @@ fn poll_3d_handoff(){
 /// Hold for the user-validated one second, then let CYBER.EXE initialize
 /// its original nGlide renderer BEHIND the retained full-monitor black host.
 /// Release that host only after the game's 3dfx flag has been nonzero for a
-/// stable grace interval, or after a bounded fallback timeout (no hooks).
+/// stable grace interval with a monitor-covering game window, or after a
+/// bounded fallback timeout (no hooks).
 pub fn hold_post_video_black_before_3d(){
     if !smooth_enabled(){return;}
     let armed={
@@ -796,7 +845,7 @@ pub fn hold_post_video_black_before_3d(){
                 if timer!=0{
                     h.handoff_poll_armed=true;
                     h.handoff_started=Some(Instant::now());
-                    h.handoff_3dfx_since=None;
+                    h.handoff_fullscreen_since=None;
                     h.handoff_polls=0;
                     true
                 }else{
@@ -811,7 +860,7 @@ pub fn hold_post_video_black_before_3d(){
     };
     if polling{
         video_log(&format!(
-            "HANDOFF_WAIT_BEGIN mode=retain_black_host_while_3d_initializes poll_ms={HANDOFF_POLL_MS} stable_ms={HANDOFF_STABLE_3D_MS} max_ms={HANDOFF_MAX_MS} first_present_verified=0"
+            "HANDOFF_WAIT_BEGIN mode=retain_black_host_until_fullscreen_window poll_ms={HANDOFF_POLL_MS} stable_ms={HANDOFF_STABLE_3D_MS} max_ms={HANDOFF_MAX_MS} first_present_verified=0"
         ));
         timing("HANDOFF_WAIT_BEGIN");
     }else{
@@ -1113,6 +1162,15 @@ mod fullscreen_tests {
         assert_eq!(decide_handoff(10,None,false),"game_window_gone");
         assert!(HANDOFF_POLL_MS<=100);
         assert!(HANDOFF_MAX_MS<=3000);
+    }
+    #[test]
+    fn fullscreen_window_must_cover_bottom_panel_and_all_screen_edges(){
+        let monitor=WinRect{left:0,top:0,right:1920,bottom:1080};
+        assert!(covers_monitor(monitor,monitor));
+        assert!(covers_monitor(WinRect{left:-8,top:-8,right:1928,bottom:1088},monitor));
+        assert!(!covers_monitor(WinRect{left:0,top:0,right:1920,bottom:1040},monitor));
+        assert!(!covers_monitor(WinRect{left:0,top:0,right:1280,bottom:720},monitor));
+        assert!(!covers_monitor(WinRect{left:20,top:0,right:1920,bottom:1080},monitor));
     }
     #[test]
     fn transition_curtain_holds_exactly_one_second_before_3d_resume(){
