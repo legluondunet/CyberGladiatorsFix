@@ -80,6 +80,27 @@ debounced recovery remains as a failsafe, without repeated
 SetWindowPos requests. This keeps the 60 FPS cap and the stable
 no-flicker mode.
 
+Build #23: correct partial AVI on Wine's native WinMM/GDI output.
+The previous GameFrame mode centered the AVI by moving the MCI paint CHILD
+to (240,0), then asked Wine to draw 1440x1080 from that window's origin.
+On a 1920x1080 screenshot, only x=780..1679 contained decoded video:
+the first 540 visible pixels were unexpectedly missing, despite ALL
+window client geometries reporting the correct dimensions. This points
+to a nested child HDC/destination-coordinate mismatch, not parent clipping.
+
+For --avi-in-game-window ONLY, the MCI paint HWND and the initial black
+cover now occupy the ENTIRE game client, starting at (0,0), 1920x1080.
+The native WinMM/MCI destination is instead centered at
+(240,0) with size 1440x1080. Avoid positioning and scaling the same
+video at two separate layers. All other modes, the 60 FPS limiter,
+the automatic 648x513 pre-first-present recovery and original game
+files remain unchanged.
+
+Diagnostic markers:
+  GAMEFRAME_MCI_SURFACE_ORIGIN origin=(0,0) client=1920x1080
+  MCI_REWRITE destination=240,0 1440x1080
+  GAMEFRAME_MOVIE_GEOMETRY ... surface_client=1920x1080
+
 Log markers:
   GAMEFRAME_VIDEO_IN_WINDOW enabled via launcher
   GAMEFRAME_HANDOFF_PREPARE stage=before_MCI_AVIVIDEO_open
