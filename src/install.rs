@@ -177,7 +177,8 @@ fn image_file(path:&Path)->Result<File,String>{
 }
 
 /// Install only CYBER/*, not Sierra's obsolete Windows 95 installer.
-/// A CD may still be required at runtime until the game's CD logic is analyzed.
+/// The installed-game path is verified and launched without requiring the
+/// original disc image; the bundled WinMM bridge serves CD audio as FLAC.
 pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,String>{
     if destination.exists()||destination.is_symlink(){return Err(format!("Destination already exists: {}",destination.display()));}
     if !cue_path.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")) {
