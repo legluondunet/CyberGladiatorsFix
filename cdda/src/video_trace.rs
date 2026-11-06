@@ -523,6 +523,9 @@ fn close_host(reason:&str){
 /// guess a first-present signal or change the proven WndProc repair order.
 /// WM_TIMER is delivered when the game pumps UI messages: a game thread which
 /// *never* pumps cannot be rescued by a timer, so this is trial-only.
+fn should_arm_curtain(smooth:bool,mci_close_result:u32)->bool{
+    smooth && mci_close_result==0
+}
 fn start_transition_curtain()->bool {
     let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
     let Some(h)=guard.as_mut() else{return false;};
@@ -579,12 +582,19 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
         // at "open avivideo". Reuse it; never create two competing popups.
         let existing=*video_host().lock().unwrap_or_else(|e|e.into_inner());
         let h=if let Some(h)=existing{
-            if !smooth_enabled()||h.game!=game||h.owner_thread!=unsafe{GetCurrentThreadId()}{
-                video_log("SMOOTH_EARLY_HOST_MISMATCH fallback=original_MCI");
-                return None;
+            if smooth_enabled()&&h.game==game&&h.owner_thread==unsafe{GetCurrentThreadId()}{
+                video_log("SMOOTH_EARLY_HOST_REUSED for_splash_open=1");
+                h
+            }else{
+                // Fail open: never leave an early black popup covering an
+                // unrecognized MCI target, even if its video cannot be
+                // rewritten for this game's 4:3 host.
+                video_log("SMOOTH_EARLY_HOST_MISMATCH destroy_and_fallback");
+                close_host("early_host_mismatch");
+                let h=unsafe{prepare_host(game)}?;
+                *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
+                h
             }
-            video_log("SMOOTH_EARLY_HOST_REUSED for_splash_open=1");
-            h
         }else{
             let h=unsafe{prepare_host(game)}?;
             *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
@@ -633,7 +643,7 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     }
     if command.eq_ignore_ascii_case("close avivideo"){
         timing("MCI_AVIVIDEO_CLOSED");
-        if !(result==0 && smooth_enabled() && start_transition_curtain()){
+        if !(should_arm_curtain(smooth_enabled(),result) && start_transition_curtain()){
             close_host(if result==0{"after_MCI_close"}else{"MCI_close_failed"});
         }
     }
@@ -641,6 +651,13 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
+    #[test]
+    fn transition_curtain_is_opt_in_and_requires_successful_mci_close(){
+        assert!(!should_arm_curtain(false,0),"normal launch must close the host immediately");
+        assert!(!should_arm_curtain(true,1),"failed MCI close must release the host");
+        assert!(should_arm_curtain(true,0));
+        assert!(TRANSITION_DELAY_MS<=500,"avoid long transitions in the normal UI loop");
+    }
     #[test]
     fn movie_mouse_filter_blocks_buttons_but_not_motion(){
         for message in [
