@@ -89,6 +89,22 @@ const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
 const WH_KEYBOARD:i32=2;
+const WH_MOUSE:i32=7;
+const WM_MOUSEMOVE:u32=0x0200;
+const WM_LBUTTONDOWN:u32=0x0201;
+const WM_LBUTTONUP:u32=0x0202;
+const WM_LBUTTONDBLCLK:u32=0x0203;
+const WM_RBUTTONDOWN:u32=0x0204;
+const WM_RBUTTONUP:u32=0x0205;
+const WM_RBUTTONDBLCLK:u32=0x0206;
+const WM_MBUTTONDOWN:u32=0x0207;
+const WM_MBUTTONUP:u32=0x0208;
+const WM_MBUTTONDBLCLK:u32=0x0209;
+const WM_MOUSEWHEEL:u32=0x020a;
+const WM_XBUTTONDOWN:u32=0x020b;
+const WM_XBUTTONUP:u32=0x020c;
+const WM_XBUTTONDBLCLK:u32=0x020d;
+const WM_MOUSEHWHEEL:u32=0x020e;
 const VK_ESCAPE:usize=0x1b;
 const VK_RETURN:usize=0x0d;
 const VK_SPACE:usize=0x20;
@@ -97,6 +113,7 @@ static HOST_CLASS_REGISTERED:OnceLock<bool>=OnceLock::new();
 static KEY_FILTER_ACTIVE:AtomicBool=AtomicBool::new(false);
 static KEY_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 static KEY_FILTER_ALLOWED:AtomicU32=AtomicU32::new(0);
+static MOUSE_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 
 #[repr(C)]
 #[derive(Default,Copy,Clone)]
@@ -166,6 +183,7 @@ struct NativeHost {
     video_width:i32,
     video_height:i32,
     keyboard_hook:usize,
+    mouse_hook:usize,
 }
 static VIDEO_HOST:OnceLock<Mutex<Option<NativeHost>>>=OnceLock::new();
 fn video_host()->&'static Mutex<Option<NativeHost>> {
@@ -229,7 +247,9 @@ unsafe fn register_black_host_class(instance:*mut c_void)->bool{
     })
 }
 // Only the three explicitly approved skip keys reach the original game's
-// keyboard message loop while the native AVI is playing. A thread-local
+// keyboard message loop while the native AVI is playing. Mouse *button*
+// messages (including wheel / double-click) are suppressed on that same
+// thread; mouse movement and other applications are unaffected. A thread-local
 // WH_KEYBOARD hook is intentionally limited to the game's UI thread: no
 // global keyboard hooks, persistent changes, or DXVK WndProc modifications.
 // GetAsyncKeyState/DirectInput bypass this API; validation under Wine is needed.
@@ -249,6 +269,28 @@ unsafe extern "system" fn movie_keyboard_filter(
     }
     CallNextHookEx(std::ptr::null_mut(),code,key,flags)
 }
+// A WH_MOUSE hook runs only for this game's thread and can suppress mouse
+// buttons before they reach its Win32 message loop. If MCI creates a video
+// window on a *different* thread, those messages are not intercepted; the
+// diagnostic count tells us whether this is the path used under Wine.
+fn blocked_movie_mouse_message(message:u32)->bool{
+    matches!(message,
+        WM_LBUTTONDOWN|WM_LBUTTONUP|WM_LBUTTONDBLCLK|
+        WM_RBUTTONDOWN|WM_RBUTTONUP|WM_RBUTTONDBLCLK|
+        WM_MBUTTONDOWN|WM_MBUTTONUP|WM_MBUTTONDBLCLK|
+        WM_XBUTTONDOWN|WM_XBUTTONUP|WM_XBUTTONDBLCLK|
+        WM_MOUSEWHEEL|WM_MOUSEHWHEEL)
+}
+unsafe extern "system" fn movie_mouse_filter(
+    code:i32,message:usize,info:isize
+)->isize{
+    if code>=0 && KEY_FILTER_ACTIVE.load(Ordering::Relaxed)
+        && blocked_movie_mouse_message(message as u32){
+        MOUSE_FILTER_BLOCKED.fetch_add(1,Ordering::Relaxed);
+        return 1;
+    }
+    CallNextHookEx(std::ptr::null_mut(),code,message,info)
+}
 fn enable_movie_keys(){
     let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
     let Some(host)=guard.as_mut() else{return;};
@@ -260,6 +302,7 @@ fn enable_movie_keys(){
         if host.keyboard_hook!=0{return;}
         KEY_FILTER_BLOCKED.store(0,Ordering::Relaxed);
         KEY_FILTER_ALLOWED.store(0,Ordering::Relaxed);
+        MOUSE_FILTER_BLOCKED.store(0,Ordering::Relaxed);
         let hook=SetWindowsHookExA(WH_KEYBOARD,Some(movie_keyboard_filter),
             std::ptr::null_mut(),host.owner_thread);
         if hook.is_null(){
@@ -267,8 +310,21 @@ fn enable_movie_keys(){
             return;
         }
         host.keyboard_hook=hook as usize;
+        // Install both filters before enabling them: mouse input must never
+        // be filtered outside the AVI playback window. Leave the ordinary
+        // keyboard policy intact if a Wine version rejects the mouse hook.
+        let mouse=SetWindowsHookExA(WH_MOUSE,Some(movie_mouse_filter),
+            std::ptr::null_mut(),host.owner_thread);
+        if mouse.is_null(){
+            video_log(&format!("MOUSE_FILTER_FAILED win32={} no_mouse_suppression",GetLastError()));
+        }else{
+            host.mouse_hook=mouse as usize;
+        }
         KEY_FILTER_ACTIVE.store(true,Ordering::Release);
-        video_log("KEY_FILTER_ACTIVE allow=[ESC,ENTER,SPACE] other_game_thread_key_events=suppressed");
+        video_log(&format!(
+            "KEY_FILTER_ACTIVE allow=[ESC,ENTER,SPACE] other_game_thread_key_events=suppressed mouse_buttons_blocked_on_game_thread={}",
+            u8::from(!mouse.is_null())
+        ));
     }
 }
 
@@ -375,7 +431,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         info.monitor.left,info.monitor.top,screen_w,screen_h));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,game,owner_thread:GetCurrentThreadId(),
-        video_width:w,video_height:h,keyboard_hook:0
+        video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0
     })
 }
 fn close_host(reason:&str){
@@ -393,6 +449,13 @@ fn close_host(reason:&str){
                     "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={}",
                     KEY_FILTER_ALLOWED.load(Ordering::Relaxed),
                     KEY_FILTER_BLOCKED.load(Ordering::Relaxed)
+                ));
+            }
+            if h.mouse_hook!=0{
+                let unhooked=UnhookWindowsHookEx(h.mouse_hook as *mut c_void);
+                video_log(&format!(
+                    "MOUSE_FILTER_STOPPED unhooked={unhooked} blocked_events={}",
+                    MOUSE_FILTER_BLOCKED.load(Ordering::Relaxed)
                 ));
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
@@ -449,6 +512,20 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
+    #[test]
+    fn movie_mouse_filter_blocks_buttons_but_not_motion(){
+        for message in [
+            WM_LBUTTONDOWN,WM_LBUTTONUP,WM_LBUTTONDBLCLK,
+            WM_RBUTTONDOWN,WM_RBUTTONUP,WM_RBUTTONDBLCLK,
+            WM_MBUTTONDOWN,WM_MBUTTONUP,WM_MBUTTONDBLCLK,
+            WM_XBUTTONDOWN,WM_XBUTTONUP,WM_XBUTTONDBLCLK,
+            WM_MOUSEWHEEL,WM_MOUSEHWHEEL,
+        ] {
+            assert!(blocked_movie_mouse_message(message),"{message:#x}");
+        }
+        assert!(!blocked_movie_mouse_message(WM_MOUSEMOVE));
+        assert!(!blocked_movie_mouse_message(WM_PAINT));
+    }
     #[test]
     fn skip_filter_accepts_only_three_virtual_keys(){
         for key in [VK_ESCAPE,VK_RETURN,VK_SPACE]{
