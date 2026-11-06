@@ -24,6 +24,7 @@ const HELP:&str=r"CyberGladiatorsFix — self-contained x64 installer, compatibi
 Usage:
   CyberGladiatorsFix.exe [<disc.cue>]    Install/update verified US retail CD
   CyberGladiatorsFix.exe --launch        Play game with native fullscreen AVI
+  CyberGladiatorsFix.exe --launch --gameframe-test  GameFrame OpenGL/A-B experiment (matching Windows x86 glide.dll required)
   CyberGladiatorsFix.exe --launch --smooth-video-test  Test earlier black intro and bounded video-to-3D curtain
   CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan  Experimental native Vulkan with same smooth video
   CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release  Isolate Vulkan from the AVI's retained fullscreen black host
@@ -203,6 +204,19 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
     show(&format!("GAME_STARTED pid={} intro_skipped=1 trace={trace}",child.id()),root);
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
 }
+/// Only the opt-in GameFrame experiment uses this dedicated launcher.
+/// It preserves the old native-video and nGlide paths completely.
+fn user_gameframe_launch(root:&Path)->Result<(),String>{
+    let game=root.join(install::DIR);
+    settings::ensure(&game)?;
+    let enable_cdda=settings::read_cdda(&game)?;
+    let child=verify::launch_gameframe_test(root)?;
+    show(&format!(
+        "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe_test=1 native_video_4x3=1 music_flac={} WndProc_repair=disabled",
+        child.id(),u8::from(enable_cdda)
+    ),root);
+    wait_game(child,root)
+}
 /// Opt-in comparison of the validated smooth D3D9 handoff against nGlide's
 /// Vulkan renderer, retaining the same native MCI AVI, black curtain and
 /// guard-checked WndProc repair. No changes to the validated default launch.
@@ -263,6 +277,8 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             show(&r,root);return Ok(());
         },
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
+        [one,two] if one.to_str()==Some("--launch")&&two.to_str()==Some("--gameframe-test")=>
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
@@ -413,6 +429,7 @@ mod diagnostics_tests {
         assert!(HELP.contains("--launch --smooth-video-test --nglide-vulkan"));
         assert!(HELP.contains("--vulkan-early-release"));
         assert!(HELP.contains("--vulkan-auto-fullscreen-test"));
+        assert!(HELP.contains("--launch --gameframe-test"));
         assert!(!HELP.contains("--avi-4x3-test"));
         assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(!HELP.contains("--video-delay="));
