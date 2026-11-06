@@ -25,7 +25,8 @@ def main(root: Path) -> None:
     src = once(src, "    pub fn GetClientRect(w: HWND, r: *mut RECT) -> BOOL;",
         """    pub fn GetClientRect(w: HWND, r: *mut RECT) -> BOOL;
     pub fn GetWindowRect(w: HWND, r: *mut RECT) -> BOOL;
-    pub fn IsIconic(w: HWND) -> BOOL;""", "read-only window geometry probes")
+    pub fn IsIconic(w: HWND) -> BOOL;
+    pub fn GetForegroundWindow() -> HWND;""", "read-only window geometry probes")
     src = once(src, "    pub fn GetCurrentProcessId() -> u32;",
         """    pub fn GetCurrentProcessId() -> u32;
     pub fn GetCurrentThreadId() -> u32;""", "owner-thread guard")
@@ -56,20 +57,27 @@ fn target_monitor(hwnd: HWND) -> Option<RECT> {
     Some(rect)
 }
 
-/// Verify the original input HWND's actual position and style periodically.
-/// Cyber Gladiators may restore its 640x480 framed window AFTER grSstOpen,
-/// so a one-time adjustment during open is insufficient. This runs in the
-/// game's own thread and NEVER raises or activates the window.
+/// The original game can restore its 640x480 window after grSstOpen.
+/// Check the REAL game HWND, but never resize a correctly positioned
+/// fullscreen window merely because its harmless Win32 style flags differ.
+/// Previous builds compared the entire style DWORD and could trigger
+/// SWP_FRAMECHANGED on every 30th frame, leading to visible flicker.
 pub fn cyber_maintain_fullscreen() {
     if std::env::var("CYBER_GAMEFRAME_TEST").as_deref() != Ok("1") {
         return;
     }
     static FRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static BAD_SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let frame = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if frame % 30 != 0 { return; }
     let Some(hwnd) = cyber_game_window() else { return };
     unsafe {
-        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 { return; }
+        // Do not interfere with Alt+Tab or the intro's temporary video host.
+        if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0
+            || GetForegroundWindow() != hwnd {
+            BAD_SAMPLES.store(0, std::sync::atomic::Ordering::Relaxed);
+            return;
+        }
         let mut pid = 0;
         let tid = GetWindowThreadProcessId(hwnd, &mut pid);
         if tid == 0 || tid != GetCurrentThreadId() || pid != GetCurrentProcessId() {
@@ -78,31 +86,71 @@ pub fn cyber_maintain_fullscreen() {
         }
         let Some(target) = target_monitor(hwnd) else { return };
         let style = GetWindowLongA(hwnd, GWL_STYLE) as u32;
-        let desired_style = 0x8000_0000u32 | WS_VISIBLE;
         let mut actual = RECT::default();
         if GetWindowRect(hwnd, &mut actual) == 0 { return; }
-        if style == desired_style
-            && actual.left == target.left && actual.top == target.top
-            && actual.right == target.right && actual.bottom == target.bottom {
+        // Allow a 2-pixel window-manager rounding error. Critically, ignore
+        // irrelevant style bits such as WS_CLIPCHILDREN and WS_CLIPSIBLINGS.
+        let delta_ok = |a: i32, b: i32| a.abs_diff(b) <= 2;
+        let geometry_ok =
+            delta_ok(actual.left, target.left) &&
+            delta_ok(actual.top, target.top) &&
+            delta_ok(actual.right, target.right) &&
+            delta_ok(actual.bottom, target.bottom);
+        if frame % 600 == 0 {
+            log!("GAMEFRAME_WINDOW_CHECK fullscreen={} hwnd={hwnd:?} style={style:#010x} rect=({},{},{},{}) target=({},{},{},{}) mode_change=none",
+                u8::from(geometry_ok),
+                actual.left, actual.top, actual.right, actual.bottom,
+                target.left, target.top, target.right, target.bottom);
+        }
+        if geometry_ok {
+            BAD_SAMPLES.store(0, std::sync::atomic::Ordering::Relaxed);
+            return; // NO SetWindowLongA, NO SetWindowPos, NO redraw
+        }
+
+        // Require two consecutive bad geometry samples: do not fight a
+        // one-frame size transition during the game's own window messages.
+        let bad = BAD_SAMPLES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        if bad < 2 { return; }
+
+        // Prevent a recurring window-manager tug-of-war. We would rather
+        // temporarily retain an imperfect window than flicker indefinitely.
+        static LAST: std::sync::OnceLock<std::sync::Mutex<Option<std::time::Instant>>> =
+            std::sync::OnceLock::new();
+        let lock = LAST.get_or_init(|| std::sync::Mutex::new(None));
+        let mut last = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_some_and(|previous| previous.elapsed() < std::time::Duration::from_secs(3)) {
             return;
         }
-        if style != desired_style {
-            SetWindowLongA(hwnd, GWL_STYLE, desired_style as i32);
+        *last = Some(std::time::Instant::now());
+        drop(last);
+        BAD_SAMPLES.store(0, std::sync::atomic::Ordering::Relaxed);
+
+        // Preserve harmless, game-specific bits and remove ONLY the visible
+        // frame: WS_CAPTION (0x00C00000) + WS_THICKFRAME (0x00040000).
+        // Set the popup flag, without activating or raising this HWND.
+        let clean_style = (style & !0x00c4_0000u32) | 0x8000_0000 | WS_VISIBLE;
+        let change_style = style != clean_style;
+        if change_style {
+            SetWindowLongA(hwnd, GWL_STYLE, clean_style as i32);
         }
-        // SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED; do not steal
-        // focus or switch video mode, and only touch CYBER.EXE's own HWND.
+        let flags = SWP_NOZORDER | 0x10 |
+            if change_style { 0x20 } else { 0 }; // SWP_NOACTIVATE, FRAMECHANGED only if needed
         let ok = SetWindowPos(hwnd, null_mut(), target.left, target.top,
-            target.right - target.left, target.bottom - target.top,
-            SWP_NOZORDER | 0x10 | 0x20);
+            target.right - target.left, target.bottom - target.top, flags);
+        let mut after = RECT::default();
+        let readback = GetWindowRect(hwnd, &mut after);
         static REPAIRS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = REPAIRS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        if n <= 12 || n % 60 == 0 {
-            log!("CyberGladiators fullscreen recovery n={n} hwnd={hwnd:?} style={style:#010x} actual=({},{},{},{}) target=({},{},{},{}) SetWindowPos={ok} video_mode_unchanged=1",
-                actual.left,actual.top,actual.right,actual.bottom,
-                target.left,target.top,target.right,target.bottom);
+        if n <= 12 || n % 20 == 0 {
+            log!("GAMEFRAME_FULLSCREEN_RECOVERY attempt={n} hwnd={hwnd:?} old_style={style:#010x} new_style={clean_style:#010x} style_changed={} old_rect=({},{},{},{}) target=({},{},{},{}) result={} readback_ok={} readback=({},{},{},{}) retry_cooldown_ms=3000 display_mode_unchanged=1",
+                u8::from(change_style),
+                actual.left, actual.top, actual.right, actual.bottom,
+                target.left, target.top, target.right, target.bottom, ok, readback,
+                after.left, after.top, after.right, after.bottom);
         }
     }
 }
+
 
 """
     src = once(src, marker, addition + marker, "add post-grSstOpen fullscreen stabilization")
