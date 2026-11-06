@@ -13,6 +13,7 @@ mod video_trace;
 mod glide_trace;
 mod exception_trace;
 mod display_guard;
+mod ddraw_native;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
@@ -352,6 +353,7 @@ pub unsafe extern "system" fn mciSendStringA(
     mark_trace_session_once();
     // Passive diagnostic only: report at first native movie command.
     display_guard::report_once();
+    ddraw_native::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
     };
