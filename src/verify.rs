@@ -147,7 +147,7 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// Standalone GameFrame evaluation. Do not select nGlide's renderer or
 /// modify its tested launch paths. The GameFrame DLL is placed explicitly
 /// by the user (or experimental test package) and never silently installed.
-pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
+pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     if settings::read(&game)? {
@@ -179,6 +179,7 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
         "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
         "CYBER_VULKAN_PASSIVE_FAULT_PROBE","CYBER_VULKAN_EARLY_HOST_RELEASE",
         "CYBER_VULKAN_AUTO_FULLSCREEN","CYBER_VIDEO_CLOSE_DELAY_MS",
+        "CYBER_GAMEFRAME_AVI_IN_WINDOW",
         "NGLIDE_BACKEND","NGLIDE_REFRESH","NGLIDE_RESOLUTION","NGLIDE_ASPECT",
         "NGLIDE_VSYNC","NGLIDE_GAMMA","NGLIDE_SPLASH",
     ] {cmd.env_remove(key);}
@@ -187,6 +188,10 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     cmd.env("GLIDE_LOG",&log);
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
+    if video_in_game_window {
+        cmd.env("CYBER_GAMEFRAME_AVI_IN_WINDOW","1");
+        crate::show("GAMEFRAME_VIDEO_IN_WINDOW experimental=1 decoder=native_WinMM_MCI display=child_of_original_GLIDE_game_HWND no_second_top_level_popup=1 video_texture_in_OpenGL=0 restore_before_MCI_open=1 existing_mode_unchanged=1",root);
+    }
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
         // the game can temporarily switch to a 640x480 display mode.
@@ -199,9 +204,9 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     cmd.env("CYBER_AVI_FULLSCREEN","1");
     cmd.env("CYBER_AVI_SMOOTH_TEST","1");
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
-    crate::show("GAMEFRAME_EXPERIMENT renderer=GameFrame-OpenGL verified_game_window=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=original_MCI fullscreen_native=1 post_video_host_release=early guarded_WndProc_repair=disabled log=unified",root);
+    crate::show(&format!("GAMEFRAME_EXPERIMENT renderer=GameFrame-OpenGL verified_game_window=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=original_MCI fullscreen_native=1 video_in_game_window={} post_video_host_release=early guarded_WndProc_repair=disabled log=unified",u8::from(video_in_game_window)),root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (exact experiment build)"));
-    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved",u8::from(enable_cdda)));
+    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_IN_GAME_WINDOW={}",u8::from(enable_cdda),u8::from(video_in_game_window)));
     cmd.spawn().map_err(|e|format!("Unable to start GameFrame Cyber Gladiators experiment: {e}"))
 }
 
