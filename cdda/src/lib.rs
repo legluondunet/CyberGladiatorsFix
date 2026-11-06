@@ -343,33 +343,6 @@ macro_rules! forward_winmm {
 /// Forward the original AVI MCI function unchanged. Read-only telemetry
 /// determines whether the black screen occurs inside "status movie mode"
 /// polling, MCI "close movie", or the subsequent renderer restore.
-/// Read back the actual VIDEOFORWINDOWS MCI driver state. The game's
-/// previous logs only proved what our rewrite REQUESTED, not what Wine's
-/// MCIAVI decoder STORED. Read-only queries; scoped to GameFrame's opt-in
-/// nested-GDI test and recorded in the same session log.
-unsafe fn probe_native_movie_rectangles(
-    native:unsafe extern "system" fn(*const c_char,*mut c_char,u32,Handle)->u32,
-    phase:&str
-){
-    if std::env::var("CYBER_GAMEFRAME_AVI_IN_WINDOW").as_deref()!=Ok("1")
-        ||std::env::var("CYBER_GAMEFRAME_TEST").as_deref()!=Ok("1"){return;}
-    for (field,cmd) in [
-        ("source",b"where movie source\0".as_slice()),
-        ("source_max",b"where movie source max\0".as_slice()),
-        ("destination",b"where movie destination\0".as_slice()),
-        ("destination_max",b"where movie destination max\0".as_slice()),
-        ("window",b"where movie window\0".as_slice()),
-    ]{
-        let mut out=[0i8;128];
-        let result=native(cmd.as_ptr().cast(),out.as_mut_ptr(),out.len() as u32,
-            std::ptr::null_mut());
-        let reply=if result==0{
-            CStr::from_ptr(out.as_ptr()).to_string_lossy().into_owned()
-        }else{String::new()};
-        log(&format!("GAMEFRAME_MCI_DRIVER_RECT phase={phase} field={field} result={result} reported={reply:?}"));
-    }
-}
-
 #[no_mangle]
 pub unsafe extern "system" fn mciSendStringA(
     cmd:*const c_char,out:*mut c_char,len:u32,hwnd:Handle
@@ -408,20 +381,6 @@ pub unsafe extern "system" fn mciSendStringA(
     let mut result=native(substitute.as_ref().map_or(cmd,|v|v.as_ptr()),out,len,hwnd);
     if let Some(ref text)=command {
         video_trace::on_4_3_command_result(text,substitute.is_some(),result);
-        if result==0 {
-            if text.trim().eq_ignore_ascii_case("put movie destination at 0 0 640 480") {
-                probe_native_movie_rectangles(native,"after_original_movie_put");
-            }else if text.trim().eq_ignore_ascii_case("play movie window"){
-                probe_native_movie_rectangles(native,"after_original_movie_play");
-                video_trace::log_gdi_movie_dc("after_original_movie_play");
-            }else if text.trim().eq_ignore_ascii_case("status movie mode"){
-                static QUERIES:AtomicU32=AtomicU32::new(0);
-                if QUERIES.fetch_add(1,Ordering::Relaxed)==0 {
-                    probe_native_movie_rectangles(native,"first_native_mci_status");
-                    video_trace::log_gdi_movie_dc("first_native_mci_status");
-                }
-            }
-        }
         if result!=0 && substitute.is_some() && video_trace::movie_open_game_hwnd_for_retry(text){
             // An unsupported child-style MCI driver must not prevent game
             // startup. Revert to the original AVI open and log the fallback.

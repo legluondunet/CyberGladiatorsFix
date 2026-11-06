@@ -209,15 +209,15 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// Only the opt-in GameFrame experiment uses this dedicated launcher.
 /// It preserves the old native-video and nGlide paths completely.
-fn user_gameframe_launch(root:&Path,video_in_game_window:bool,native_size_probe:bool,first_present_handoff:bool)->Result<(),String>{
+fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let mut previous_glide=gameframe::Session::begin(root,&game)?;
-    let child=verify::launch_gameframe_test(root,video_in_game_window,native_size_probe,first_present_handoff)?;
+    let child=verify::launch_gameframe_test(root)?;
     show(&format!(
-        "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe_test=1 native_video_4x3=1 avi_in_game_window={} avi_unscaled_probe={} first_present_handoff={} music_flac={} WndProc_repair=disabled",
-        child.id(),u8::from(video_in_game_window),u8::from(native_size_probe),u8::from(first_present_handoff),u8::from(enable_cdda)
+        "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
+        child.id(),u8::from(enable_cdda)
     ),root);
     let result=wait_game(child,root);
     let restored=previous_glide.restore();
@@ -290,20 +290,12 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
         [one,two] if one.to_str()==Some("--launch")
             && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root,false,false,true),
-        [one,two,three] if one.to_str()==Some("--launch")
-            && two.to_str()==Some("--gameframe-test")
-            && three.to_str()==Some("--avi-in-game-window")=>
-            return user_gameframe_launch(root,true,false,false),
+            return user_gameframe_launch(root),
+        // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-first-present-handoff")=>
-            return user_gameframe_launch(root,false,false,true),
-        [one,two,three,four] if one.to_str()==Some("--launch")
-            && two.to_str()==Some("--gameframe-test")
-            && three.to_str()==Some("--avi-in-game-window")
-            && four.to_str()==Some("--avi-unscaled-probe")=>
-            return user_gameframe_launch(root,true,true,false),
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
@@ -455,8 +447,7 @@ mod diagnostics_tests {
         assert!(HELP.contains("--vulkan-early-release"));
         assert!(HELP.contains("--vulkan-auto-fullscreen-test"));
         assert!(HELP.contains("--launch --gameframe"));
-        // Hidden forensic A/B modes remain callable for reproducible
-        // investigations, but are not advertised as supported launch paths.
+        // Failed GDI-child probes are removed, not just hidden from help.
         assert!(!HELP.contains("--launch --gameframe-test --avi-in-game-window"));
         assert!(!HELP.contains("--avi-unscaled-probe"));
         assert!(!HELP.contains("--avi-first-present-handoff"));

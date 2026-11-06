@@ -144,14 +144,10 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
     launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3,smooth_test,false,false)
         .map(|child|(child,None))
 }
-/// Standalone GameFrame evaluation. Do not select nGlide's renderer or
-/// modify its tested launch paths. The GameFrame DLL is placed explicitly
-/// by the user (or experimental test package) and never silently installed.
-pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_probe:bool,first_present_handoff:bool)->Result<Child,String>{
-    if first_present_handoff && (video_in_game_window||native_size_probe) {
-        return Err("First-GL-present host handoff uses a separate GDI AVI window, not the in-window GDI diagnostic".into());
-    }
-    if native_size_probe && !video_in_game_window{return Err("Native AVI size diagnostic requires GameFrame's --avi-in-game-window".into());}
+/// GameFrame's verified native AVI -> first real OpenGL-present launch.
+/// The original nGlide setup is never changed; the selected Apache-2.0
+/// Glide DLL was temporarily installed by gameframe::Session.
+pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     if settings::read(&game)? {
@@ -170,10 +166,10 @@ pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_pr
     // Fail closed: never apply the GameFrame-specific address/Win32 logic
     // to an arbitrary proprietary nGlide or a different wrapper build.
     let expected=option_env!("CYBER_GAMEFRAME_GLIDE_SHA256").ok_or(
-        "This launcher was not built as a matched GameFrame test package; use the paired experimental launcher and glide.dll"
+        "This launcher does not embed the verified GameFrame Glide; use the one-EXE GameFrame package"
     )?;
     if !glide_hash.eq_ignore_ascii_case(expected) {
-        return Err(format!("GameFrame test requires the paired experimental glide.dll (expected SHA-256={expected}; found {glide_hash}). Original nGlide and game assets untouched"));
+        return Err(format!("GameFrame requires embedded glide.dll SHA-256={expected}; installed SHA-256={glide_hash}. Original Glide backup is preserved"));
     }
     let mut cmd=Command::new(&exe);
     cmd.current_dir(&game);
@@ -193,18 +189,8 @@ pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_pr
     cmd.env("GLIDE_LOG",&log);
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
-    if first_present_handoff {
-        cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
-        crate::show("GAMEFRAME_AVI_FIRST_PRESENT experimental=1 decoder=native_MCI_GDI independent_fullscreen_video_host=1 retained_black_until_real_gl_swap=1 native_video_4x3=1 no_640x480_gdi_clip=1 bounded_timeout_ms=3500 one_log=1",root);
-    }
-    if video_in_game_window {
-        cmd.env("CYBER_GAMEFRAME_AVI_IN_WINDOW","1");
-        if native_size_probe{
-            cmd.env("CYBER_GAMEFRAME_AVI_UNSCALED","1");
-            crate::show("GAMEFRAME_AVI_UNSCALED_PROBE enabled=1 MCI_destination=native_640x480_centered no_GDI_upscale=1 debug_only=1 normal_video_mode_not_modified=1",root);
-        }
-        crate::show("GAMEFRAME_VIDEO_IN_WINDOW experimental=1 decoder=native_WinMM_MCI display=child_of_original_GLIDE_game_HWND no_second_top_level_popup=1 video_texture_in_OpenGL=0 restore_before_MCI_open=1 existing_mode_unchanged=1",root);
-    }
+    cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
+    crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
         // the game can temporarily switch to a 640x480 display mode.
@@ -217,9 +203,9 @@ pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_pr
     cmd.env("CYBER_AVI_FULLSCREEN","1");
     cmd.env("CYBER_AVI_SMOOTH_TEST","1");
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
-    crate::show(&format!("GAMEFRAME_EXPERIMENT renderer=GameFrame-OpenGL verified_game_window=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=original_MCI fullscreen_native=1 video_in_game_window={} avi_unscaled_probe={} first_present_handoff={} guarded_WndProc_repair=disabled log=unified",u8::from(video_in_game_window),u8::from(native_size_probe),u8::from(first_present_handoff)),root);
+    crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=unified",root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (exact experiment build)"));
-    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_IN_GAME_WINDOW={} AVI_UNSCALED_PROBE={} AVI_FIRST_PRESENT_HANDOFF={}",u8::from(enable_cdda),u8::from(video_in_game_window),u8::from(native_size_probe),u8::from(first_present_handoff)));
+    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(enable_cdda)));
     cmd.spawn().map_err(|e|format!("Unable to start GameFrame Cyber Gladiators experiment: {e}"))
 }
 
