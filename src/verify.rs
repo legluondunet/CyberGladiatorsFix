@@ -37,17 +37,27 @@ fn same_size_iq_asset(name:&str,expected_size:u64,actual_size:u64)->bool{
     expected_size==actual_size && num.len()==2 && num.bytes().all(|b|b.is_ascii_digit())
 }
 pub fn verify(root:&Path)->Result<String,String>{
-    verify_assets(root,false).map(|(summary,_)|summary)
+    verify_assets(root,false,true).map(|(summary,_)|summary)
 }
 /// A launch can opt in to exact-path, same-size IQ differences without
 /// rewriting the manifest or asset. --verify always calls the strict mode.
 pub fn verify_launch_assets(root:&Path)->Result<String,String>{
     let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
-    let (summary,warnings)=verify_assets(root,allow)?;
+    let (summary,warnings)=verify_assets(root,allow,true)?;
     for message in warnings {crate::show(&message,root);}
     Ok(summary)
 }
-fn verify_assets(root:&Path,allow_modified_iq:bool)->Result<(String,Vec<String>),String>{
+/// Before any migration/reinstall, verify the retail backed-up EXE and the
+/// complete CD manifest without requiring a renderer that is staged only
+/// during startup. The integrity exception applies solely to same-size IQ
+/// data and never rewrites the manifest.
+pub fn verify_install_content(root:&Path)->Result<String,String>{
+    let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
+    let (summary,warnings)=verify_assets(root,allow,false)?;
+    for warning in warnings{crate::show(&warning,root);}
+    Ok(summary)
+}
+fn verify_assets(root:&Path,allow_modified_iq:bool,check_modules:bool)->Result<(String,Vec<String>),String>{
     let game=root.join(DIR);
     let meta=fs::symlink_metadata(&game).map_err(|e|format!("Missing game directory: {e}"))?;
     if !meta.is_dir()||meta.file_type().is_symlink(){return Err("Game folder is not a regular directory".into());}
@@ -91,18 +101,19 @@ fn verify_assets(root:&Path,allow_modified_iq:bool)->Result<(String,Vec<String>)
         }
         count+=1;bytes+=size;
     }
-    nglide::verify(&game)?;
-    let audio=if patch::cdda_active(&game.join("cyber.exe"))? {
-        cdda::verify(&game)?;
-        if settings::read_cdda(&game)? {
-            "WinMM bridge verified; FLAC CDDA music selected"
-        }else{
-            "WinMM bridge verified; native system CD audio selected"
-        }
-    }else{"legacy native WinMM import (bridge not yet active)"};
+    let audio=if check_modules{
+        if crate::bundle::GAMEFRAME_GLIDE_DLL.is_empty(){nglide::verify(&game)?;}
+        else{crate::bundle::verify()?;}
+        if patch::cdda_active(&game.join("cyber.exe"))?{
+            cdda::verify(&game)?;
+            if settings::read_cdda(&game)?{
+                "embedded WinMM bridge verified; FLAC CD audio selected"
+            }else{"embedded WinMM bridge verified; system CD audio selected"}
+        }else{"legacy system WinMM import"}
+    }else{"retail assets checked before module installation"};
     let label=if warnings.is_empty(){"all assets match original CD"}
         else{"modified IQ data permitted by explicit INI option; other assets match original CD"};
-    Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}; {label}"),warnings))
+    Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), {audio}; {label}"),warnings))
 }
 pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
     launch_with_video_delay(root,logo,trace,passthru_noop,0)
@@ -150,15 +161,13 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
-    if settings::read(&game)? {
-        return Err("--gameframe-test needs [Video] SkipIntro=0; the INI has not been modified".into());
-    }
+    let skip_intro=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
     cdda::try_install(root,&game)?;
     patch::set_cdda(&exe,true)?;
-    patch::set_skip_intro(&exe,false)?;
+    patch::set_skip_intro(&exe,skip_intro)?;
     verify_launch_assets(root)?;
     let glide=game.join("glide.dll");
     let glide_hash=patch::file_hash(&glide)?;
@@ -205,7 +214,7 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
     crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=unified",root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (exact experiment build)"));
-    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(enable_cdda)));
+    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro={} EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(skip_intro),u8::from(enable_cdda)));
     cmd.spawn().map_err(|e|format!("Unable to start GameFrame Cyber Gladiators experiment: {e}"))
 }
 
