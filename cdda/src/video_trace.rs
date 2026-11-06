@@ -103,6 +103,11 @@ const SWP_SHOWWINDOW:u32=0x0040;
 const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
 const WM_TIMER:u32=0x0113;
+const WM_GAMEFRAME_FIRST_GL_PRESENT:u32=0x8000+0x4c;
+const GAMEFRAME_FIRST_GL_PROP:&[u8]=b"CyberGladiators_GameFrame_GlPresentedPending\0";
+const GAMEFRAME_HANDOFF_TIMEOUT_MS:u64=3500;
+static GAMEFRAME_FIRST_GL_ARMED:AtomicBool=AtomicBool::new(false);
+static GAMEFRAME_HANDOFF_START:OnceLock<Mutex<Option<Instant>>>=OnceLock::new();
 const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
 const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
@@ -261,6 +266,8 @@ extern "system" {
         menu:*mut c_void,instance:*mut c_void,param:*mut c_void)->*mut c_void;
     fn DestroyWindow(hwnd:*mut c_void)->i32;
     fn GetClientRect(hwnd:*mut c_void,rect:*mut WinRect)->i32;
+    fn SetPropA(hwnd:*mut c_void,name:*const u8,data:*mut c_void)->i32;
+    fn RemovePropA(hwnd:*mut c_void,name:*const u8)->*mut c_void;
     fn GetDC(hwnd:*mut c_void)->*mut c_void;
     fn ReleaseDC(hwnd:*mut c_void,dc:*mut c_void)->i32;
     fn SetTimer(hwnd:*mut c_void,id:usize,timeout_ms:u32,callback:*const c_void)->usize;
@@ -301,6 +308,10 @@ fn smooth_enabled()->bool{
 /// The in-window MCI experiment is only for GameFrame, never nGlide.
 /// It uses a CHILD video surface of the original OpenGL game HWND, NOT a
 /// second top-level popup; Wine MCI still decodes the original AVI.
+fn gameframe_first_present_handoff()->bool{
+    smooth_enabled()&&std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1")
+        &&std::env::var("CYBER_GAMEFRAME_AVI_FIRST_PRESENT").as_deref()==Ok("1")
+}
 fn gameframe_video_in_window()->bool{
     smooth_enabled()
         && std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1")
@@ -323,7 +334,27 @@ unsafe extern "system" fn black_host_proc(
 )->isize{
     match msg{
         WM_TIMER if wparam==HANDOFF_TIMER_ID=>{
-            poll_3d_handoff();
+            if gameframe_first_present_handoff() {
+                if GAMEFRAME_FIRST_GL_ARMED.load(Ordering::Acquire) {
+                    let timed_out=GAMEFRAME_HANDOFF_START.get()
+                        .and_then(|lock|lock.lock().ok().and_then(|start|*start))
+                        .is_some_and(|at|at.elapsed()>=Duration::from_millis(GAMEFRAME_HANDOFF_TIMEOUT_MS));
+                    if timed_out {
+                        GAMEFRAME_FIRST_GL_ARMED.store(false,Ordering::Release);
+                        video_log("GAMEFRAME_FIRST_GL_HANDOFF timed_out=1 reason=no_present_ack_or_win32_pump timeout_ms=3500");
+                        close_host("gameframe_first_present_timeout");
+                    }
+                }
+            }else{
+                poll_3d_handoff();
+            }
+            0
+        }
+        WM_GAMEFRAME_FIRST_GL_PRESENT if gameframe_first_present_handoff()=>{
+            if GAMEFRAME_FIRST_GL_ARMED.swap(false,Ordering::AcqRel){
+                video_log("GAMEFRAME_FIRST_GL_HANDOFF notified=1 stage=after_real_OpenGL_SwapBuffers on_game_UI_thread=1 release_video_host=1");
+                close_host("gameframe_first_GL_presented");
+            }
             0
         }
         WM_ERASEBKGND=>{
@@ -994,6 +1025,7 @@ pub fn log_gdi_movie_dc(phase:&str){
 fn close_host(reason:&str){
     let previous=video_host().lock().unwrap_or_else(|e|e.into_inner()).take();
     if let Some(mut h)=previous{
+        GAMEFRAME_FIRST_GL_ARMED.store(false,Ordering::Release);
         unsafe{
             KEY_FILTER_ACTIVE.store(false,Ordering::Release);
             if GetCurrentThreadId()!=h.owner_thread{
@@ -1001,6 +1033,12 @@ fn close_host(reason:&str){
                 return;
             }
             stop_movie_input(&mut h);
+            if gameframe_first_present_handoff(){
+                let _=RemovePropA(h.host as *mut c_void,GAMEFRAME_FIRST_GL_PROP.as_ptr());
+                if let Some(lock)=GAMEFRAME_HANDOFF_START.get(){
+                    *lock.lock().unwrap_or_else(|e|e.into_inner())=None;
+                }
+            }
             if h.handoff_poll_armed {
                 let _=KillTimer(h.host as *mut c_void,HANDOFF_TIMER_ID);
                 h.handoff_poll_armed=false;
@@ -1184,6 +1222,12 @@ fn poll_3d_handoff(){
 /// bounded fallback timeout (no hooks).
 pub fn hold_post_video_black_before_3d(){
     if !smooth_enabled(){return;}
+    if gameframe_first_present_handoff(){
+        // The alternative first-present path has already armed the black
+        // GDI host with a bounded timer and must NOT block game startup.
+        video_log("GAMEFRAME_FIRST_GL_HANDOFF post_close_sleep_skipped=1 original_game_can_initialize_OpenGL=1");
+        return;
+    }
     let armed={
         let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
         match guard.as_mut(){
@@ -1253,6 +1297,50 @@ pub fn hold_post_video_black_before_3d(){
         close_host("post_video_sync_hold_poll_unavailable");
     }
 }
+/// The native Wine MCIAVI driver draws via GDI. In a CHILD of the active
+/// OpenGL game HWND, its 1920x1080 client is still clipped by Wine's
+/// 640x480 HDC clip box. Reuse the already proven separate GDI fullscreen
+/// MCI host, but keep it black above the game until the first REAL OpenGL
+/// SwapBuffers completes. The GameFrame render thread will post a narrow
+/// Win32 message back to THIS host; its original owner UI thread destroys
+/// the host. Bounded timer fallback avoids an indefinitely black window.
+fn gameframe_arm_first_present_handoff()->bool{
+    if !gameframe_first_present_handoff(){return false;}
+    if !start_transition_curtain(){return false;}
+    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=guard.as_mut() else{return false;};
+    if h.owner_thread!=unsafe{GetCurrentThreadId()}{
+        return false;
+    }
+    unsafe{
+        let host=h.host as *mut c_void;
+        if IsWindow(host)==0{return false;}
+        let tagged=SetPropA(host,GAMEFRAME_FIRST_GL_PROP.as_ptr(),1usize as *mut c_void);
+        if tagged==0{
+            video_log(&format!("GAMEFRAME_FIRST_GL_HANDOFF property_failed={} fallback=close",GetLastError()));
+            drop(guard);
+            close_host("gameframe_first_present_property_failed");
+            return true;
+        }
+        let clock=GAMEFRAME_HANDOFF_START.get_or_init(||Mutex::new(None));
+        *clock.lock().unwrap_or_else(|e|e.into_inner())=Some(Instant::now());
+        GAMEFRAME_FIRST_GL_ARMED.store(true,Ordering::Release);
+        let timer=SetTimer(host,HANDOFF_TIMER_ID,HANDOFF_POLL_MS,std::ptr::null());
+        if timer==0{
+            video_log(&format!("GAMEFRAME_FIRST_GL_HANDOFF timer_failed={} fallback=close",GetLastError()));
+            GAMEFRAME_FIRST_GL_ARMED.store(false,Ordering::Release);
+            drop(guard);
+            close_host("gameframe_first_present_timer_failed");
+            return true;
+        }
+        h.handoff_poll_armed=true;
+        video_log(&format!("GAMEFRAME_FIRST_GL_HANDOFF armed=1 GDI_fullscreen_host={:#x} native_MCI_video_closed=1 black_host_retained=1 wait_for_post_SwapBuffers=1 fallback_timeout_ms={} no_sync_hold=1",
+            h.host,GAMEFRAME_HANDOFF_TIMEOUT_MS));
+        timing("GAMEFRAME_FIRST_PRESENT_WAIT_BEGIN");
+        true
+    }
+}
+
 fn start_transition_curtain()->bool {
     let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
     let Some(h)=guard.as_mut() else{return false;};
@@ -1524,7 +1612,13 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
             std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1");
         let early_release=smooth_enabled() && result==0 &&
             std::env::var("CYBER_VULKAN_EARLY_HOST_RELEASE").as_deref()==Ok("1");
-        if gameframe {
+        if gameframe && gameframe_first_present_handoff(){
+            video_log("GAMEFRAME_VIDEO_HANDOFF mode=standalone_native_GDI_then_first_OpenGL_present video_host_does_not_parent_to_OpenGL_HWND=1");
+            gameframe_prepare_window("after_MCI_close_before_first_gl_present");
+            if !gameframe_arm_first_present_handoff(){
+                close_host("gameframe_first_present_arm_failed");
+            }
+        }else if gameframe {
             // Do not retain the native AVI host across the first OpenGL
             // grSstOpen. In this experiment, GameFrame itself owns the
             // original game HWND and its desktop-sized presentation.
