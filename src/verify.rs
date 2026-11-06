@@ -134,7 +134,7 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
     if avi_4x3 && trace {
-        return Err("The experimental AVI 4:3 host must be tested without graphics tracing".into());
+        return Err("Fullscreen native AVI host is not supported in diagnostic graphics-trace mode".into());
     }
     if trace {
         // Reuse the established per-run DXVK capture lifecycle, which must
@@ -206,7 +206,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         return Err("WndProc repair requires native AVI, nGlide D3D9 and a hook-free launch".into());
     }
     if avi_4x3 && !normal_repair {
-        return Err("Experimental AVI 4:3 host requires non-tracing native video and guarded DXVK repair".into());
+        return Err("Fullscreen native AVI host requires non-tracing video and guarded DXVK repair".into());
     }
     let isolated=skip_intro_override==Some(true)
         && backend_override==Some("1") && no_glide_hook
@@ -237,7 +237,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     let skip=skip_intro_override.unwrap_or(configured_skip);
     let enable_cdda=settings::read_cdda(&game)?;
     if avi_4x3 && (!enable_cdda||skip) {
-        return Err("Experimental AVI 4:3 host requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1; INI not modified".into());
+        return Err("Native AVI 4:3 host requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1; INI not modified".into());
     }
     // --no-glide-hook by itself is an AVI/3dfx-transition probe, so it
     // requires the intro. In a *forced renderer* A/B comparison, permitting
@@ -292,12 +292,12 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     for key in ["CYBER_VIDEO_CLOSE_DELAY_MS","CYBER_GLIDE_HOOK_DISABLED",
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
         "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
-        "CYBER_AVI_FULLSCREEN_TEST"]{
+        "CYBER_AVI_FULLSCREEN"]{
         cmd.env_remove(key);
     }
     if avi_4x3 {
-        cmd.env("CYBER_AVI_FULLSCREEN_TEST","1");
-        crate::show("AVI_4X3_TEST experimental=1 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 renderer=nGlide_D3D9",root);
+        cmd.env("CYBER_AVI_FULLSCREEN","1");
+        crate::show("AVI_4X3 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 only_skip_keys=ESC_ENTER_SPACE mouse_buttons_suppressed=1 renderer=nGlide_D3D9",root);
     }
     // This is a one-shot, guard-checked in-process fix. No long-running
     // diagnostics, DLL hooks or Wine prefix changes in the normal path.
