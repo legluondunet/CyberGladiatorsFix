@@ -2,18 +2,19 @@ name: CyberGladiatorsFix - Windows x64 one-file with embedded GameFrame
 
 on:
   push:
-    branches: [experiment/gameframe-glide, main]
+    branches: [experiment/gameframe-glide, main, audit/build85-gameframe]
     paths:
       - '.github/workflows/gameframe-glide.yml'
       - 'tools/gameframe/**'
       - 'docs/gameframe-experiment.md'
+      - 'docs/BUILD85_AUDIT.md'
       - 'cdda/**'
       - 'src/**'
       - 'build.rs'
       - 'README.md'
       - 'Cargo.toml'
   pull_request:
-    branches: [main]
+    branches: [main, ci/windows-x64-first-build]
   workflow_dispatch:
 
 permissions:
