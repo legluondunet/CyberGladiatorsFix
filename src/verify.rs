@@ -209,7 +209,13 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     // Isolated build-69 Wine mode guard experiment: block original CYBER.EXE
     // USER32 primary-resolution requests before they shrink Wine's virtual
     // desktop to 640x480. This flag is not present in the stable branch.
-    cmd.env("CYBER_WINE_DESKTOP_MODE_GUARD","1");
+    // Do NOT suppress DirectDraw/USER32 modes in this diagnostic build.
+    // Preserve the exact native game's display-mode behavior and collect
+    // Wine's read-only DirectDraw trace instead.
+    cmd.env("CYBER_WINE_DESKTOP_MODE_GUARD","0");
+    cmd.env("WINEDEBUG","-all,+ddraw");
+    cmd.stderr(Stdio::piped());
+    crate::show("WINE_DDRAW_PASSIVE_TRACE interception=0 WINEDEBUG=-all,+ddraw stderr=bounded_filtered_unified_log",root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
