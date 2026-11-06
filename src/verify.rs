@@ -206,18 +206,12 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
     cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
-    // Isolated build-69 Wine mode guard experiment: block original CYBER.EXE
-    // USER32 primary-resolution requests before they shrink Wine's virtual
-    // desktop to 640x480. This flag is not present in the stable branch.
-    // Do NOT suppress DirectDraw/USER32 modes in this diagnostic build.
-    // Preserve the exact native game's display-mode behavior and collect
-    // Wine's read-only DirectDraw trace instead.
-    cmd.env("CYBER_WINE_DESKTOP_MODE_GUARD","0");
-    // Only the verified 1996 game on Wine and the dedicated GameFrame
-    // build may forward its 640x480x16 DirectDraw request to the already
-    // captured native desktop size. This still calls real DirectDraw.
+    // Only the SHA-256-verified retail game on Wine and the dedicated
+    // GameFrame build may forward its 640x480x16 DirectDraw request to the
+    // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
+    // The native Windows loader always leaves this interception inactive.
     cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","1");
-    crate::show("WINE_DDRAW_NATIVE_FORWARD enabled=1 native_DirectDraw_state_preserved=1 old_noop_hook_disabled=1 game_only=1",root);
+    crate::show("WINE_DDRAW_NATIVE_FORWARD enabled=1 native_DirectDraw_state_preserved=1 game_only=1 native_windows_untouched=1",root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
