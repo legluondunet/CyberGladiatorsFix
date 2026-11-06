@@ -179,7 +179,7 @@ mod tests{
         for (track,sample) in [(2,1200i32),(3,-1700i32)] {
             let filename=format!("Track{track:02}.flac");
             assert!(report.manifest_rows.contains(&filename));
-            let mut reader=claxon::FlacReader::open(base.join(filename)).unwrap();
+            let mut reader=claxon::FlacReader::open(base.join("music").join(filename)).unwrap();
             assert_eq!(reader.streaminfo().channels,2);
             assert_eq!(reader.streaminfo().sample_rate,44_100);
             let restored:Vec<i32>=reader.samples().map(|r|r.unwrap()).collect();
@@ -210,7 +210,7 @@ FILE "a03.bin" BINARY
         assert!(report.missing.is_empty());
         for track in [2,3] {
             let name=format!("Track{track:02}.flac");
-            let file=base.join(name);
+            let file=base.join("music").join(name);
             assert!(file.exists());
             let mut reader=claxon::FlacReader::open(file).unwrap();
             assert_eq!(reader.samples().count(),2*588*2);
