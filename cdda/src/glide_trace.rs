@@ -371,9 +371,24 @@ fn window_snapshot(stage:&str) {
 
 /// Observe whether the game restores its 1996 full-screen window style after
 /// WinMM has closed the AVI. Only read Windows state; no window alterations.
+fn passive_vulkan_fault_probe(value:Option<&str>)->bool{value==Some("1")}
 pub fn after_video_close(){
     if !enabled(){return;}
     if unsafe{GetModuleHandleA(std::ptr::null())} as usize != EXPECTED_IMAGE_BASE {return;}
+    let passive_vulkan=passive_vulkan_fault_probe(
+        std::env::var("CYBER_VULKAN_PASSIVE_FAULT_PROBE").ok().as_deref());
+    if passive_vulkan {
+        // After AVI close, the Vulkan crash may take over 20 seconds.
+        // A separate healthy thread reads only the exception atomics;
+        // do not format or log from the exception handler itself.
+        thread::spawn(||{
+            for _ in 0..350 {
+                thread::sleep(Duration::from_millis(100));
+                crate::exception_trace::snapshot("Vulkan passive 100ms exception poll");
+            }
+        });
+        report("VULKAN_FAULT_PROBE watcher=100ms bounded_ms=35000 read_only=1 glide_iat_hook=disabled");
+    }
     crate::exception_trace::d3d9_identity("immediately after MCI close");
     window_snapshot("immediately after MCI close");
     // Dense, read-only sampling for the first 500 ms, where the last
@@ -381,8 +396,13 @@ pub fn after_video_close(){
     // window thread exiting. No hooks are installed on COM or Glide here.
     thread::spawn(||{
         let start=Instant::now();
-        for delay in [10u64,25,50,75,100,125,150,200,250,300,350,400,450,500,
-                      750,1000,1500,4000,8000] {
+        let mut delays=vec![10u64,25,50,75,100,125,150,200,250,300,350,400,450,500,
+            750,1000,1500,4000,8000];
+        if passive_vulkan {
+            // Delayed window-state samples remain read-only and bounded.
+            delays.extend_from_slice(&[12000,16000,20000,22000,24000,30000]);
+        }
+        for delay in delays {
             let target=Duration::from_millis(delay);
             if let Some(remaining)=target.checked_sub(start.elapsed()){
                 thread::sleep(remaining);
@@ -429,6 +449,12 @@ mod tests{
         assert!(!should_bypass(1,false));
         assert!(!should_bypass(2,true));
         assert!(!should_bypass(-1,true));
+    }
+    #[test]
+    fn passive_vulkan_watcher_is_strict_opt_in(){
+        assert!(passive_vulkan_fault_probe(Some("1")));
+        assert!(!passive_vulkan_fault_probe(Some("0")));
+        assert!(!passive_vulkan_fault_probe(None));
     }
     #[test]
     fn delay_is_bounded_and_trace_only(){
