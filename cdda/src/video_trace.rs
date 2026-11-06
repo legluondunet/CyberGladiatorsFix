@@ -1111,7 +1111,18 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     }
     if command.eq_ignore_ascii_case("close avivideo"){
         timing("MCI_AVIVIDEO_CLOSED");
-        if !(should_arm_curtain(smooth_enabled(),result) && start_transition_curtain()){
+        // An isolated Vulkan-only A/B experiment: leave all native AVI
+        // operations and pre-video black cover intact, but destroy the
+        // temporary host immediately after the original MCI driver closed.
+        // This intentionally exposes the normal compositor handoff and
+        // excludes our retained fullscreen HWND from nGlide initialization.
+        // The verified D3D9 and default Vulkan smooth paths are unchanged.
+        let early_release=smooth_enabled() && result==0 &&
+            std::env::var("CYBER_VULKAN_EARLY_HOST_RELEASE").as_deref()==Ok("1");
+        if early_release {
+            video_log("VULKAN_EARLY_RELEASE after_native_MCI_close=1 no_black_postroll=1 no_handoff_timer=1 renderer_can_initialize_without_host=1");
+            close_host("vulkan_early_release_ab");
+        }else if !(should_arm_curtain(smooth_enabled(),result) && start_transition_curtain()){
             close_host(if result==0{"after_MCI_close"}else{"MCI_close_failed"});
         }
     }
