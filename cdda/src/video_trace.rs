@@ -177,6 +177,9 @@ pub fn timing(event:&str){
 #[derive(Default,Copy,Clone)]
 struct WinRect {left:i32,top:i32,right:i32,bottom:i32}
 #[repr(C)]
+#[derive(Default)]
+struct WinPoint {x:i32,y:i32}
+#[repr(C)]
 struct MonitorInfo {
     cb_size:u32,
     monitor:WinRect,
@@ -218,6 +221,9 @@ extern "system" {
 #[link(name="gdi32")]
 extern "system" {
     fn GetStockObject(index:i32)->*mut c_void;
+    fn GetClipBox(dc:*mut c_void,rect:*mut WinRect)->i32;
+    fn GetViewportOrgEx(dc:*mut c_void,point:*mut WinPoint)->i32;
+    fn GetWindowOrgEx(dc:*mut c_void,point:*mut WinPoint)->i32;
 }
 #[link(name="user32")]
 extern "system" {
@@ -255,6 +261,8 @@ extern "system" {
         menu:*mut c_void,instance:*mut c_void,param:*mut c_void)->*mut c_void;
     fn DestroyWindow(hwnd:*mut c_void)->i32;
     fn GetClientRect(hwnd:*mut c_void,rect:*mut WinRect)->i32;
+    fn GetDC(hwnd:*mut c_void)->*mut c_void;
+    fn ReleaseDC(hwnd:*mut c_void,dc:*mut c_void)->i32;
     fn SetTimer(hwnd:*mut c_void,id:usize,timeout_ms:u32,callback:*const c_void)->usize;
     fn KillTimer(hwnd:*mut c_void,id:usize)->i32;
 }
@@ -947,6 +955,39 @@ fn gameframe_keep_movie_parent(phase:&str){
                 h.game,h.host,h.surface
             ));
         }
+    }
+}
+
+/// Read-only DC diagnostics for the GDI/DrawDib movie. In Wine, decoded
+/// Cinepak frames are finally StretchBlt'd onto this exact paint HWND.
+/// This distinguishes a clipped HDC or logical-origin offset from a bad
+/// MCI source rectangle without changing how the AVI is drawn.
+pub fn log_gdi_movie_dc(phase:&str){
+    if !gameframe_video_in_window(){return;}
+    let host=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=host else {return;};
+    if h.owner_thread!=unsafe{GetCurrentThreadId()}{return;}
+    unsafe{
+        let surface=h.surface as *mut c_void;
+        if IsWindow(surface)==0{return;}
+        let dc=GetDC(surface);
+        if dc.is_null(){
+            video_log(&format!("GAMEFRAME_GDI_DC phase={phase} GetDC=failed"));
+            return;
+        }
+        let mut clip=WinRect::default();
+        let mut viewport=WinPoint::default();
+        let mut window=WinPoint::default();
+        let region=GetClipBox(dc,&mut clip);
+        let vp=GetViewportOrgEx(dc,&mut viewport);
+        let wo=GetWindowOrgEx(dc,&mut window);
+        let rel=ReleaseDC(surface,dc);
+        video_log(&format!(
+            "GAMEFRAME_GDI_DC phase={phase} clip_region={region} clip=({},{},{},{}) viewport_origin=({},{}),vp_ok={vp} window_origin=({},{}),wo_ok={wo} ReleaseDC={rel} destination={}x{}@{},{}",
+            clip.left,clip.top,clip.right,clip.bottom,
+            viewport.x,viewport.y,window.x,window.y,
+            h.video_width,h.video_height,h.video_dest_x,h.video_dest_y
+        ));
     }
 }
 
