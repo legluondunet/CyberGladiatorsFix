@@ -65,10 +65,13 @@ fn encode(file:File,sector_start:u64,sector_end:u64,destination:&Path)->Result<(
 pub fn extract(cue_path:&Path,staged:&Path)->Result<AudioReport,String>{
     let tracks=cue::tracks(cue_path)?;
     let mut report=AudioReport{extracted:0,missing:Vec::new(),manifest_rows:String::new()};
+    let dir=staged.join("music");
+    if dir.exists()||dir.is_symlink(){return Err("Music directory already exists; refusing overwrite".into());}
+    std::fs::create_dir(&dir).map_err(|e|format!("Cannot create music directory: {e}"))?;
     for (position,t) in tracks.iter().enumerate(){
         if t.mode!="AUDIO"{continue;}
         let filename=format!("Track{:02}.flac",t.number);
-        let output=staged.join(&filename);
+        let output=dir.join(&filename);
         if output.exists()||output.is_symlink(){
             return Err(format!("Audio destination already exists: {}",output.display()));
         }
@@ -84,7 +87,7 @@ pub fn extract(cue_path:&Path,staged:&Path)->Result<AudioReport,String>{
         }
         let end=cue::track_end(&tracks,position,len/SECTOR_BYTES)?;
         let (size,hash)=encode(f,t.index01,end,&output)?;
-        report.manifest_rows.push_str(&format!("{filename}\t{size}\t{hash}\n"));
+        report.manifest_rows.push_str(&format!("music/{filename}\t{size}\t{hash}\n"));
         report.extracted+=1;
         println!("Extracted {filename} (FLAC lossless, {size} bytes)");
     }
@@ -106,7 +109,7 @@ mod tests{
         )).unwrap();
         let r=extract(&base.join("test.cue"),&base).unwrap();
         assert_eq!(r.extracted,0);assert_eq!(r.missing,vec![2]);
-        assert!(!base.join("Track02.flac").exists());
+        assert!(!base.join("music/Track02.flac").exists());
         fs::remove_dir_all(&base).unwrap();
     }
     #[test]
@@ -128,7 +131,7 @@ mod tests{
         )).unwrap();
         let r=extract(&base.join("test.cue"),&base).unwrap();
         assert_eq!(r.extracted,1);
-        let output=File::open(base.join("Track02.flac")).unwrap();
+        let output=File::open(base.join("music/Track02.flac")).unwrap();
         let mut reader=claxon::FlacReader::new(output).unwrap();
         assert_eq!(reader.streaminfo().sample_rate,44_100);
         assert_eq!(reader.streaminfo().channels,2);
