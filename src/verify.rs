@@ -187,6 +187,13 @@ fn guarded_video_backend_allowed(backend:Option<&str>,smooth_test:bool)->bool{
 fn selected_refresh(backend:Option<&str>,desktop_refresh:bool)->&'static str{
     if desktop_refresh || backend==Some("2") {"1"}else{"2"}
 }
+/// Vulkan-only, native AVI crash forensics. Reuse the existing deferred
+/// first-chance observer and read-only window sampler but explicitly disable
+/// the invasive Glide IAT hook. This does not enable noisy Wine channels.
+/// The previously validated D3D9 launch remains unchanged.
+fn passive_vulkan_fault_probe(backend:Option<&str>,smooth_test:bool,trace:bool)->bool{
+    !trace && smooth_test && backend==Some("2")
+}
 fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool,smooth_test:bool)->Result<Child,String>{
     // The normal game path uses one x86 WinMM bridge with a guarded native
     // AVI handoff. Trace-only backend tests follow a separate validated path.
@@ -287,6 +294,11 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     if avi_4x3 {
         cmd.env("CYBER_AVI_FULLSCREEN","1");
         crate::show(&format!("AVI_4X3 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 only_skip_keys=ESC_ENTER_SPACE mouse_buttons_suppressed=1 renderer={}",if backend_override==Some("2"){"nGlide_Vulkan"}else{"nGlide_D3D9"}),root);
+    }
+    if passive_vulkan_fault_probe(backend_override,smooth_test,trace){
+        cmd.env("CYBER_GLIDE_TRACE","1");
+        cmd.env("CYBER_GLIDE_HOOK_DISABLED","1");
+        crate::show("VULKAN_FAULT_PROBE enabled=1 exception_observer=deferred first_chance=1 window_sampler=read_only glide_iat_hook=disabled wine_debug_channels=unchanged",root);
     }
     if smooth_test {
         cmd.env("CYBER_AVI_SMOOTH_TEST","1");
@@ -468,6 +480,14 @@ mod experimental_launch_tests {
         assert!(!guarded_video_backend_allowed(Some("2"),false));
         assert!(!guarded_video_backend_allowed(Some("0"),true));
         assert!(!guarded_video_backend_allowed(None,true));
+    }
+    #[test]
+    fn passive_vulkan_probe_only_runs_in_opt_in_smooth_vulkan(){
+        assert!(passive_vulkan_fault_probe(Some("2"),true,false));
+        assert!(!passive_vulkan_fault_probe(Some("1"),true,false));
+        assert!(!passive_vulkan_fault_probe(Some("2"),false,false));
+        assert!(!passive_vulkan_fault_probe(Some("2"),true,true));
+        assert!(!passive_vulkan_fault_probe(None,true,false));
     }
     #[test]
     fn vulkan_refresh_follows_desktop_without_changing_d3d9(){
