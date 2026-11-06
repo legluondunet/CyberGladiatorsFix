@@ -147,7 +147,10 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// Standalone GameFrame evaluation. Do not select nGlide's renderer or
 /// modify its tested launch paths. The GameFrame DLL is placed explicitly
 /// by the user (or experimental test package) and never silently installed.
-pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_probe:bool)->Result<Child,String>{
+pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_probe:bool,first_present_handoff:bool)->Result<Child,String>{
+    if first_present_handoff && (video_in_game_window||native_size_probe) {
+        return Err("First-GL-present host handoff uses a separate GDI AVI window, not the in-window GDI diagnostic".into());
+    }
     if native_size_probe && !video_in_game_window{return Err("Native AVI size diagnostic requires GameFrame's --avi-in-game-window".into());}
     let game=root.join(DIR);
     settings::ensure(&game)?;
@@ -181,6 +184,7 @@ pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_pr
         "CYBER_VULKAN_PASSIVE_FAULT_PROBE","CYBER_VULKAN_EARLY_HOST_RELEASE",
         "CYBER_VULKAN_AUTO_FULLSCREEN","CYBER_VIDEO_CLOSE_DELAY_MS",
         "CYBER_GAMEFRAME_AVI_IN_WINDOW","CYBER_GAMEFRAME_AVI_UNSCALED",
+        "CYBER_GAMEFRAME_AVI_FIRST_PRESENT",
         "NGLIDE_BACKEND","NGLIDE_REFRESH","NGLIDE_RESOLUTION","NGLIDE_ASPECT",
         "NGLIDE_VSYNC","NGLIDE_GAMMA","NGLIDE_SPLASH",
     ] {cmd.env_remove(key);}
@@ -189,6 +193,10 @@ pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_pr
     cmd.env("GLIDE_LOG",&log);
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
+    if first_present_handoff {
+        cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
+        crate::show("GAMEFRAME_AVI_FIRST_PRESENT experimental=1 decoder=native_MCI_GDI independent_fullscreen_video_host=1 retained_black_until_real_gl_swap=1 native_video_4x3=1 no_640x480_gdi_clip=1 bounded_timeout_ms=3500 one_log=1",root);
+    }
     if video_in_game_window {
         cmd.env("CYBER_GAMEFRAME_AVI_IN_WINDOW","1");
         if native_size_probe{
@@ -209,9 +217,9 @@ pub fn launch_gameframe_test(root:&Path,video_in_game_window:bool,native_size_pr
     cmd.env("CYBER_AVI_FULLSCREEN","1");
     cmd.env("CYBER_AVI_SMOOTH_TEST","1");
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
-    crate::show(&format!("GAMEFRAME_EXPERIMENT renderer=GameFrame-OpenGL verified_game_window=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=original_MCI fullscreen_native=1 video_in_game_window={} avi_unscaled_probe={} post_video_host_release=early guarded_WndProc_repair=disabled log=unified",u8::from(video_in_game_window),u8::from(native_size_probe)),root);
+    crate::show(&format!("GAMEFRAME_EXPERIMENT renderer=GameFrame-OpenGL verified_game_window=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=original_MCI fullscreen_native=1 video_in_game_window={} avi_unscaled_probe={} first_present_handoff={} guarded_WndProc_repair=disabled log=unified",u8::from(video_in_game_window),u8::from(native_size_probe),u8::from(first_present_handoff)),root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (exact experiment build)"));
-    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_IN_GAME_WINDOW={} AVI_UNSCALED_PROBE={}",u8::from(enable_cdda),u8::from(video_in_game_window),u8::from(native_size_probe)));
+    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_IN_GAME_WINDOW={} AVI_UNSCALED_PROBE={} AVI_FIRST_PRESENT_HANDOFF={}",u8::from(enable_cdda),u8::from(video_in_game_window),u8::from(native_size_probe),u8::from(first_present_handoff)));
     cmd.spawn().map_err(|e|format!("Unable to start GameFrame Cyber Gladiators experiment: {e}"))
 }
 
