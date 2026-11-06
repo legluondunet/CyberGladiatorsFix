@@ -394,7 +394,7 @@ pub fn after_video_close(){
     // Dense, read-only sampling for the first 500 ms, where the last
     // reproducible trace shows DirectDraw objects disappearing and the game
     // window thread exiting. No hooks are installed on COM or Glide here.
-    thread::spawn(||{
+    thread::spawn(move||{
         let start=Instant::now();
         let mut delays=vec![10u64,25,50,75,100,125,150,200,250,300,350,400,450,500,
             750,1000,1500,4000,8000];
