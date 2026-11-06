@@ -12,7 +12,7 @@ CyberGladiatorsFix can:
 
 - Install a verified **US retail CUE/BIN** data track, preserving the original CD resources and creating a backed-up, validated `CYBER.EXE` with compatibility/no-CD patches.
 - Extract CD-audio tracks as lossless `TrackNN.flac` files and emulate legacy CD-audio MCI via a 32-bit WinMM forwarding DLL (optional).
-- Start the original game's **640×480 Cinepak introduction in the game process** when [Video] SkipIntro=0 and [Audio] EnableCDDA=1. A guarded Win32 window-procedure repair after AVI close addresses the WineD3D/DXVK subclass cycle that previously caused a stack overflow under Wine. The user confirmed reaching and playing the game in the repaired diagnostic build. The ordinary launcher now uses the same native-video path for this configuration, pending regression testing; when CDDA is disabled, the previously tested separate fullscreen player remains as a temporary compatibility fallback (4:3 aspect ratio, keyboard skip).
+- Start the original game's **640×480 Cinepak introduction in the game process** when [Video] SkipIntro=0 and [Audio] EnableCDDA=1. Under Wine, a dedicated black fullscreen host centers the video in **4:3** without distortion. Only **Escape, Enter and Space** can skip the video; mouse button clicks and other keys do not. After the AVI closes, a guarded Win32 window-procedure repair prevents the previously observed WineD3D/DXVK stack overflow. The AVI presentation, native playback and mouse/keyboard policy have been validated in Wine 11.0; the standard launch path still needs a final regression check. When CDDA is disabled, the separate fullscreen player remains a temporary compatibility fallback.
 - Start the game with nGlide Direct3D9, which uses DXVK when correctly installed in Wine/Proton. On native Windows it uses the platform's Direct3D9 provider.
 - Store **all launcher, video, CDDA, Wine, and collected DXVK diagnostics in one `CyberGladiatorsFix.log` beside the launcher**, with a fresh header describing the relevant effective user/hardware/game configuration.
 
@@ -39,7 +39,7 @@ CyberGladiatorsFix.exe --version
 CyberGladiatorsFix.exe --help
 ```
 
-**Video is automatic:** When `SkipIntro=0` and `EnableCDDA=1`, the game plays its original `splash4.avi` natively and the x86 bridge attempts a one-shot, strictly validated WineD3D window-procedure repair after AVI close (no extra player). When `EnableCDDA=0`, a temporary compatibility path plays the intro in an isolated helper and skips it inside the game. If `SkipIntro=1`, the intro is omitted. These paths preserve the user's INI and recognize only supported executable variants. `--dxvk-rootcause` remains an unmodified diagnostic control.
+**Video is automatic:** When `SkipIntro=0` and `EnableCDDA=1`, the game plays its original `splash4.avi` in a fullscreen 4:3 host, with black sidebars and skip limited to Escape/Enter/Space. The x86 bridge then attempts a one-shot, strictly validated WineD3D window-procedure repair after AVI close (no extra player). When `EnableCDDA=0`, a temporary compatibility path plays the intro in an isolated helper and skips it inside the game. If `SkipIntro=1`, the intro is omitted. These paths preserve the user's INI and recognize only supported executable variants. `--dxvk-rootcause` remains an unmodified diagnostic control.
 
 ### Wine / Proton
 
@@ -67,7 +67,7 @@ EnableCDDA=1
 AllowModifiedIQ=0
 ```
 
-- `SkipIntro=0`: play and optionally skip the intro via keyboard; `1`: omit the movie.
+- `SkipIntro=0`: play the original fullscreen 4:3 intro, optionally skipping with Escape, Enter or Space only; `1`: omit the movie.
 - `EnableCDDA=1`: use the embedded CDDA bridge to play extracted FLAC music, and enable the native in-game AVI transition repair under Wine; `0`: use original WinMM behavior and temporarily keep the isolated-AVI fallback. The installed default currently keeps **0**, pending release-wide validation.
 - `AllowModifiedIQ=0`: require the CD's exact original resource hashes; `1`: explicitly allow **same-size** changes to `iq/iq00.dat…iq99.dat` during **launch only**. The `--verify` command **always remains strict**. The game itself may update some IQ records; never modify or overwrite these game files as part of the patcher refactor.
 
@@ -79,25 +79,21 @@ The original installer never silently overwrites an unrecognized 32-bit DLL, a m
 
 **Do not remove or modify any `IQ/` original game data files** to resolve integrity errors. Preserve their current contents and inspect the mismatch in the log.
 
-### Native AVI fullscreen 4:3 experiment (opt-in)
+### Fullscreen native AVI in standard launches
 
-The in-process AVI has confirmed audio and safe WineD3D/DXVK transition, but under Wine 11.0 the video image appeared as an extremely narrow vertical stripe. The game still issues `put movie destination at 0 0 640 480` after assigning its own window as the video destination. The new opt-in experiment tests a **different video window**, without using a second process or changing the original game, music or DXVK fix:
+The native game AVI and soundtrack are retained. When `SkipIntro=0` and `EnableCDDA=1`, `--launch` uses a temporary, in-process black fullscreen Win32 host and a dedicated centered 4:3 video surface. On a 1920×1080 monitor, the video occupies 1440×1080 pixels with black pillarboxes of 240 pixels at both sides. The host uses an explicit black brush and paints black on `WM_PAINT` and `WM_ERASEBKGND` to avoid white background under Wine. For the recognized `splash4.avi`, only the MCI window and destination commands are redirected, and the temporary host is destroyed after `close avivideo` **before** the WineD3D/DXVK WndProc repair.
 
-```sh
-wine CyberGladiatorsFix.exe --launch --avi-4x3-test
-```
+The video input filters apply **only during playback** and are installed on the game's original UI thread, never globally. Escape, Enter and Space are the only permitted keys for skipping; letter keys and mouse buttons/wheel messages on that thread are suppressed. At video close both hooks are uninstalled, with counters recorded to the one `CyberGladiatorsFix.log`. The user confirmed visually correct black 4:3 pillarboxes, natural full-length video after mouse clicks, all three skip keys working, and other keys doing nothing under Wine 11.0. The old developer-only `--launch --avi-4x3-test` option has been retired now that this behavior is the standard launch. Diagnostic `--trace` deliberately retains its original unmodified MCI geometry for root-cause comparisons until tracing is unified with the normal path.
 
-This option requires `[Video] SkipIntro=0` and `[Audio] EnableCDDA=1`. For the exact `splash4.avi` MCI sequence, the in-game x86 bridge creates a temporary black fullscreen, non-activating, owned window on the same monitor as the verified game HWND. It creates a dedicated video surface in the center (1920×1080 → 1440×1080, 240 black pixels on either side), rewrites only the MCI parent, destination-window handle, and destination rectangle, and destroys the host after `close avivideo` **before** the existing WineD3D/DXVK WndProc repair. Original MCI playback/status/close and game input remain otherwise untouched. The older normal `--launch` path is unchanged until visual field validation.
-
-The single `CyberGladiatorsFix.log` contains `AVI_4X3 HOST_CREATED`, `MCI_REWRITE`, `HOST_CLOSED` and the existing `WNDPROC_REPAIR APPLIED` markers. If creation is unsafe or unsupported the experiment leaves the original MCI target unchanged; if the rewritten AVI open fails, the program closes the host and retries the game's original command. This is a **test**, not yet a confirmed solution. Check actual 4:3 video frames, audio, keyboard skip, transition, gameplay and exit before making it the default. The `IQ/` assets are not modified.
+For an unsupported window, the host refuses to activate; if the modified video-open fails, the original MCI open is retried. The executable and original `IQ/` assets are not changed by this presentation feature. Native Windows field tests, final ordinary-launch regressions and desktop-panel behavior are still outstanding.
 
 ### Native AVI integration status (development build)
 
-On **2026-11-05**, a Wine 11.0 / GE-Proton DXVK test with `--dxvk-wndproc-repair-test` confirmed normal video completion, native D3D9 initialization, FLAC playback, gameplay and a clean process exit. The fix identified `wined3d.dll+0xf4a20` as the active WndProc and restored the original game's `cyber.exe+0x5f82` before Direct3D9 installed its own WndProc. The ordinary `--launch` flow now prefers this native-video route **when CDDA is enabled**. That new default route still requires an ordinary-launch regression check, including video skip, gameplay, Alt+Tab, input, and exit; native Windows behavior is not field-validated. The isolated x86 AVI helper remains bundled for the disabled-CDDA fallback until that mode has a safe bridge-independent solution.
+On **2026-11-05**, a Wine 11.0 / GE-Proton DXVK test with `--dxvk-wndproc-repair-test` confirmed normal video completion, native D3D9 initialization, FLAC playback, gameplay and a clean process exit. On 2026-11-06, the user further confirmed native fullscreen 4:3 image, black sidebars, ignored mouse clicks and other keys, and working Escape/Enter/Space skipping. The fix identified `wined3d.dll+0xf4a20` as the active WndProc and restored the original game's `cyber.exe+0x5f82` before Direct3D9 installed its own WndProc. The ordinary `--launch` flow now prefers this native-video route **when CDDA is enabled**. That new default route still requires an ordinary-launch regression check, including video skip, gameplay, Alt+Tab, input, and exit; native Windows behavior is not field-validated. The isolated x86 AVI helper remains bundled for the disabled-CDDA fallback until that mode has a safe bridge-independent solution.
 
 ### DXVK native-intro root-cause investigation (developer only)
 
-The normal `--launch` path retains the isolated AVI playback workaround. To investigate **why the original 1996 in-process AVI → nGlide Direct3D9/DXVK transition crashes**, use the explicit diagnostic command, not the external video workaround:
+The normal `--launch` path uses the in-process fullscreen AVI with the guarded WndProc repair when CDDA is enabled. To investigate **why the original 1996 in-process AVI → nGlide Direct3D9/DXVK transition crashes**, use the explicit diagnostic command, not the external video workaround:
 
 ```sh
 WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --dxvk-rootcause
