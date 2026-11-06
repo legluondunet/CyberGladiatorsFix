@@ -144,6 +144,56 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
     launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3,smooth_test,false,false)
         .map(|child|(child,None))
 }
+/// Standalone GameFrame evaluation. Do not select nGlide's renderer or
+/// modify its tested launch paths. The GameFrame DLL is placed explicitly
+/// by the user (or experimental test package) and never silently installed.
+pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
+    let game=root.join(DIR);
+    settings::ensure(&game)?;
+    if settings::read(&game)? {
+        return Err("--gameframe-test needs [Video] SkipIntro=0; the INI has not been modified".into());
+    }
+    let enable_cdda=settings::read_cdda(&game)?;
+    let exe=game.join("cyber.exe");
+    patch::verify_exe(&exe)?;
+    cdda::try_install(root,&game)?;
+    patch::set_cdda(&exe,true)?;
+    patch::set_skip_intro(&exe,false)?;
+    verify_launch_assets(root)?;
+    let glide=game.join("glide.dll");
+    let glide_hash=patch::file_hash(&glide)?;
+    // The source-pinned experimental DLL has a distinct known build hash.
+    // Fail closed: never apply the GameFrame-specific address/Win32 logic
+    // to an arbitrary proprietary nGlide or a different wrapper build.
+    const EXPERIMENTAL_GLIDE_SHA256:&str="370be13b3910ff437a8f668cd477023fdb4c3d8f62d0a71b7dd40767555548dc";
+    if !glide_hash.eq_ignore_ascii_case(EXPERIMENTAL_GLIDE_SHA256) {
+        return Err(format!("GameFrame test requires the matching experimental glide.dll (expected SHA-256={EXPERIMENTAL_GLIDE_SHA256}; found {glide_hash}). Original nGlide and game assets untouched"));
+    }
+    let mut cmd=Command::new(&exe);
+    cmd.current_dir(&game);
+    cmd.env("DXVK_LOG_PATH","none");
+    for key in [
+        "CYBER_GLIDE_TRACE","CYBER_GLIDE_HOOK_DISABLED","CYBER_GLIDE_PASSTHRU_NOOP",
+        "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
+        "CYBER_VULKAN_PASSIVE_FAULT_PROBE","CYBER_VULKAN_EARLY_HOST_RELEASE",
+        "CYBER_VULKAN_AUTO_FULLSCREEN","CYBER_VIDEO_CLOSE_DELAY_MS",
+        "NGLIDE_BACKEND","NGLIDE_REFRESH","NGLIDE_RESOLUTION","NGLIDE_ASPECT",
+        "NGLIDE_VSYNC","NGLIDE_GAMMA","NGLIDE_SPLASH",
+    ] {cmd.env_remove(key);}
+    let log=diagnostics::location(root);
+    cmd.env("CYBER_LOG_FILE",&log);
+    cmd.env("GLIDE_LOG",&log);
+    cmd.env("GLIDE_FPS_LIMIT","60");
+    cmd.env("CYBER_GAMEFRAME_TEST","1");
+    cmd.env("CYBER_AVI_FULLSCREEN","1");
+    cmd.env("CYBER_AVI_SMOOTH_TEST","1");
+    cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
+    crate::show("GAMEFRAME_EXPERIMENT renderer=GameFrame-OpenGL verified_game_window=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=original_MCI fullscreen_native=1 post_video_host_release=early guarded_WndProc_repair=disabled log=unified",root);
+    diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (exact experiment build)"));
+    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro=0 EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved",u8::from(enable_cdda)));
+    cmd.spawn().map_err(|e|format!("Unable to start GameFrame Cyber Gladiators experiment: {e}"))
+}
+
 /// Experimental nGlide Vulkan backend using the same smooth 4:3 native AVI
 /// and bounded curtain as the validated D3D9 launch. This is opt-in only;
 /// ordinary --launch and --launch --smooth-video-test remain D3D9.
