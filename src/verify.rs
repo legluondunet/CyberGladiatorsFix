@@ -199,6 +199,10 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
     cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
+    // Isolated build-69 Wine mode guard experiment: block original CYBER.EXE
+    // USER32 primary-resolution requests before they shrink Wine's virtual
+    // desktop to 640x480. This flag is not present in the stable branch.
+    cmd.env("CYBER_WINE_DESKTOP_MODE_GUARD","1");
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
