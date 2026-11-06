@@ -187,6 +187,15 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     cmd.env("GLIDE_LOG",&log);
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
+    if let Some((w,h))=diagnostics::primary_desktop_size(){
+        // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
+        // the game can temporarily switch to a 640x480 display mode.
+        cmd.env("CYBER_GAMEFRAME_DESKTOP_SIZE",format!("{w}x{h}"));
+        crate::show(&format!("GAMEFRAME_DESKTOP_CAPTURE monitor_size={w}x{h} source=prelaunch_primary_display original_monitor_mode=preserved"),root);
+    }else{
+        cmd.env_remove("CYBER_GAMEFRAME_DESKTOP_SIZE");
+        crate::show("GAMEFRAME_DESKTOP_CAPTURE unavailable fallback=GetMonitorInfoA_during_game",root);
+    }
     cmd.env("CYBER_AVI_FULLSCREEN","1");
     cmd.env("CYBER_AVI_SMOOTH_TEST","1");
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
