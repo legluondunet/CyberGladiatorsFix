@@ -2,9 +2,10 @@
 //! 32-bit, game-specific WinMM import proxy. Only MCI commands addressed to a
 //! virtual CD-audio device are intercepted, controlled by the launcher's
 //! CYBER_CDDA_MUSIC setting. When disabled, CDDA commands also forward to
-//! native WinMM: the same DLL still handles native fullscreen MCIAVI and
-//! the validated WineD3D/DXVK WndProc transition. This avoids a separate AVI
-//! player and preserves the caller's music preference independently of video.
+//! native WinMM. The same DLL still handles native fullscreen MCIAVI,
+//! Wine-only DirectDraw geometry correction for GameFrame, and legacy
+//! opt-in WineD3D/DXVK diagnostics. This avoids a separate AVI player and
+//! preserves the caller's music preference independently of video.
 //! This DLL is loaded by an exact SHA-256-gated import-name patch to CYBER.EXE;
 //! it is never installed as a system-wide winmm.dll.
 #![cfg(windows)]
