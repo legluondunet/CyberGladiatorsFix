@@ -57,16 +57,14 @@ fn target_monitor(hwnd: HWND) -> Option<RECT> {
     Some(rect)
 }
 
-/// The in-game-window AVI has closed, but CYBER.EXE changes its HWND to
-/// 648x513 again BEFORE the Glide game renders its first menu frame.
+/// The native AVI host has closed, and CYBER.EXE can reset its HWND to
+/// 648x513 again BEFORE Glide presents the first menu frame.
 /// Prepare the correct borderless parent BEFORE the first OpenGL Swap,
 /// rather than 30+ swaps afterwards. This may adjust at most ONCE, is
 /// limited to the first 120 swaps, and keeps the previous 30-frame
 /// debounced recovery as a fallback. No GL context recreation.
 pub fn cyber_prepare_before_first_present() {
-    let in_window = std::env::var("CYBER_GAMEFRAME_AVI_IN_WINDOW").as_deref() == Ok("1");
-    let first_present = std::env::var("CYBER_GAMEFRAME_AVI_FIRST_PRESENT").as_deref() == Ok("1");
-    if !(in_window || first_present)
+    if std::env::var("CYBER_GAMEFRAME_AVI_FIRST_PRESENT").as_deref() != Ok("1")
         || std::env::var("CYBER_GAMEFRAME_TEST").as_deref() != Ok("1") {
         return;
     }
