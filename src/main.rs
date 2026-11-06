@@ -33,7 +33,6 @@ Usage:
   CyberGladiatorsFix.exe --check-bundle  Validate embedded 32-bit components
   CyberGladiatorsFix.exe --dxvk-rootcause  Reproduce native AVI/DXVK crash (diagnostic)
   CyberGladiatorsFix.exe --dxvk-wndproc-repair-test  Test restoring original game WndProc after AVI (experimental)
-  CyberGladiatorsFix.exe --launch --avi-4x3-test  Test native Cinepak fullscreen 4:3 video host
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
@@ -43,8 +42,10 @@ third-party nGlide are required to play. The game and nGlide are NOT bundled.
 
 A fresh CyberGladiatorsFix.log is written beside this EXE per invocation.
 When [Video] SkipIntro=0 and [Audio] EnableCDDA=1, the original game plays
-its native Cinepak AVI. The x86 bridge applies a guarded WineD3D/DXVK window
-procedure repair after AVI close. When CDDA is disabled, the isolated AVI player
+its native Cinepak AVI fullscreen with black pillarboxes in 4:3; only Escape,
+Enter and Space skip it, never mouse clicks or other keys. The x86 bridge
+applies a guarded WineD3D/DXVK window procedure repair after AVI close.
+When CDDA is disabled, the isolated AVI player
 is a temporary compatibility fallback with borderless fullscreen playback and
 keyboard skip. If SkipIntro=1, no video is played.
 Music remains optional: [Audio] EnableCDDA=1 enables FLAC playback.
@@ -174,17 +175,17 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
 /// while retaining the isolated-AVI fallback when the optional CDDA bridge
 /// is disabled. The x86 bridge is the only place where the guarded fix runs;
 /// the original video and game resource bytes remain untouched.
-fn user_launch(root:&Path,trace:bool,logo:bool,avi_4x3:bool)->Result<(),String>{
+fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
-    if avi_4x3 && (skip || !enable_cdda) {
-        return Err("--avi-4x3-test requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1; no game files changed".into());
-    }
     if !skip{
         if enable_cdda {
-            let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,avi_4x3)?;
+            // Default player now uses the 4:3 host and input filters that
+            // were confirmed in Wine under the former opt-in trial. Tracing
+            // deliberately keeps its unmodified MCI baseline for forensics.
+            let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,!trace)?;
             show(&format!(
                 "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-D3D9 guarded_wndproc_repair=1 trace={trace} external_helper=0",
                 child.id()
@@ -274,12 +275,10 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let r=graphics::maximize_saved(&root.join(install::DIR))?;
             show(&r,root);return Ok(());
         },
-        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
-        [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--avi-4x3-test")=>
-            return user_launch(root,false,false,true),
-        [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false,false),
+        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false),
+        [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>
-            return user_launch(root,true,false,false),
+            return user_launch(root,true,false),
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
             && three.to_str()==Some("--no-glide-hook")=>{
@@ -333,7 +332,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             return wait_diagnostic(child,root);
         },
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>
-            return user_launch(root,false,true,false),
+            return user_launch(root,false,true),
         _=>{},
     }
     let upgrade_cdda=matches!(args,[one] if one.to_str()==Some("--upgrade-cdda"));
@@ -407,12 +406,12 @@ mod diagnostics_tests {
     fn help_lists_only_public_single_file_controls(){
         for expected in ["--launch","--trace","--verify","--max-graphics",
             "--upgrade-cdda","--check-bundle","--dxvk-rootcause",
-            "--dxvk-wndproc-repair-test","--avi-4x3-test",
-            "--3dfx-logo","--version","--help",
+            "--dxvk-wndproc-repair-test","--3dfx-logo","--version","--help",
             "CyberGladiatorsFix.log","isolated AVI player"]{
             assert!(HELP.contains(expected),"{expected}");
         }
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
+        assert!(!HELP.contains("--avi-4x3-test"));
         assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(!HELP.contains("--video-delay="));
     }
