@@ -63,7 +63,7 @@ jobs:
             }
           } finally { Pop-Location }
 
-      - name: Verify bundled x86 components and temporary intro lifecycle
+      - name: Verify only the embedded x86 WinMM bridge is bundled
         shell: pwsh
         run: |
           & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --check-bundle
@@ -84,7 +84,7 @@ jobs:
           if ($files.Count -ne 1 -or $files[0].Name -ne "CyberGladiatorsFix.exe") {
             throw "Distribution must contain exactly one executable"
           }
-          Write-Host "Self-contained x64 launcher: $($files[0].Length) bytes, with embedded verified x86 DLL and AVI helper"
+          Write-Host "Self-contained x64 launcher: $($files[0].Length) bytes, with one embedded verified x86 WinMM video/CDDA DLL"
 
       - name: Upload self-contained Windows x64 EXE
         uses: actions/upload-artifact@v4
