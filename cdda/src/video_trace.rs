@@ -268,6 +268,8 @@ struct NativeHost {
     owner_thread:u32,
     video_width:i32,
     video_height:i32,
+    video_dest_x:i32,
+    video_dest_y:i32,
     keyboard_hook:usize,
     mouse_hook:usize,
     holding_for_transition:bool,
@@ -543,6 +545,15 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
     let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
     let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
+    // The external AVI child used to start at x=240, while Wine's GDI
+    // destination already had a 4:3 scaling transform. Wine could then
+    // clip the first 240 source pixels (540 final pixels at 2.25x).
+    // For the in-game-window experiment, keep the MCI paint HWND at (0,0)
+    // across the entire GL game client. Center ONLY with the MCI
+    // destination rectangle, so the paint HDC and its origin agree.
+    let (surface_x,surface_y,surface_w,surface_h)=if embedded{
+        (0,0,screen_w,screen_h)
+    }else{(x,y,w,h)};
     // Keep the custom class separate from the game's known subclass chain.
     // The explicitly black-painted background covers both pillarboxes.
     if !register_black_host_class(base as *mut c_void){return None;}
@@ -568,7 +579,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // the MCI parent solid RGB(0,0,0), independent of Wine's system theme.
     // Keep it hidden from the very first CreateWindowExA invocation.
     let surface=CreateWindowExA(0,video_surface_class(smooth).as_ptr(),b"\0".as_ptr(),
-        video_surface_style(smooth),x,y,w,h,host,
+        video_surface_style(smooth),
+        surface_x,surface_y,surface_w,surface_h,host,
         std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
     if surface.is_null(){
         let err=GetLastError();
@@ -578,7 +590,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     }
     let mut client=WinRect::default();
     if GetClientRect(surface,&mut client)==0
-        || client.right!=w || client.bottom!=h {
+        || client.right!=surface_w || client.bottom!=surface_h {
         DestroyWindow(host);
         video_log("SKIP unexpected_video_surface_client_size");
         return None;
@@ -589,7 +601,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // The ordinary launch never creates this overlay.
     let first_frame_cover=if smooth {
         let overlay=CreateWindowExA(0,HOST_CLASS.as_ptr(),b"\0".as_ptr(),
-            first_frame_cover_style(),x,y,w,h,host,
+            first_frame_cover_style(),
+            surface_x,surface_y,surface_w,surface_h,host,
             std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
         if overlay.is_null(){
             video_log(&format!(
@@ -598,7 +611,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
             ));
         } else {
             video_log(&format!(
-                "FIRST_FRAME_COVER_CREATED hwnd={:#x} pos=({x},{y}) size={w}x{h} paint=explicit_RGB000 stock_brush=BLACK_BRUSH theme_dependent=0",
+                "FIRST_FRAME_COVER_CREATED hwnd={:#x} pos=({surface_x},{surface_y}) size={surface_w}x{surface_h} paint=explicit_RGB000 stock_brush=BLACK_BRUSH theme_dependent=0",
                 overlay as usize
             ));
         }
@@ -630,6 +643,11 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
             host as usize,rect.left,rect.top,rect.right,rect.bottom
         ));
     }
+    if embedded {
+        video_log(&format!(
+            "GAMEFRAME_MCI_SURFACE_ORIGIN origin=({surface_x},{surface_y}) client={surface_w}x{surface_h} destination=({x},{y} {w}x{h}) centered_by=MCI_destination_not_child_position 4x3=1 HDC_origin_expected=0,0"
+        ));
+    }
     // Force a fresh black paint before Wine's MCI window becomes visible.
     let _=InvalidateRect(host,std::ptr::null(),1);
     let _=UpdateWindow(host);
@@ -641,7 +659,10 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         host:host as usize,surface:surface as usize,
         first_frame_cover,first_frame_cover_started:None,
         game,owner_thread:GetCurrentThreadId(),
-        video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
+        video_width:w,video_height:h,
+        video_dest_x:if embedded{x}else{0},
+        video_dest_y:if embedded{y}else{0},
+        keyboard_hook:0,mouse_hook:0,
         holding_for_transition:false,
         handoff_poll_armed:false,handoff_started:None,
         handoff_fullscreen_since:None,handoff_polls:0,
@@ -1387,9 +1408,14 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
         return CString::new(format!("window movie handle {}",h.surface)).ok();
     }
     if destination_command(text){
-        video_log(&format!("MCI_REWRITE destination=0,0 {}x{} (surface-relative)",h.video_width,h.video_height));
+        video_log(&format!(
+            "MCI_REWRITE destination={},{} {}x{} (surface-relative) fullscreen_surface_origin_0={} 4x3=1",
+            h.video_dest_x,h.video_dest_y,h.video_width,h.video_height,
+            u8::from(gameframe_video_in_window())
+        ));
         return CString::new(format!(
-            "put movie destination at 0 0 {} {}",h.video_width,h.video_height
+            "put movie destination at {} {} {} {}",
+            h.video_dest_x,h.video_dest_y,h.video_width,h.video_height
         )).ok();
     }
     None
@@ -1481,6 +1507,17 @@ mod fullscreen_tests {
         assert_eq!(gameframe_prelaunch_desktop(None),None);
         assert_eq!(gameframe_popup_style(0x14ce0000),0x940a0000);
         assert_eq!(gameframe_popup_style(0x940a0000),0x940a0000);
+    }
+    #[test]
+    fn embedded_mci_uses_full_window_surface_and_centered_destination(){
+        assert_eq!(fit_4_3(1920,1080),Some((240,0,1440,1080)));
+        // In the in-window variant the paint HWND begins at (0,0),
+        // covers the full 1920x1080 client, and *only* MCI centers
+        // the 1440x1080 decoded picture at x=240.
+        let (x,y,w,h)=fit_4_3(1920,1080).unwrap();
+        let (surface_x,surface_y,surface_w,surface_h)=(0,0,1920,1080);
+        assert_eq!((surface_x,surface_y,surface_w,surface_h),(0,0,1920,1080));
+        assert_eq!((x,y,w,h),(240,0,1440,1080));
     }
     #[test]
     fn x86_sendinput_layout_and_alt_enter_events(){
