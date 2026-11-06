@@ -37,17 +37,27 @@ fn same_size_iq_asset(name:&str,expected_size:u64,actual_size:u64)->bool{
     expected_size==actual_size && num.len()==2 && num.bytes().all(|b|b.is_ascii_digit())
 }
 pub fn verify(root:&Path)->Result<String,String>{
-    verify_assets(root,false).map(|(summary,_)|summary)
+    verify_assets(root,false,true).map(|(summary,_)|summary)
 }
 /// A launch can opt in to exact-path, same-size IQ differences without
 /// rewriting the manifest or asset. --verify always calls the strict mode.
 pub fn verify_launch_assets(root:&Path)->Result<String,String>{
     let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
-    let (summary,warnings)=verify_assets(root,allow)?;
+    let (summary,warnings)=verify_assets(root,allow,true)?;
     for message in warnings {crate::show(&message,root);}
     Ok(summary)
 }
-fn verify_assets(root:&Path,allow_modified_iq:bool)->Result<(String,Vec<String>),String>{
+/// Before any migration/reinstall, verify the retail backed-up EXE and the
+/// complete CD manifest without requiring a renderer that is staged only
+/// during startup. The integrity exception applies solely to same-size IQ
+/// data and never rewrites the manifest.
+pub fn verify_install_content(root:&Path)->Result<String,String>{
+    let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
+    let (summary,warnings)=verify_assets(root,allow,false)?;
+    for warning in warnings{crate::show(&warning,root);}
+    Ok(summary)
+}
+fn verify_assets(root:&Path,allow_modified_iq:bool,check_modules:bool)->Result<(String,Vec<String>),String>{
     let game=root.join(DIR);
     let meta=fs::symlink_metadata(&game).map_err(|e|format!("Missing game directory: {e}"))?;
     if !meta.is_dir()||meta.file_type().is_symlink(){return Err("Game folder is not a regular directory".into());}
@@ -91,18 +101,19 @@ fn verify_assets(root:&Path,allow_modified_iq:bool)->Result<(String,Vec<String>)
         }
         count+=1;bytes+=size;
     }
-    nglide::verify(&game)?;
-    let audio=if patch::cdda_active(&game.join("cyber.exe"))? {
-        cdda::verify(&game)?;
-        if settings::read_cdda(&game)? {
-            "WinMM bridge verified; FLAC CDDA music selected"
-        }else{
-            "WinMM bridge verified; native system CD audio selected"
-        }
-    }else{"legacy native WinMM import (bridge not yet active)"};
+    let audio=if check_modules{
+        if crate::bundle::GAMEFRAME_GLIDE_DLL.is_empty(){nglide::verify(&game)?;}
+        else{crate::bundle::verify()?;}
+        if patch::cdda_active(&game.join("cyber.exe"))?{
+            cdda::verify(&game)?;
+            if settings::read_cdda(&game)?{
+                "embedded WinMM bridge verified; FLAC CD audio selected"
+            }else{"embedded WinMM bridge verified; system CD audio selected"}
+        }else{"legacy system WinMM import"}
+    }else{"retail assets checked before module installation"};
     let label=if warnings.is_empty(){"all assets match original CD"}
         else{"modified IQ data permitted by explicit INI option; other assets match original CD"};
-    Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}; {label}"),warnings))
+    Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), {audio}; {label}"),warnings))
 }
 pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
     launch_with_video_delay(root,logo,trace,passthru_noop,0)
@@ -144,6 +155,82 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
     launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3,smooth_test,false,false)
         .map(|child|(child,None))
 }
+/// GameFrame's verified native AVI -> first real OpenGL-present launch.
+/// The original nGlide setup is never changed; the selected Apache-2.0
+/// Glide DLL was temporarily installed by gameframe::Session.
+pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
+    let game=root.join(DIR);
+    settings::ensure(&game)?;
+    let skip_intro=settings::read(&game)?;
+    let enable_cdda=settings::read_cdda(&game)?;
+    let exe=game.join("cyber.exe");
+    patch::verify_exe(&exe)?;
+    cdda::try_install(root,&game)?;
+    // Never attribute results to a new DLL if an old bridge stayed installed.
+    let actual_bridge=patch::file_hash(&game.join(cdda::DLL_NAME))?;
+    let embedded_bridge=patch::digest(crate::bundle::CDDA_DLL);
+    if actual_bridge!=embedded_bridge{
+        return Err(format!("GameFrame Wine experiment requires its paired WinMM DLL: installed={actual_bridge} embedded={embedded_bridge}"));
+    }
+    crate::show(&format!("GAMEFRAME_BRIDGE_CHECK installed_bridge_sha256={actual_bridge} equals_embedded=1 experiment_env=1"),root);
+    patch::set_cdda(&exe,true)?;
+    patch::set_skip_intro(&exe,skip_intro)?;
+    verify_launch_assets(root)?;
+    let glide=game.join("glide.dll");
+    let glide_hash=patch::file_hash(&glide)?;
+    // The source-pinned experimental DLL has a distinct known build hash.
+    // Fail closed: never apply the GameFrame-specific address/Win32 logic
+    // to an arbitrary proprietary nGlide or a different wrapper build.
+    let expected=option_env!("CYBER_GAMEFRAME_GLIDE_SHA256").ok_or(
+        "This launcher does not embed the verified GameFrame Glide; use the one-EXE GameFrame package"
+    )?;
+    if !glide_hash.eq_ignore_ascii_case(expected) {
+        return Err(format!("GameFrame requires embedded glide.dll SHA-256={expected}; installed SHA-256={glide_hash}. Original Glide backup is preserved"));
+    }
+    let mut cmd=Command::new(&exe);
+    cmd.current_dir(&game);
+    cmd.env("DXVK_LOG_PATH","none");
+    for key in [
+        "CYBER_GLIDE_TRACE","CYBER_GLIDE_HOOK_DISABLED","CYBER_GLIDE_PASSTHRU_NOOP",
+        "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
+        "CYBER_VULKAN_PASSIVE_FAULT_PROBE","CYBER_VULKAN_EARLY_HOST_RELEASE",
+        "CYBER_VULKAN_AUTO_FULLSCREEN","CYBER_VIDEO_CLOSE_DELAY_MS",
+        "CYBER_GAMEFRAME_AVI_IN_WINDOW","CYBER_GAMEFRAME_AVI_UNSCALED",
+        "CYBER_GAMEFRAME_AVI_FIRST_PRESENT",
+        "NGLIDE_BACKEND","NGLIDE_REFRESH","NGLIDE_RESOLUTION","NGLIDE_ASPECT",
+        "NGLIDE_VSYNC","NGLIDE_GAMMA","NGLIDE_SPLASH",
+    ] {cmd.env_remove(key);}
+    let log=diagnostics::location(root);
+    cmd.env("CYBER_LOG_FILE",&log);
+    cmd.env("GLIDE_LOG",&log);
+    cmd.env("GLIDE_FPS_LIMIT","60");
+    cmd.env("CYBER_GAMEFRAME_TEST","1");
+    cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
+    // Only the SHA-256-verified retail game on Wine and the dedicated
+    // GameFrame build may forward its 640x480x16 DirectDraw request to the
+    // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
+    // The native Windows loader always leaves this interception inactive.
+    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","1");
+    crate::show("WINE_DDRAW_NATIVE_FORWARD requested=1 activation=wine_only original_DirectDraw_called=1 game_only=1",root);
+    crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
+    if let Some((w,h))=diagnostics::primary_desktop_size(){
+        // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
+        // the game can temporarily switch to a 640x480 display mode.
+        cmd.env("CYBER_GAMEFRAME_DESKTOP_SIZE",format!("{w}x{h}"));
+        crate::show(&format!("GAMEFRAME_DESKTOP_CAPTURE monitor_size={w}x{h} source=prelaunch_primary_display original_monitor_mode=preserved"),root);
+    }else{
+        cmd.env_remove("CYBER_GAMEFRAME_DESKTOP_SIZE");
+        crate::show("GAMEFRAME_DESKTOP_CAPTURE unavailable fallback=GetMonitorInfoA_during_game",root);
+    }
+    cmd.env("CYBER_AVI_FULLSCREEN","1");
+    cmd.env("CYBER_AVI_SMOOTH_TEST","1");
+    cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
+    crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=unified",root);
+    diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (exact experiment build)"));
+    diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro={} EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(skip_intro),u8::from(enable_cdda)));
+    cmd.spawn().map_err(|e|format!("Unable to start GameFrame Cyber Gladiators experiment: {e}"))
+}
+
 /// Experimental nGlide Vulkan backend using the same smooth 4:3 native AVI
 /// and bounded curtain as the validated D3D9 launch. This is opt-in only;
 /// ordinary --launch and --launch --smooth-video-test remain D3D9.

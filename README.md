@@ -1,160 +1,92 @@
 # CyberGladiatorsFix
 
-**Modern compatibility patch, installer and launcher for Cyber Gladiators (1996), Windows x86.** Designed to work on recent Windows versions and Wine/Proton. Source under GPL-3.0-or-later.
+**Modern one-click installer, compatibility patch and launcher for Cyber Gladiators (1996).**
 
-> **Development build / test candidate:** The current implementation has been built and unit-tested with Windows CI, but must still be exercised end-to-end on an actual game installation under Wine and native Windows before a public release.
+[![GameFrame Windows CI](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml/badge.svg)](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml)
 
-## What's included?
+CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wine/Proton. It bundles two Windows x86 DLLs: **CyberGladiatorsFix.dll** (our WinMM/Cinepak video and FLAC audio bridge) and **GameFrame glide.dll** (an open-source Apache-2.0 Glide-to-OpenGL wrapper). It does not distribute Cyber Gladiators, its copyrighted assets or proprietary nGlide.
 
-The Windows download contains **one file: `CyberGladiatorsFix.exe` (64-bit)**, embedding **one WinMM video/CDDA bridge DLL (32-bit)**. The x86 bridge displays the original Cinepak AVI natively in 4:3, performs the guarded WineD3D/DXVK window transition repair and *optionally* emulates CD audio with lossless FLAC. `EnableCDDA=0` still uses the same DLL for video but forwards CD-audio calls to the real system WinMM. There is **no second video player executable**, no additional terminal and no temporary player-extraction directory. The original game and nGlide are not bundled.
+**Status (build 85, 2026-11-06):** Fullscreen 4:3 intro and the first-real-OpenGL-frame handoff were validated under **Wine-staging 11.17** (with and without a virtual desktop) and **Proton reporting Wine 11.0** (full uninterrupted AVI playback). Both runs exited cleanly and restored the prior Glide DLL. The intended frame limit is **60 FPS**, not a guarantee of sustained performance. Native Windows 10/11 gameplay and first-time CUE/BIN installation still require end-to-end validation; CI cannot play the game.
 
-CyberGladiatorsFix can:
+## Quick start
 
-- Install a verified **US retail CUE/BIN** data track, preserving the original CD resources and creating a backed-up, validated `CYBER.EXE` with compatibility/no-CD patches.
-- Extract CD-audio tracks as lossless `TrackNN.flac` files; the same 32-bit WinMM forwarding DLL optionally emulates legacy CD audio, or forwards CD commands to real WinMM when disabled.
-- Start the original game's **640×480 Cinepak introduction in the game process** when [Video] SkipIntro=0, regardless of [Audio] EnableCDDA. Under Wine, a dedicated black fullscreen host centers the video in **4:3** without distortion. Only **Escape, Enter and Space** can skip the video; mouse button clicks and other keys do not. After the AVI closes, a guarded Win32 window-procedure repair prevents the previously observed WineD3D/DXVK stack overflow. The AVI presentation, native playback and mouse/keyboard policy have been validated in Wine 11.0; the standard launch path still needs a final regression check. The same native in-game AVI runs when FLAC CDDA music is disabled; the system WinMM handles only CD audio.
-- Start the game with nGlide Direct3D9, which uses DXVK when correctly installed in Wine/Proton. On native Windows it uses the platform's Direct3D9 provider.
-- Store **all launcher, video, CDDA, Wine, and collected DXVK diagnostics in one `CyberGladiatorsFix.log` beside the launcher**, with a fresh header describing the relevant effective user/hardware/game configuration.
+1. Download the latest successful [GameFrame Windows x64 artifact](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml).
+2. Put **CyberGladiatorsFix.exe** next to your own US retail CD **CUE** file and the **BIN** tracks it references in a writable directory.
+3. **Double-click CyberGladiatorsFix.exe**. Under Wine, run **wine CyberGladiatorsFix.exe**.
 
-## Installation
+**There is no need for --launch or an additional player.**
 
-1. Obtain the latest successful **`CyberGladiatorsFix-Windows-x64-OneFile`** artifact from [GitHub Actions](https://github.com/legluondunet/CyberGladiatorsFix/actions). Extract `CyberGladiatorsFix.exe` to a **writable game/patcher directory**. This Windows EXE also runs under a configured Wine/Proton prefix.
-2. Provide the original supported **US retail `.cue` and its `.bin` tracks** in or next to that directory. To install, run `CyberGladiatorsFix.exe` without parameters from the CUE directory, or pass the path of the CUE.
-3. Install the third-party **nGlide** separately from [Zeus Software](https://www.zeus-software.com/downloads/nglide). Its valid 32-bit `glide.dll` must be in the game folder or available from the supported system directory.
-4. Use the launcher's INI in `CyberGladiatorsFix/CyberGladiatorsFix.ini` to select video, audio and integrity behavior, then launch the game using the patcher. **Launch through `CyberGladiatorsFix.exe --launch`**, not `CYBER.EXE` directly, to apply the intended game-specific video, DXVK and CDDA configuration.
+On first run the launcher searches for the supported CD image, validates the US game edition, extracts the game into a temporary staging folder, verifies the files, installs the compatibility patch and both embedded DLLs, then launches. On later runs it checks the existing installation first and launches directly; the CUE/BIN need not be present.
 
-If the installation already exists, running the patcher without arguments performs a checked update; it does not re-extract or overwrite the original CD assets. The game backup `CYBER.EXE.bak` is preserved. An unknown CD edition or executable is rejected.
+If an installation exists but does not pass its checks, the launcher refuses to run rather than deleting or silently replacing user files. Only one CUE image in the launcher's directory is accepted without an explicit path. **Standalone ISO input is not supported yet.** Data-only dumps cannot provide the original CD music.
 
-## Everyday usage
+## Installed layout
 
-```text
-CyberGladiatorsFix.exe               # install/update (from CUE directory)
-CyberGladiatorsFix.exe --launch      # play the game
-CyberGladiatorsFix.exe --launch --smooth-video-test # experimental intro/3D transition
-CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan # same smooth transition, nGlide native Vulkan (experimental)
-CyberGladiatorsFix.exe --verify      # strict verification of original assets
-CyberGladiatorsFix.exe --trace       # play with extended Wine/DXVK diagnostics
+~~~text
+CyberGladiators/
+  CyberGladiatorsFix.exe
+  CyberGladiatorsFix.log
+  original-disc.cue
+  original-disc*.bin
+  CyberGladiatorsFix/
+    cyber.exe
+    CYBER.EXE.bak
+    glide.dll                     (GameFrame, x86)
+    CyberGladiatorsFix.dll       (WinMM/CDDA, x86)
+    CyberGladiatorsFix.ini
+    CyberGladiatorsFix.manifest
+    cyber.ini
+    music/
+      Track02.flac
+      Track03.flac
+      ...
+    iq/
+    graphics/
+    ...                          (original game resources)
+~~~
+
+The CD audio is extracted without resampling to **FLAC, 44.1 kHz, stereo, 16-bit**, in the **music/** directory. Existing verified root-level TrackNN.flac entries are migrated without re-encoding and their old manifest is backed up. Original IQ files are never modified by the launcher.
+
+GameFrame renders the original **640×480** Glide game at the current display resolution, preserving the **4:3** aspect ratio with black side bars and a **60 FPS** frame limit. The original Cinepak AVI plays via the native WinMM/MCI player in a temporary fullscreen window. The handoff to the game is synchronized with the **first successful OpenGL SwapBuffers**, eliminating desktop flashes and the temporary 640×480 game window. A bounded timeout prevents a permanent black screen.
+
+**Wine/Proton DirectDraw compatibility:** The 1996 game requests exclusive DirectDraw **640×480×16** twice before the AVI. On Wine only, the verified x86 bridge forwards these calls to the **real DirectDraw implementation**, substituting the captured desktop width and height while retaining the requested 16-bit color depth. This prevents Wine's desktop **dimensions** from collapsing to 640×480 and allows fullscreen 4:3 video without changing the game's internal rendering resolution. This is **not** a simulated successful DirectDraw call and is not enabled on native Windows. The observed display geometry remained 1920×1080 in the validated sessions; native depth or physical display-mode transitions have **not** been independently ruled out.
+
+The one EXE embeds and validates both x86 DLLs before writing them. The GameFrame DLL remains installed after a fresh first run. If the player had a different valid glide.dll, it is backed up byte-for-byte and restored at the end of gameplay.
+
+## Commands
+
+~~~text
+CyberGladiatorsFix.exe               Auto-install/verify and play
+CyberGladiatorsFix.exe <disc.cue>    Use specified CUE/BIN image
+CyberGladiatorsFix.exe --install-only   Install/upgrade without starting game
+CyberGladiatorsFix.exe --verify      Strict integrity check
 CyberGladiatorsFix.exe --max-graphics
-CyberGladiatorsFix.exe --upgrade-cdda
 CyberGladiatorsFix.exe --check-bundle
+CyberGladiatorsFix.exe --upgrade-cdda
 CyberGladiatorsFix.exe --version
 CyberGladiatorsFix.exe --help
-```
+~~~
 
-**Video is automatic:** When `SkipIntro=0` and `EnableCDDA=1`, the game plays its original `splash4.avi` in a fullscreen 4:3 host, with black sidebars and skip limited to Escape/Enter/Space. The x86 bridge then attempts a one-shot, strictly validated WineD3D window-procedure repair after AVI close (no extra player). When `EnableCDDA=0`, the in-process AVI still plays, but CD-audio MCI commands are forwarded to system WinMM instead of decoded from FLAC. If `SkipIntro=1`, the intro is omitted. These paths preserve the user's INI and recognize only supported executable variants. `--dxvk-rootcause` remains an unmodified diagnostic control.
+For normal use only a double-click is necessary. The legacy nGlide diagnostics remain internally available but are not part of the recommended experience.
 
-### Smoother AVI → 3D handoff (experimental, 60 Hz retained)
+## Configuration and integrity
 
-Normal `--launch` is unchanged. Run the opt-in comparison:
+The **CyberGladiatorsFix/CyberGladiatorsFix.ini** text file is distinct from the game's binary **cyber.ini**:
 
-```sh
-wine CyberGladiatorsFix.exe --launch --smooth-video-test
-```
+- **[Video] SkipIntro=0** — play the original introduction (default).
+- **[Audio] EnableCDDA=1** — virtual CD audio using music/TrackNN.flac (default).
+- **[Integrity] AllowModifiedIQ=0** — strict verification (default). Setting 1 allows only same-size differences in known original iq/iqNN.dat files during launch, without modifying them or trusting the altered hashes. The **--verify** command stays strict.
 
-The original Cinepak/MCIAVI playback remains in process. A dedicated fullscreen, no-activate managed Win32 host hides the Linux taskbar and centers the AVI at 4:3, with sidebars. The AVI parent and its temporary cover use a custom, explicit **RGB(0,0,0)** black-painted window class instead of `STATIC/SS_BLACKRECT` (which Wine paints using the theme-dependent and potentially gray `COLOR_3DDKSHADOW`). The user confirmed that this eliminated the previous gray rectangle. The original MCI player starts after a **one-second black pre-roll**; its first frames are covered until the next native MCI status poll at least 300 ms later.
+A single **CyberGladiatorsFix.log**, next to the EXE, records the system and display configuration, effective game options, integrity checks, video/Glide/FLAC behavior and normal or abnormal exit. No separate video player log is created.
 
-**After `close avivideo`**, whether the 40-second intro finishes or the user skips with Escape, Enter or Space, the bridge unhooks AVI input, hides the movie, restores the black cover, preserves the guarded WineD3D/DXVK WndProc repair and holds the game on the MCI calling thread for **1000 ms**. This preserves the visibly effective pause that the user confirmed. Previously, the host was then **destroyed before the original game resumed nGlide**, causing a brief glimpse of the Linux desktop/window transition while its 3D window initialized.
+### Compatibility and safety
 
-The opt-in handoff **retains the same fullscreen black host after the one-second hold while the original game proceeds into its 3D initialization behind it**. A 50 ms Win32 timer on the owning game thread checks the verified game's 3dfx-active state and whether a visible window from the game process covers the monitor. Once that state is stable for **1500 ms**, it removes the black host; a **bounded 3500 ms timeout** releases the host if readiness is never detected. This remains a heuristic for window readiness, **not proof of the first completed frame**; a brief desktop-panel flash can still occur under Wine.
+Only the SHA-256-identified **US retail** game is supported. The renamed WinMM import name is checked by reversing just that name to the previously pinned executable hashes. Unknown executable revisions, unknown DLLs, unsafe symlinks, unexpected manifest entries and incomplete installs fail closed. CUE/BIN input is read-only, and the game installation uses a staging folder. A per-installation Windows mutex prevents concurrent launch or install.
 
-**Vulkan A/B test:** `wine CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan` selects nGlide's **native Vulkan backend (NGLIDE_BACKEND=2)** while keeping the same in-process AVI, 4:3 fullscreen host, one-second black holds, 1500 ms stability criterion and 3500 ms timeout. Following a Wine 11.17 trace where `NtUserChangeDisplaySettings` returned `-2` just 10 ms before `CYBER.EXE+0x23DF` read a null pointer, **Vulkan-only launches request `NGLIDE_REFRESH=1` (desktop refresh)** instead of forcing 60 Hz. This is an A/B hypothesis, not a confirmed crash fix. The guarded WndProc repair only acts when its WineD3D provenance checks match; a mismatch safely skips repair. The existing `--launch --smooth-video-test` continues using **Direct3D9/DXVK (NGLIDE_BACKEND=1, NGLIDE_REFRESH=2 / 60 Hz)**. **Vulkan with the native movie is currently known to crash under the tested Wine configuration.** For fault localization, this opt-in smooth Vulkan launch additionally enables the existing in-process first-chance exception observer and bounded, read-only window samples for up to 35 seconds, explicitly disabling all invasive Glide IAT hooks. Everything is appended to the same `CyberGladiatorsFix.log`; it does not enable giant Wine debug logs. These probes are never enabled by the validated D3D9 path.
+Native Windows game rendering has **not yet been verified in the field**. GitHub Actions runs Rust tests (including DirectDraw mode-selection and backup-integrity checks), validates the x86 DLLs and Glide exports, and smoke-tests the native Windows loader, but does not play the game. The detailed build-85 audit and its remaining risks are recorded in [BUILD85_AUDIT.md](docs/BUILD85_AUDIT.md).
 
-**Vulkan video-window A/B control (experimental):** `wine CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release` plays the **same native in-process 4:3 AVI** and retains the pre-video black cover, but destroys the temporary fullscreen host immediately after the original successful MCI AVI close, **before** nGlide Vulkan initializes. It deliberately omits the one-second post-video black hold and the 3D-ready timer. A visible desktop transition is expected in this diagnostic only. If Vulkan starts with this control but crashes with the retained host, investigate fullscreen window ownership/mode changes; if it still crashes, the retained curtain is not a sufficient explanation. The validated Direct3D9 transition and ordinary smooth Vulkan path are unchanged.
+## Licenses
 
-**Vulkan fullscreen recovery A/B (experimental):** when the early-release run is playable but nGlide falls from the initial fullscreen HWND to a small ~648×513 window, try `wine CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release --vulkan-auto-fullscreen-test`. After the native movie closes, the embedded x86 bridge checks the **verified game's own foreground window**, waits 900 ms, and, only if nGlide owns its WndProc and the window is smaller than the monitor, sends the **native nGlide Alt+Enter shortcut at most twice**, pausing 1000 ms to confirm fullscreen after each. No keyboard events are sent if another app has focus; nothing resizes, patches or subclasses nGlide directly. All checks and toggles appear as `VULKAN_AUTO_FULLSCREEN` in the single log. This is a bounded diagnostic/workaround, not a confirmed final fullscreen repair. It does not run in Direct3D9, the default Vulkan experiment, or the basic Vulkan early-release experiment.
+CyberGladiatorsFix code is **GPL-3.0-or-later** (LICENSE). The pinned [GameFrame](https://github.com/tanepiper/game-frame) component is **Apache-2.0** (LICENSE-APACHE in the downloadable artifact). Neither the game nor its copyright-protected disc tracks are bundled. For prior experiments see docs/DEVELOPMENT_HISTORY.md and [PR #2](https://github.com/legluondunet/CyberGladiatorsFix/pull/2).
 
-No additional EXE/DLL, external helper, D3D9/Glide hooks, Wine prefix or registry edits, game assets or user INI modifications are introduced. The existing embedded WinMM x86 bridge, one-file x64 launcher and adjacent consolidated log are retained. nGlide `NGLIDE_REFRESH=2` remains **60 Hz**; the normal `--launch` path is unchanged.
-
-The log contains `PRE_VIDEO_BLACK_BEGIN/END`, `FIRST_FRAME_COVER_CREATED paint=explicit_RGB000`, `FIRST_FRAME_COVER_RELEASED reason=mci_status_poll`, `WNDPROC_REPAIR APPLIED` (when applicable), `POST_VIDEO_BLACK_HOLD_BEGIN/END`, `HANDOFF_WAIT_BEGIN`, optionally `HANDOFF_FULLSCREEN_READY`, and `HANDOFF_RELEASE reason=3dfx_stable|bounded_timeout|game_window_gone` followed by `HOST_CLOSED`. Check both natural completion and Espace-skip, verify absence of any desktop or window flicker and ensure game input, music, Alt+Tab and clean exit. A successful Win32 ready flag alone does not guarantee compositor presentation. PR remains open pending field validation.
-
-### Wine / Proton
-
-```sh
-WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --launch
-WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --trace
-```
-
-A convenience `CyberGladiatorsFix-Wine.sh` script remains in the **source repository**, but is not needed in the one-file Windows download. If you use it next to the EXE, it records the native Linux distribution/kernel labels and suppresses Wine's noisy `fixme:` output during ordinary runs while respecting explicit `WINEDEBUG` values.
-
-**For DXVK:** enable DXVK in Lutris/Proton and remove `PROTON_USE_WINED3D=1` from the runner environment. The presence of a D3D9 provider by itself does not prove that DXVK is loaded. If a Wine virtual desktop appears unexpectedly, inspect the same prefix's `winecfg → Graphics → Emulate a virtual desktop` option and Lutris runner settings; the patcher does not alter the prefix's desktop/registry settings.
-
-## Configuration
-
-The text configuration file **`CyberGladiatorsFix/CyberGladiatorsFix.ini`** is *not* the game's own 32-byte binary `cyber.ini`:
-
-```ini
-[Video]
-SkipIntro=0
-
-[Audio]
-EnableCDDA=1
-
-[Integrity]
-AllowModifiedIQ=0
-```
-
-- `SkipIntro=0`: play the original fullscreen 4:3 intro, optionally skipping with Escape, Enter or Space only; `1`: omit the movie.
-- `EnableCDDA=1` (**default for newly created INIs**): play extracted FLAC music through the verified WinMM bridge; `0`: forward CD-audio commands to native system WinMM. **Both settings use the same native in-game 4:3 AVI and the WineD3D/DXVK window repair.** Existing INI files are never overwritten; older INIs without an [Audio] section still select system CD audio.
-- `AllowModifiedIQ=0`: require the CD's exact original resource hashes; `1`: explicitly allow **same-size** changes to `iq/iq00.dat…iq99.dat` during **launch only**. The `--verify` command **always remains strict**. The game itself may update some IQ records; never modify or overwrite these game files as part of the patcher refactor.
-
-The internal video size/detail in the game's separate `cyber.ini` can be checked and adjusted using `--max-graphics`. nGlide normally scales 3D graphics to desktop resolution, preserving aspect ratio.
-
-## CDDA upgrades and file safety
-
-The original installer never silently overwrites an unrecognized 32-bit DLL, a modified executable, or an original CD asset. A previously recorded verified receipt or known first-party DLL hash permits a backed-up update. Otherwise use **`--upgrade-cdda`** explicitly, after checking the installed DLL. Existing SHA-qualified `.bak` files are reused only if their complete SHA-256 matches the version being preserved. Interrupted `.tmp` staging files are not deleted automatically. The embedded DLL is validated before it is written to the game folder.
-
-**Do not remove or modify any `IQ/` original game data files** to resolve integrity errors. Preserve their current contents and inspect the mismatch in the log.
-
-### Fullscreen native AVI in standard launches
-
-The native game AVI and soundtrack are retained. When `SkipIntro=0`, `--launch` uses a temporary, in-process black fullscreen Win32 host and a dedicated centered 4:3 video surface. On a 1920×1080 monitor, the video occupies 1440×1080 pixels with black pillarboxes of 240 pixels at both sides. The host uses an explicit black brush and paints black on `WM_PAINT` and `WM_ERASEBKGND` to avoid white background under Wine. For the recognized `splash4.avi`, only the MCI window and destination commands are redirected, and the temporary host is destroyed after `close avivideo` **before** the WineD3D/DXVK WndProc repair.
-
-The video input filters apply **only during playback** and are installed on the game's original UI thread, never globally. Escape, Enter and Space are the only permitted keys for skipping; letter keys and mouse buttons/wheel messages on that thread are suppressed. At video close both hooks are uninstalled, with counters recorded to the one `CyberGladiatorsFix.log`. The user confirmed visually correct black 4:3 pillarboxes, natural full-length video after mouse clicks, all three skip keys working, and other keys doing nothing under Wine 11.0. The old developer-only `--launch --avi-4x3-test` option has been retired now that this behavior is the standard launch. `--trace` uses the same 4:3 native video and input policy while recording additional diagnostics; the separate `--dxvk-rootcause` control deliberately bypasses presentation fixes for forensic comparisons.
-
-For an unsupported window, the host refuses to activate; if the modified video-open fails, the original MCI open is retried. The executable and original `IQ/` assets are not changed by this presentation feature. Native Windows field tests, final ordinary-launch regressions and desktop-panel behavior are still outstanding.
-
-### Native AVI integration status (development build)
-
-On **2026-11-05**, a Wine 11.0 / GE-Proton DXVK test with `--dxvk-wndproc-repair-test` confirmed normal video completion, native D3D9 initialization, FLAC playback, gameplay and a clean process exit. On 2026-11-06, the user further confirmed native fullscreen 4:3 image, black sidebars, ignored mouse clicks and other keys, and working Escape/Enter/Space skipping. The fix identified `wined3d.dll+0xf4a20` as the active WndProc and restored the original game's `cyber.exe+0x5f82` before Direct3D9 installed its own WndProc. The ordinary `--launch` flow now prefers this native-video route **when CDDA is enabled**. That new default route still requires an ordinary-launch regression check, including video skip, gameplay, Alt+Tab, input, and exit; native Windows behavior is not field-validated. The second AVI player and its temporary extraction code have been removed. New installations generate `EnableCDDA=1`; existing INIs retain their audio preference. The one-process video path with `EnableCDDA=0` requires additional Wine and native Windows field validation before release.
-
-### DXVK native-intro root-cause investigation (developer only)
-
-The normal `--launch` path uses the in-process fullscreen AVI with the guarded WndProc repair regardless of the FLAC music setting. To investigate **why the original 1996 in-process AVI → nGlide Direct3D9/DXVK transition crashes**, use the explicit diagnostic command, not the external video workaround:
-
-```sh
-WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --dxvk-rootcause
-```
-
-This **deliberately exercises the known potentially crashing path**: `[Video] SkipIntro=0`, native game `splash4.avi`, forced nGlide DirectX9/DXVK, no Glide-pointer hook, no black curtain and no speculative DXVK configuration tweak. It refuses a skipped-video INI state instead of altering preferences; the CDDA music preference is independent. The launcher captures Wine exception messages, fresh DXVK D3D9 and any DirectDraw/D7VK logs, loaded D3D9/DirectDraw/MCIAVI provider fingerprints, exact first-chance fault module/RVA, and, if the original thread memory is still available, the instruction bytes and **heuristic** return-address candidates from the exhausted x86 stack. Those samples are not a validated call stack or proof of a DXVK bug. All collected text goes to **the same** `CyberGladiatorsFix.log` beside the launcher. The user's game and `IQ/` data are not changed by the instrumentation.
-
-**2026-11-05 WineD3D/DXVK subclass-cycle hypothesis and guarded repair test:** The latest native-AVI forensic capture resolves `0x7b094a20` to `wined3d.dll+0xf4a20`. Its window-class ANSI WndProc is the original `CYBER.EXE+0x5f82`; DXVK's `D3D9WindowProc` is at `d3d9.dll+0xba1d0`. The sampled stack alternates the DXVK and WineD3D WndProc targets, consistent with a cyclic subclass chain (not a fully symbolized unwind). Wine's `wined3d_wndproc` and DXVK both forward to previously registered WndProcs. The **developer-only, experimental** `--dxvk-wndproc-repair-test` runs the native in-process AVI exactly as `--dxvk-rootcause` does, but after a successful `close avivideo` attempts to replace the game's *live instance* ANSI WndProc with its original verified window-class procedure. The in-process repair refuses unrecognized executable base, window owner/thread, class, Unicode mode or current provider (must resolve to WineD3D), and logs `WNDPROC_REPAIR APPLIED/SKIP/ERROR`. The normal `--launch` and `--trace` routes now use the verified guarded repair; `--dxvk-rootcause` intentionally preserves the unmodified crash-control route. This is **not yet a validated fix** and may reveal new video/rendering limitations; compare against `--dxvk-rootcause` using the same Wine prefix. It never changes `IQ/`, the Wine registry or system DLLs.
-
-```sh
-WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --dxvk-wndproc-repair-test
-```
-
-**2026-11-05 forensic breakthrough:** The user-provided native-AVI crash log consistently shows an x86 first-chance stack overflow at `d3d9.dll+0xBA1E8`, and a repeated `USER32.dll` return-address cycle in the EBP chain. The *actual bytes* at the faulting instruction contain `cmp ebx,0x83` and `cmp edi,1`. These precisely match DXVK's `D3D9WindowProc` special case for `WM_NCCALCSIZE` and `wParam==TRUE` in the GE-Proton DXVK base revision [f8637768, d3d9_window.cpp](https://github.com/doitsujin/dxvk/blob/f863776806824486d709fee16ea619c03e22def4/src/d3d9/d3d9_window.cpp#L34-L102). This strongly identifies a **Win32 window-procedure reentrancy/recursion problem** during the MCI video → nGlide D3D9 transition. It does *not* yet identify the active message, whether the stored previous procedure forms a cycle, or which component should be patched. The observer now captures the x86 EBX/EDI registers, matches the DXVK WndProc instruction fingerprint, attempts to inspect four stdcall arguments without trusting a damaged stack, and records the game's current WndProc pointer across the transition. All probes are read-only, do not edit nGlide/DXVK or game files, and only run under explicit diagnostic tracing. Do not blindly suppress `WM_NCCALCSIZE` messages or patch a third-party DLL based on this evidence alone.
-
-The original observations are: with `SkipIntro=1`, D3D9/DXVK works; with the in-game AVI enabled, an exception `0xC00000FD` occurs about 200 ms after MCI `close movie` / `close avivideo` in the GE-Proton DXVK x86 `d3d9.dll` at RVA `0xBA1E8`. The issue persists with the optional Glide observer disabled and with desktop refresh-rate selection. It has **not** yet been established whether the recursive call originates in DXVK, nGlide, or Wine's video/window interaction. If the stack sampling is unavailable or ambiguous, obtain a true first-chance `bt` using WineDbg with the same runner, or analyze the exact loaded x86 `d3d9.dll` build rather than guessing a function from its RVA.
-
-## One diagnostic log
-
-Every invocation (except `--help` and `--version`) creates a fresh `CyberGladiatorsFix.log` **next to `CyberGladiatorsFix.exe`**. The header includes version/commit, timestamp, runtime (Windows or Wine), CPU, RAM, Win32 GPU/display size/refresh, the configured intro/CDDA/IQ policy, internal game graphics settings and effective nGlide options. Where supplied by the optional shell wrapper, it includes Linux distribution/kernel. During play, the log receives video, CDDA and exit messages; `--trace` additionally appends Wine information and collected DXVK D3D9 logs.
-
-It does not intentionally record usernames, serial numbers, MAC addresses, hostnames or the full Wine prefix. Driver and crash traces may still contain private paths; review before sharing. Old log files from previous builds are **not** deleted; only the current main log is recreated.
-
-If a launch fails, send **`CyberGladiatorsFix.log`**, the exact invocation and a short description of what appeared on screen. A build that passes Windows CI has not necessarily passed actual gameplay under Wine or native Windows.
-
-## Architecture and development
-
-- `src/`: x64 installer, strict verification, game launch orchestration, the embedded x86 bridge and unified diagnostics.
-- `cdda/src/lib.rs`: one x86 WinMM forwarding DLL that hosts the original Cinepak AVI fullscreen, preserves the WineD3D/DXVK transition fix, and selects between FLAC CD audio emulation and native CD-audio forwarding.
-- `cdda/src/video_trace.rs`: in-process 4:3 black video host and temporary keyboard/mouse input filtering.
-- `cdda/src/player.rs`: lossless FLAC decoder and waveOut music when enabled.
-- `.github/workflows/windows.yml`: builds the single x86 DLL first, embeds it in the x64 launcher, runs Windows tests and publishes **one EXE**.
-
-The original Cinepak video no longer runs in a separate process. The previous stack-overflow crash is addressed by a guarded WndProc repair which was field-validated with CDDA enabled. The disabled-CDDA audio-forwarding path and native Windows behavior remain subject to final compatibility tests.
-
-Detailed historical debugging and patch-offset research have been archived in [docs/DEVELOPMENT_HISTORY.md](docs/DEVELOPMENT_HISTORY.md).
-
-**Credits:** legluondunet assisted by ChatGPT (OpenAI). License: [GPL-3.0-or-later](LICENSE).
+*legluondunet assisted by ChatGPT (OpenAI)*

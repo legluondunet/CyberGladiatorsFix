@@ -78,6 +78,8 @@ const GAME_HWND_RVA:usize=0x0012_8018;
 const GAME_CLASS_PROC_RVA:usize=0x0000_5f82;
 const GCL_WNDPROC:i32=-24;
 const GWL_WNDPROC:i32=-4;
+const GWL_STYLE:i32=-16;
+const SWP_NOZORDER:u32=0x0004;
 const FROM_ADDRESS:u32=0x0000_0004;
 const UNCHANGED_REFCOUNT:u32=0x0000_0002;
 const INPUT_KEYBOARD:u32=1;
@@ -101,6 +103,11 @@ const SWP_SHOWWINDOW:u32=0x0040;
 const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
 const WM_TIMER:u32=0x0113;
+const WM_GAMEFRAME_FIRST_GL_PRESENT:u32=0x8000+0x4c;
+const GAMEFRAME_FIRST_GL_PROP:&[u8]=b"CyberGladiators_GameFrame_GlPresentedPending\0";
+const GAMEFRAME_HANDOFF_TIMEOUT_MS:u64=3500;
+static GAMEFRAME_FIRST_GL_ARMED:AtomicBool=AtomicBool::new(false);
+static GAMEFRAME_HANDOFF_START:OnceLock<Mutex<Option<Instant>>>=OnceLock::new();
 const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
 const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
@@ -241,6 +248,7 @@ extern "system" {
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
+    fn SetWindowLongA(hwnd:*mut c_void,index:i32,value:i32)->i32;
     fn GetForegroundWindow()->*mut c_void;
     fn IsIconic(hwnd:*mut c_void)->i32;
     fn SendInput(count:u32,inputs:*const WinInput,input_size:i32)->u32;
@@ -252,6 +260,8 @@ extern "system" {
         menu:*mut c_void,instance:*mut c_void,param:*mut c_void)->*mut c_void;
     fn DestroyWindow(hwnd:*mut c_void)->i32;
     fn GetClientRect(hwnd:*mut c_void,rect:*mut WinRect)->i32;
+    fn SetPropA(hwnd:*mut c_void,name:*const u8,data:*mut c_void)->i32;
+    fn RemovePropA(hwnd:*mut c_void,name:*const u8)->*mut c_void;
     fn SetTimer(hwnd:*mut c_void,id:usize,timeout_ms:u32,callback:*const c_void)->usize;
     fn KillTimer(hwnd:*mut c_void,id:usize)->i32;
 }
@@ -285,6 +295,10 @@ fn video_enabled()->bool {
 fn smooth_enabled()->bool{
     video_enabled() && std::env::var("CYBER_AVI_SMOOTH_TEST").as_deref()==Ok("1")
 }
+fn gameframe_first_present_handoff()->bool{
+    smooth_enabled()&&std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1")
+        &&std::env::var("CYBER_GAMEFRAME_AVI_FIRST_PRESENT").as_deref()==Ok("1")
+}
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
 
 // A top-level STATIC SS_BLACKRECT window can leave its uncovered client area
@@ -296,7 +310,27 @@ unsafe extern "system" fn black_host_proc(
 )->isize{
     match msg{
         WM_TIMER if wparam==HANDOFF_TIMER_ID=>{
-            poll_3d_handoff();
+            if gameframe_first_present_handoff() {
+                if GAMEFRAME_FIRST_GL_ARMED.load(Ordering::Acquire) {
+                    let timed_out=GAMEFRAME_HANDOFF_START.get()
+                        .and_then(|lock|lock.lock().ok().and_then(|start|*start))
+                        .is_some_and(|at|at.elapsed()>=Duration::from_millis(GAMEFRAME_HANDOFF_TIMEOUT_MS));
+                    if timed_out {
+                        GAMEFRAME_FIRST_GL_ARMED.store(false,Ordering::Release);
+                        video_log("GAMEFRAME_FIRST_GL_HANDOFF timed_out=1 reason=no_present_ack_or_win32_pump timeout_ms=3500");
+                        close_host("gameframe_first_present_timeout");
+                    }
+                }
+            }else{
+                poll_3d_handoff();
+            }
+            0
+        }
+        WM_GAMEFRAME_FIRST_GL_PRESENT if gameframe_first_present_handoff()=>{
+            if GAMEFRAME_FIRST_GL_ARMED.swap(false,Ordering::AcqRel){
+                video_log("GAMEFRAME_FIRST_GL_HANDOFF notified=1 stage=after_real_OpenGL_SwapBuffers on_game_UI_thread=1 release_video_host=1");
+                close_host("gameframe_first_GL_presented");
+            }
             0
         }
         WM_ERASEBKGND=>{
@@ -511,6 +545,27 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log(&format!("SKIP GetMonitorInfoA_failed={}",GetLastError()));
         return None;
     }
+    // Wine-staging may report 640x480 here after the original game starts,
+    // even though the launcher captured the real 1920x1080 desktop. Only in
+    // the verified GameFrame first-present path, use that prelaunch geometry
+    // for the temporary native MCI/GDI host on the primary monitor. Merely
+    // sizing this window does not request a display-mode change.
+    if gameframe_first_present_handoff() {
+        let reported=info.monitor;
+        let raw=std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").ok();
+        let captured=gameframe_prelaunch_desktop(raw.as_deref());
+        let (selected,used)=choose_gameframe_avi_monitor(reported,captured,true);
+        info.monitor=selected;
+        video_log(&format!(
+            "GAMEFRAME_AVI_DESKTOP_GEOMETRY transient_monitor=({},{} {}x{}) prelaunch_desktop={} selected_host=({},{} {}x{}) used_prelaunch={} change_display_settings=0",
+            reported.left,reported.top,
+            reported.right-reported.left,reported.bottom-reported.top,
+            raw.as_deref().unwrap_or("missing"),
+            selected.left,selected.top,
+            selected.right-selected.left,selected.bottom-selected.top,
+            u8::from(used)
+        ));
+    }
     let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
     let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
     let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
@@ -526,8 +581,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     let host=CreateWindowExA(host_exstyle(smooth),
         HOST_CLASS.as_ptr(),b"\0".as_ptr(),
         WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN,
-        info.monitor.left,info.monitor.top,screen_w,screen_h,
-        owner,std::ptr::null_mut(),base as *mut c_void,std::ptr::null_mut());
+        info.monitor.left,info.monitor.top,screen_w,screen_h,owner,
+        std::ptr::null_mut(),base as *mut c_void,std::ptr::null_mut());
     if host.is_null() {
         video_log(&format!("SKIP fullscreen_host_create_failed={}",GetLastError()));
         return None;
@@ -536,7 +591,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // the MCI parent solid RGB(0,0,0), independent of Wine's system theme.
     // Keep it hidden from the very first CreateWindowExA invocation.
     let surface=CreateWindowExA(0,video_surface_class(smooth).as_ptr(),b"\0".as_ptr(),
-        video_surface_style(smooth),x,y,w,h,host,
+        video_surface_style(smooth),
+        x,y,w,h,host,
         std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
     if surface.is_null(){
         let err=GetLastError();
@@ -557,7 +613,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // The ordinary launch never creates this overlay.
     let first_frame_cover=if smooth {
         let overlay=CreateWindowExA(0,HOST_CLASS.as_ptr(),b"\0".as_ptr(),
-            first_frame_cover_style(),x,y,w,h,host,
+            first_frame_cover_style(),
+            x,y,w,h,host,
             std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
         if overlay.is_null(){
             video_log(&format!(
@@ -598,7 +655,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         host:host as usize,surface:surface as usize,
         first_frame_cover,first_frame_cover_started:None,
         game,owner_thread:GetCurrentThreadId(),
-        video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
+        video_width:w,video_height:h,
+        keyboard_hook:0,mouse_hook:0,
         holding_for_transition:false,
         handoff_poll_armed:false,handoff_started:None,
         handoff_fullscreen_since:None,handoff_polls:0,
@@ -742,9 +800,111 @@ fn start_vulkan_fullscreen_recovery(){
         }
     });
 }
+/// GameFrame's real game HWND can be 648x513 again while WinMM plays
+/// the intro, even though grSstOpen initially made it fullscreen. Waiting
+/// for the 30-frame swap poll exposes this small window after the video.
+/// Correct it BEFORE destroying the still-visible AVI host, on the actual
+/// game UI thread. The existing GameFrame per-frame checker remains the
+/// bounded fallback if the game resizes again afterwards.
+// The launcher snapshot is authoritative for a primary-monitor GameFrame AVI
+// host: Wine may temporarily expose the game's 640x480 mode during MCI open.
+// All other renderers and non-primary monitors retain native monitor geometry.
+fn choose_gameframe_avi_monitor(
+    monitor:WinRect,prelaunch:Option<(i32,i32)>,gameframe:bool
+)->(WinRect,bool){
+    if gameframe && monitor.left==0 && monitor.top==0 {
+        if let Some((w,h))=prelaunch {
+            return (WinRect{left:0,top:0,right:w,bottom:h},true);
+        }
+    }
+    (monitor,false)
+}
+fn gameframe_prelaunch_desktop(raw:Option<&str>)->Option<(i32,i32)>{
+    let (w,h)=raw?.split_once('x')?;
+    let (w,h)=(w.parse::<i32>().ok()?,h.parse::<i32>().ok()?);
+    ((640..=16384).contains(&w)&&(480..=16384).contains(&h)).then_some((w,h))
+}
+fn gameframe_popup_style(style:u32)->u32{
+    // Remove only window caption and sizable frame. Preserve game-specific
+    // bits, input ownership, clipping and WndProc.
+    (style & !0x00c4_0000u32)|WS_POPUP|WS_VISIBLE
+}
+fn gameframe_prepare_window(phase:&str){
+    if std::env::var("CYBER_GAMEFRAME_TEST").as_deref()!=Ok("1"){return;}
+    let raw=std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").ok();
+    let Some((desktop_w,desktop_h))=gameframe_prelaunch_desktop(raw.as_deref()) else{
+        video_log("GAMEFRAME_HANDOFF_PREPARE SKIP invalid_prelaunch_desktop_size");
+        return;
+    };
+    unsafe {
+        let base=GetModuleHandleA(std::ptr::null()) as usize;
+        if base!=EXPECTED_GAME_BASE{
+            video_log("GAMEFRAME_HANDOFF_PREPARE SKIP unexpected_exe_base");
+            return;
+        }
+        let hwnd=std::ptr::read_volatile((base+GAME_HWND_RVA) as *const u32)
+            as usize as *mut c_void;
+        let mut pid=0u32;
+        let tid=if !hwnd.is_null() && IsWindow(hwnd)!=0{
+            GetWindowThreadProcessId(hwnd,&mut pid)
+        }else{0};
+        if tid==0||tid!=GetCurrentThreadId()||pid!=GetCurrentProcessId(){
+            video_log("GAMEFRAME_HANDOFF_PREPARE SKIP invalid_hwnd_or_owner_thread");
+            return;
+        }
+        if GetClassLongA(hwnd,GCL_WNDPROC) as usize!=base+GAME_CLASS_PROC_RVA{
+            video_log("GAMEFRAME_HANDOFF_PREPARE SKIP unexpected_game_class");
+            return;
+        }
+        let monitor=MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST);
+        let mut info=MonitorInfo{
+            cb_size:std::mem::size_of::<MonitorInfo>() as u32,
+            monitor:WinRect::default(),work:WinRect::default(),flags:0
+        };
+        if monitor.is_null()||GetMonitorInfoA(monitor,&mut info)==0
+            ||info.monitor.left!=0||info.monitor.top!=0{
+            // Prelaunch desktop dimensions describe the primary screen only.
+            video_log("GAMEFRAME_HANDOFF_PREPARE SKIP unsupported_non_primary_monitor");
+            return;
+        }
+        let mut before=WinRect::default();
+        if GetWindowRect(hwnd,&mut before)==0{
+            video_log("GAMEFRAME_HANDOFF_PREPARE SKIP GetWindowRect_failed");
+            return;
+        }
+        let style=GetWindowLongA(hwnd,GWL_STYLE) as u32;
+        let desired=gameframe_popup_style(style);
+        let already_fullscreen=before.left==0&&before.top==0
+            &&before.right==desktop_w&&before.bottom==desktop_h;
+        if already_fullscreen {
+            video_log(&format!("GAMEFRAME_HANDOFF_PREPARE stage={phase} fullscreen_already_correct=1 changed=0"));
+            return;
+        }
+        // The host is still present and topmost. This changes only the
+        // original game's window style and geometry, WITHOUT activating it,
+        // altering Z order or changing the display mode. Do not keep or
+        // reposition a second permanent rendering/window proxy.
+        let changed_style=style!=desired;
+        if changed_style{
+            let _=SetWindowLongA(hwnd,GWL_STYLE,desired as i32);
+        }
+        let flags=SWP_NOZORDER|SWP_NOACTIVATE|
+            if changed_style{SWP_FRAMECHANGED}else{0};
+        let ok=SetWindowPos(hwnd,std::ptr::null_mut(),0,0,desktop_w,desktop_h,flags);
+        let mut after=WinRect::default();
+        let readback=GetWindowRect(hwnd,&mut after);
+        video_log(&format!(
+            "GAMEFRAME_HANDOFF_PREPARE stage={phase} hwnd={:#x} old_rect=({},{},{},{}) new_rect=({},{},{},{}) desktop={}x{} old_style={style:#010x} new_style={desired:#010x} SetWindowPos={ok} GetWindowRect={readback} display_mode_change=0 no_activate=1",
+            hwnd as usize,before.left,before.top,before.right,before.bottom,
+            after.left,after.top,after.right,after.bottom,desktop_w,desktop_h
+        ));
+    }
+}
+
 fn close_host(reason:&str){
     let previous=video_host().lock().unwrap_or_else(|e|e.into_inner()).take();
     if let Some(mut h)=previous{
+        GAMEFRAME_FIRST_GL_ARMED.store(false,Ordering::Release);
         unsafe{
             KEY_FILTER_ACTIVE.store(false,Ordering::Release);
             if GetCurrentThreadId()!=h.owner_thread{
@@ -752,6 +912,12 @@ fn close_host(reason:&str){
                 return;
             }
             stop_movie_input(&mut h);
+            if gameframe_first_present_handoff(){
+                let _=RemovePropA(h.host as *mut c_void,GAMEFRAME_FIRST_GL_PROP.as_ptr());
+                if let Some(lock)=GAMEFRAME_HANDOFF_START.get(){
+                    *lock.lock().unwrap_or_else(|e|e.into_inner())=None;
+                }
+            }
             if h.handoff_poll_armed {
                 let _=KillTimer(h.host as *mut c_void,HANDOFF_TIMER_ID);
                 h.handoff_poll_armed=false;
@@ -935,6 +1101,12 @@ fn poll_3d_handoff(){
 /// bounded fallback timeout (no hooks).
 pub fn hold_post_video_black_before_3d(){
     if !smooth_enabled(){return;}
+    if gameframe_first_present_handoff(){
+        // The alternative first-present path has already armed the black
+        // GDI host with a bounded timer and must NOT block game startup.
+        video_log("GAMEFRAME_FIRST_GL_HANDOFF post_close_sleep_skipped=1 original_game_can_initialize_OpenGL=1");
+        return;
+    }
     let armed={
         let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
         match guard.as_mut(){
@@ -1004,6 +1176,50 @@ pub fn hold_post_video_black_before_3d(){
         close_host("post_video_sync_hold_poll_unavailable");
     }
 }
+/// The native Wine MCIAVI driver draws via GDI. In a CHILD of the active
+/// OpenGL game HWND, its 1920x1080 client is still clipped by Wine's
+/// 640x480 HDC clip box. Reuse the already proven separate GDI fullscreen
+/// MCI host, but keep it black above the game until the first REAL OpenGL
+/// SwapBuffers completes. The GameFrame render thread will post a narrow
+/// Win32 message back to THIS host; its original owner UI thread destroys
+/// the host. Bounded timer fallback avoids an indefinitely black window.
+fn gameframe_arm_first_present_handoff()->bool{
+    if !gameframe_first_present_handoff(){return false;}
+    if !start_transition_curtain(){return false;}
+    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=guard.as_mut() else{return false;};
+    if h.owner_thread!=unsafe{GetCurrentThreadId()}{
+        return false;
+    }
+    unsafe{
+        let host=h.host as *mut c_void;
+        if IsWindow(host)==0{return false;}
+        let tagged=SetPropA(host,GAMEFRAME_FIRST_GL_PROP.as_ptr(),1usize as *mut c_void);
+        if tagged==0{
+            video_log(&format!("GAMEFRAME_FIRST_GL_HANDOFF property_failed={} fallback=close",GetLastError()));
+            drop(guard);
+            close_host("gameframe_first_present_property_failed");
+            return true;
+        }
+        let clock=GAMEFRAME_HANDOFF_START.get_or_init(||Mutex::new(None));
+        *clock.lock().unwrap_or_else(|e|e.into_inner())=Some(Instant::now());
+        GAMEFRAME_FIRST_GL_ARMED.store(true,Ordering::Release);
+        let timer=SetTimer(host,HANDOFF_TIMER_ID,HANDOFF_POLL_MS,std::ptr::null());
+        if timer==0{
+            video_log(&format!("GAMEFRAME_FIRST_GL_HANDOFF timer_failed={} fallback=close",GetLastError()));
+            GAMEFRAME_FIRST_GL_ARMED.store(false,Ordering::Release);
+            drop(guard);
+            close_host("gameframe_first_present_timer_failed");
+            return true;
+        }
+        h.handoff_poll_armed=true;
+        video_log(&format!("GAMEFRAME_FIRST_GL_HANDOFF armed=1 GDI_fullscreen_host={:#x} native_MCI_video_closed=1 black_host_retained=1 wait_for_post_SwapBuffers=1 fallback_timeout_ms={} no_sync_hold=1",
+            h.host,GAMEFRAME_HANDOFF_TIMEOUT_MS));
+        timing("GAMEFRAME_FIRST_PRESENT_WAIT_BEGIN");
+        true
+    }
+}
+
 fn start_transition_curtain()->bool {
     let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
     let Some(h)=guard.as_mut() else{return false;};
@@ -1205,9 +1421,11 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
         return CString::new(format!("window movie handle {}",h.surface)).ok();
     }
     if destination_command(text){
-        video_log(&format!("MCI_REWRITE destination=0,0 {}x{} (surface-relative)",h.video_width,h.video_height));
+        video_log(&format!("MCI_REWRITE destination=0,0 {}x{} (surface-relative, 4x3=1)",
+            h.video_width,h.video_height));
         return CString::new(format!(
-            "put movie destination at 0 0 {} {}",h.video_width,h.video_height
+            "put movie destination at 0 0 {} {}",
+            h.video_width,h.video_height
         )).ok();
     }
     None
@@ -1215,8 +1433,6 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
 pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     if !video_enabled(){return;}
     let command=text.trim();
-    // Called after each native WinMM status poll on the original game
-    // thread: reliable even while that thread does not dispatch WM_TIMER.
     maybe_release_first_frame_cover(command);
     if command.eq_ignore_ascii_case("open avivideo") {
         if result==0{
@@ -1254,9 +1470,17 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
         // This intentionally exposes the normal compositor handoff and
         // excludes our retained fullscreen HWND from nGlide initialization.
         // The verified D3D9 and default Vulkan smooth paths are unchanged.
+        let gameframe=smooth_enabled() && result==0 &&
+            std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1");
         let early_release=smooth_enabled() && result==0 &&
             std::env::var("CYBER_VULKAN_EARLY_HOST_RELEASE").as_deref()==Ok("1");
-        if early_release {
+        if gameframe && gameframe_first_present_handoff(){
+            video_log("GAMEFRAME_VIDEO_HANDOFF mode=standalone_native_GDI_then_first_OpenGL_present video_host_does_not_parent_to_OpenGL_HWND=1");
+            gameframe_prepare_window("after_MCI_close_before_first_gl_present");
+            if !gameframe_arm_first_present_handoff(){
+                close_host("gameframe_first_present_arm_failed");
+            }
+        }else if early_release {
             video_log("VULKAN_EARLY_RELEASE after_native_MCI_close=1 no_black_postroll=1 no_handoff_timer=1 renderer_can_initialize_without_host=1");
             close_host("vulkan_early_release_ab");
             start_vulkan_fullscreen_recovery();
@@ -1268,6 +1492,46 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
+    #[test]
+    fn gameframe_early_fullscreen_geometry_and_style_are_strict(){
+        assert_eq!(gameframe_prelaunch_desktop(Some("1920x1080")),Some((1920,1080)));
+        assert_eq!(gameframe_prelaunch_desktop(Some("640x480")),Some((640,480)));
+        assert_eq!(gameframe_prelaunch_desktop(Some("0x1080")),None);
+        assert_eq!(gameframe_prelaunch_desktop(Some("1920x-1")),None);
+        assert_eq!(gameframe_prelaunch_desktop(Some("1920X1080")),None);
+        assert_eq!(gameframe_prelaunch_desktop(None),None);
+        assert_eq!(gameframe_popup_style(0x14ce0000),0x940a0000);
+        assert_eq!(gameframe_popup_style(0x940a0000),0x940a0000);
+    }
+    #[test]
+    fn gameframe_avi_host_uses_prelaunch_desktop_not_transient_wine_mode(){
+        let transient=WinRect{left:0,top:0,right:640,bottom:480};
+        let desktop=gameframe_prelaunch_desktop(Some("1920x1080"));
+        let (host,used)=choose_gameframe_avi_monitor(transient,desktop,true);
+        assert!(used);
+        assert_eq!((host.left,host.top,host.right,host.bottom),(0,0,1920,1080));
+        assert_eq!(fit_4_3(host.right-host.left,host.bottom-host.top),
+            Some((240,0,1440,1080)));
+
+        // The already-working Proton path remains at native desktop size.
+        let proton=WinRect{left:0,top:0,right:1920,bottom:1080};
+        let (same,used)=choose_gameframe_avi_monitor(proton,desktop,true);
+        assert!(used);
+        assert_eq!((same.right,same.bottom),(1920,1080));
+
+        // Non-GameFrame, secondary displays and invalid/missing snapshots
+        // must not use primary monitor coordinates.
+        let (normal,used)=choose_gameframe_avi_monitor(transient,desktop,false);
+        assert!(!used);
+        assert_eq!((normal.right,normal.bottom),(640,480));
+        let secondary=WinRect{left:1920,top:0,right:3200,bottom:1024};
+        let (other,used)=choose_gameframe_avi_monitor(secondary,desktop,true);
+        assert!(!used);
+        assert_eq!((other.left,other.right),(1920,3200));
+        let (fallback,used)=choose_gameframe_avi_monitor(transient,None,true);
+        assert!(!used);
+        assert_eq!((fallback.right,fallback.bottom),(640,480));
+    }
     #[test]
     fn x86_sendinput_layout_and_alt_enter_events(){
         assert_eq!(std::mem::size_of::<WinInput>(),28);

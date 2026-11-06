@@ -12,6 +12,7 @@ mod player;
 mod video_trace;
 mod glide_trace;
 mod exception_trace;
+mod ddraw_native;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
@@ -143,7 +144,7 @@ unsafe fn cd_type_matches(flags:Dword,data:Ptr)->bool {
         .to_bytes().eq_ignore_ascii_case(b"cdaudio")
 }
 fn track_path(track:u8)->PathBuf {
-    game_dir().join(format!("Track{track:02}.flac"))
+    game_dir().join("music").join(format!("Track{track:02}.flac"))
 }
 fn available_count()->usize{
     (2u8..=15).filter(|&t|track_path(t).is_file()).count()
@@ -151,7 +152,7 @@ fn available_count()->usize{
 fn open_virtual(params:Ptr)->Dword {
     if params==0{return MCIERR_MISSING_PARAMETER;}
     if available_count()==0 {
-        log("MCI_OPEN: no Track02.flac .. Track15.flac next to CYBER.EXE");
+        log("MCI_OPEN: no music/Track02.flac .. Track15.flac beside CYBER.EXE");
         return MCIERR_UNSUPPORTED_FUNCTION;
     }
     let mut ctl=controller().lock().unwrap_or_else(|e|e.into_inner());
@@ -299,7 +300,7 @@ static SYSTEM_WINMM:OnceLock<Option<usize>>=OnceLock::new();
 fn system_winmm()->Option<usize> {
     *SYSTEM_WINMM.get_or_init(||unsafe{
         // A local winmm.dll override is forbidden. Absolute system-directory
-        // loading avoids resolving to CyberGladiatorsCDDA.dll or the game dir.
+        // loading avoids resolving to CyberGladiatorsFix.dll or the game dir.
         let mut path=[0u16;1024];
         let n=GetSystemDirectoryW(path.as_mut_ptr(),path.len() as u32) as usize;
         if n==0 || n>=path.len()-12 {
@@ -349,6 +350,9 @@ pub unsafe extern "system" fn mciSendStringA(
 )->u32 {
     let entry=std::time::Instant::now();
     mark_trace_session_once();
+    // Report the verified Wine-only DirectDraw interception at the first
+    // native MCI video command. This is the single unified session log.
+    ddraw_native::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
     };

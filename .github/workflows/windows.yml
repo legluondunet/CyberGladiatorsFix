@@ -1,4 +1,4 @@
-name: Windows - single self-contained x64 launcher
+name: Windows - legacy nGlide build checks (not a distributable)
 
 on:
   push:
@@ -68,28 +68,14 @@ jobs:
         run: |
           & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --check-bundle
           if ($LASTEXITCODE -ne 0) { throw "Embedded x86 runtime verification failed" }
-          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsCDDA.dll") {
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.dll") {
             throw "Unexpected external CDDA DLL in the user distribution folder"
           }
           if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsIntro.exe") {
             throw "Unexpected external intro EXE in the user distribution folder"
           }
 
-      - name: Stage the single distributable Windows EXE
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe dist/
-          $files = @(Get-ChildItem dist -File)
-          if ($files.Count -ne 1 -or $files[0].Name -ne "CyberGladiatorsFix.exe") {
-            throw "Distribution must contain exactly one executable"
-          }
-          Write-Host "Self-contained x64 launcher: $($files[0].Length) bytes, with one embedded verified x86 WinMM video/CDDA DLL"
-
-      - name: Upload self-contained Windows x64 EXE
-        uses: actions/upload-artifact@v4
-        with:
-          name: CyberGladiatorsFix-Windows-x64-OneFile
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
+      # This legacy job validates the nGlide-compatible launcher build,
+      # but its EXE cannot run the one-click GameFrame default because it
+      # intentionally does not embed GameFrame. Never publish it to users.
+      # The GameFrame workflow is the ONE supported distributable pipeline.

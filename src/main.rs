@@ -7,55 +7,52 @@ mod cdda;
 mod audio;
 mod install;
 mod nglide;
+mod gameframe;
 mod graphics;
 mod settings;
 mod patch;
 mod verify;
 mod diagnostics;
 mod bundle;
+mod migration;
+mod autostart;
 
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path,PathBuf};
 
 const NAME:&str="CyberGladiatorsFix";
-const HELP:&str=r"CyberGladiatorsFix — self-contained x64 installer, compatibility patch and game launcher
+const HELP:&str=r"CyberGladiatorsFix — open-source Windows x64 installer and launcher (Wine compatible)
 
 Usage:
-  CyberGladiatorsFix.exe [<disc.cue>]    Install/update verified US retail CD
-  CyberGladiatorsFix.exe --launch        Play game with native fullscreen AVI
-  CyberGladiatorsFix.exe --launch --smooth-video-test  Test earlier black intro and bounded video-to-3D curtain
-  CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan  Experimental native Vulkan with same smooth video
-  CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release  Isolate Vulkan from the AVI's retained fullscreen black host
-  CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release --vulkan-auto-fullscreen-test  Test bounded nGlide Alt+Enter recovery
-  CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
-  CyberGladiatorsFix.exe --launch --3dfx-logo
-  CyberGladiatorsFix.exe --verify        Strict original CD integrity check
-  CyberGladiatorsFix.exe --max-graphics  Maximize verified game settings
-  CyberGladiatorsFix.exe --upgrade-cdda  Approve backed-up unknown DLL upgrade
-  CyberGladiatorsFix.exe --check-bundle  Validate embedded 32-bit components
-  CyberGladiatorsFix.exe --dxvk-rootcause  Reproduce native AVI/DXVK crash (diagnostic)
-  CyberGladiatorsFix.exe --dxvk-wndproc-repair-test  Test restoring original game WndProc after AVI (experimental)
+  CyberGladiatorsFix.exe               Auto-detect verified installed game or CUE/BIN, install if missing, then play
+  CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
+  CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
+  CyberGladiatorsFix.exe --verify      Strict original retail manifest and patches
+  CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
+  CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
+  CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-One-file Windows distribution: one verified x86 WinMM video/CDDA DLL is
-embedded in this EXE. A matching Wine/Proton configuration and third-party
-nGlide are required to play. The game and nGlide are NOT bundled.
+No launch argument is required. On first use, keep the original .cue
+and its .bin track files next to this EXE. CYBER.EXE and retail data are
+extracted only from a SHA-256-verified supported US CD image. Subsequent
+launches check the installation and start automatically.
 
-A fresh CyberGladiatorsFix.log is written beside this EXE per invocation.
-With [Video] SkipIntro=0, the original game plays its native Cinepak AVI
-fullscreen with black 4:3 pillarboxes; only Escape, Enter and Space skip it.
-The x86 bridge then applies a guarded WineD3D/DXVK WndProc repair.
-[Audio] EnableCDDA=1 enables FLAC music. EnableCDDA=0 forwards native CD
-audio commands to the real WinMM; it does NOT disable the native AVI player.
-If SkipIntro=1, no video is played.
-Original CD assets and CYBER.EXE.bak are never silently replaced.
-[Integrity] AllowModifiedIQ=1 permits same-size IQ differences on launch only;
---verify always uses strict original hashes.
-The game's binary CYBER.INI is separate from text CyberGladiatorsFix.ini.
-For additional Wine diagnostics use --trace (also --launch --trace).
-For developer-only experiments, see docs/DEVELOPMENT_HISTORY.md.
+One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
+(Apache-2.0) and the project's CyberGladiatorsFix.dll WinMM/CDDA bridge
+(GPLv3). They are SHA-256 verified before being installed beside CYBER.EXE.
+An existing third-party glide.dll is preserved byte-for-byte and restored
+after gameplay. A fresh installation keeps the embedded Glide DLL.
+Original lossless CD music is stored in music/TrackNN.flac.
+No original game data is distributed. IQ data is never silently changed.
+
+A fresh, single CyberGladiatorsFix.log appears beside the launcher.
+--verify always applies strict SHA-256 checks. The optional INI setting
+AllowModifiedIQ=1 permits only same-size IQ modifications during launch.
+Existing nGlide/developer commands are retained internally for forensic
+regression tests but are not needed for normal use.
 ";
 fn show(s:&str,root:&Path){
     println!("{s}");
@@ -203,6 +200,27 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
     show(&format!("GAME_STARTED pid={} intro_skipped=1 trace={trace}",child.id()),root);
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
 }
+/// Only the opt-in GameFrame experiment uses this dedicated launcher.
+/// It preserves the old native-video and nGlide paths completely.
+fn user_gameframe_launch(root:&Path)->Result<(),String>{
+    let game=root.join(install::DIR);
+    settings::ensure(&game)?;
+    let enable_cdda=settings::read_cdda(&game)?;
+    let mut previous_glide=gameframe::Session::begin(root,&game)?;
+    let child=verify::launch_gameframe_test(root)?;
+    show(&format!(
+        "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
+        child.id(),u8::from(enable_cdda)
+    ),root);
+    let result=wait_game(child,root);
+    let restored=previous_glide.restore();
+    match (result,restored){
+        (Err(game),Err(dll))=>Err(format!("{game}; original Glide restoration failed: {dll}")),
+        (Err(game),_)=>Err(game),
+        (_,Err(dll))=>Err(dll),
+        (Ok(()),Ok(()))=>Ok(()),
+    }
+}
 /// Opt-in comparison of the validated smooth D3D9 handoff against nGlide's
 /// Vulkan renderer, retaining the same native MCI AVI, black curtain and
 /// guard-checked WndProc repair. No changes to the validated default launch.
@@ -248,6 +266,26 @@ fn diagnose_dxvk(root:&Path,wndproc_repair:bool)->Result<(),String>{
 fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
     match args{
+        []=>{
+            let _lock=autostart::lock(root)?;
+            autostart::prepare(root,None)?;
+            return user_gameframe_launch(root);
+        },
+        [one] if one.to_str()==Some("--install-only")=>{
+            let _lock=autostart::lock(root)?;
+            autostart::prepare(root,None)?;
+            let game=root.join(install::DIR);
+            let mut glide=gameframe::Session::begin(root,&game)?;
+            glide.restore()?;
+            show(&format!("AUTO_INSTALL_ONLY verified: {}",verify::verify(root)?),root);
+            return Ok(());
+        },
+        [one] if one.to_str().is_some_and(|s|s.to_ascii_lowercase().ends_with(".cue"))=>{
+            let _lock=autostart::lock(root)?;
+            let source=PathBuf::from(one);
+            autostart::prepare(root,Some(&source))?;
+            return user_gameframe_launch(root);
+        },
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
         [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
@@ -263,6 +301,14 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             show(&r,root);return Ok(());
         },
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
+        [one,two] if one.to_str()==Some("--launch")
+            && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
+            return user_gameframe_launch(root),
+        // Preserve original validated #37 invocation as a compatibility alias.
+        [one,two,three] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--gameframe-test")
+            && three.to_str()==Some("--avi-first-present-handoff")=>
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
@@ -402,19 +448,17 @@ mod diagnostics_tests {
         }
     }
     #[test]
-    fn help_lists_only_public_single_file_controls(){
-        for expected in ["--launch","--trace","--verify","--max-graphics",
-            "--upgrade-cdda","--check-bundle","--dxvk-rootcause",
-            "--dxvk-wndproc-repair-test","--smooth-video-test","--nglide-vulkan","--3dfx-logo","--version","--help",
-            "CyberGladiatorsFix.log","one verified x86 WinMM"]{
+    fn help_lists_only_one_click_controls(){
+        for expected in ["CyberGladiatorsFix.exe               Auto-detect",
+            "--install-only","--verify","--max-graphics",
+            "--check-bundle","--version","--help",
+            "music/TrackNN.flac","CyberGladiatorsFix.dll",
+            "CyberGladiatorsFix.log","GameFrame"]{
             assert!(HELP.contains(expected),"{expected}");
         }
+        assert!(!HELP.contains("--launch"));
+        assert!(!HELP.contains("--avi-in-game-window"));
+        assert!(!HELP.contains("--nglide-vulkan"));
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
-        assert!(HELP.contains("--launch --smooth-video-test --nglide-vulkan"));
-        assert!(HELP.contains("--vulkan-early-release"));
-        assert!(HELP.contains("--vulkan-auto-fullscreen-test"));
-        assert!(!HELP.contains("--avi-4x3-test"));
-        assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
-        assert!(!HELP.contains("--video-delay="));
     }
 }

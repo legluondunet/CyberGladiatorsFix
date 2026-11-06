@@ -53,7 +53,20 @@ const WINMM_NAME_POINTER:usize=0x4e434;
 const OLD_WINMM_RVA:u32=0x3ed40c;
 const CDDA_NAME_RVA:u32=0x3edb00;
 const CDDA_NAME_OFFSET:usize=0x4ef00;
-const CDDA_NAME:&[u8]=b"CyberGladiatorsCDDA.dll\0";
+const CDDA_NAME:&[u8;24]=b"CyberGladiatorsFix.dll\0\0";
+const LEGACY_CDDA_NAME:&[u8;24]=b"CyberGladiatorsCDDA.dll\0";
+/// Verify the renamed imported WinMM module using already pinned SHA-256:
+/// virtual reversal of ONLY the 24-byte name slot yields the trusted old hash.
+fn canonical_digest(data:&[u8])->String{
+    if data.len()!=LEN{return digest(data);}
+    let rva=u32::from_le_bytes(data[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4].try_into().unwrap());
+    if rva==CDDA_NAME_RVA &&
+       &data[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24]==CDDA_NAME{
+        let mut old=data.to_vec();
+        old[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24].copy_from_slice(LEGACY_CDDA_NAME);
+        digest(&old)
+    }else{digest(data)}
+}
 fn validate_import(data:&[u8])->Result<(),String>{
     let name=u32::from_le_bytes(data[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4]
         .try_into().unwrap());
@@ -119,9 +132,9 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
         return Err(format!("CYBER.EXE must be a regular file: {}",path.display()));
     }
     let data=fs::read(path).map_err(|e|e.to_string())?;
-    let hash=digest(&data);
+    let hash=canonical_digest(&data);
     if [SPEED_ONLY,NO_CD_ONLY].contains(&hash.as_str()) {
-        return Err("Existing CYBER.EXE requires CDDA upgrade. Place CyberGladiatorsCDDA.dll beside CyberGladiatorsFix.exe and rerun patcher without arguments".into());
+        return Err("Existing CYBER.EXE has an old partial patch; a verified retail CYBER.EXE.bak is required before automatically upgrading the embedded WinMM bridge".into());
     }
     if ![PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA,PATCHED_NO_CDDA_SKIP].contains(&hash.as_str()) {
         return Err(format!("Unsupported CYBER.EXE: SHA-256 {hash}; expected the recognized CDDA patch with intro enabled/disabled"));
@@ -168,9 +181,19 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     let meta=fs::symlink_metadata(path).map_err(|e|e.to_string())?;
     if !meta.is_file()||meta.file_type().is_symlink(){return Err("CYBER.EXE must be a regular file".into());}
     let data=fs::read(path).map_err(|e|e.to_string())?;
-    let hash=digest(&data);
+    let hash=canonical_digest(&data);
     if [PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA,PATCHED_NO_CDDA_SKIP].contains(&hash.as_str()) {
         verify_exe(path)?;
+        if &data[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24]==LEGACY_CDDA_NAME{
+            let mut updated=data;
+            updated[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24].copy_from_slice(CDDA_NAME);
+            if canonical_digest(&updated)!=hash{
+                return Err("WinMM import migration checksum mismatch; original EXE unchanged".into());
+            }
+            replace_exe(path,&updated)?;
+            verify_exe(path)?;
+            return Ok("Verified legacy WinMM import migrated to CyberGladiatorsFix.dll");
+        }
         return Ok("Already patched (verified)");
     }
     let stage=match hash.as_str() {
@@ -182,7 +205,7 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     };
     let mut patched=data.clone();
     patch_bytes(&mut patched,stage)?;
-    if digest(&patched)!=PATCHED {return Err("Internal checksum mismatch: patch refused".into());}
+    if canonical_digest(&patched)!=PATCHED {return Err("Internal checksum mismatch: patch refused".into());}
     let backup=backup_path(path);
     if backup.exists() {
         if file_hash(&backup)? != ORIGINAL {return Err("Existing .bak has unexpected contents; refusing to overwrite".into());}
@@ -224,7 +247,7 @@ const INTRO_SKIP_BYTES:[u8;2]=[0xeb,0x2f];
 /// of the user's independent EnableCDDA music preference.
 pub fn cdda_active(path:&Path)->Result<bool,String>{
     verify_exe(path)?;
-    let hash=file_hash(path)?;
+    let hash=canonical_digest(&fs::read(path).map_err(|e|e.to_string())?);
     Ok(hash==PATCHED || hash==PATCHED_SKIP_INTRO)
 }
 
@@ -248,16 +271,18 @@ fn is_intro_skipped(hash:&str)->bool{
 pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
     verify_exe(path)?;
     let original=fs::read(path).map_err(|e|e.to_string())?;
-    let hash=digest(&original);
+    let hash=canonical_digest(&original);
     let current=hash==PATCHED||hash==PATCHED_SKIP_INTRO;
-    if current==enabled {
-        return Ok(if enabled{"WinMM video/CDDA bridge already imported"}else{"Legacy system WinMM import already selected"});
+    let legacy=current&&&original[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24]==LEGACY_CDDA_NAME;
+    if current==enabled && !legacy{
+        return Ok(if enabled{"CyberGladiatorsFix.dll already imported"}else{"Legacy system WinMM import already selected"});
     }
     let mut updated=original;
     let name=u32::from_le_bytes(updated[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4]
         .try_into().unwrap());
     let expected_name=if current{CDDA_NAME_RVA}else{OLD_WINMM_RVA};
-    let expected_bytes=if current{CDDA_NAME}else{&[0u8;24]};
+    let expected_bytes:&[u8;24]=if legacy{LEGACY_CDDA_NAME}
+        else if current{CDDA_NAME}else{&[0u8;24]};
     if name!=expected_name ||
        updated[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()]!=*expected_bytes{
         return Err("Unexpected WinMM import name; refusing CDDA toggle".into());
@@ -269,7 +294,7 @@ pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
     }else{
         updated[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()].fill(0);
     }
-    if digest(&updated)!=expected_runtime_hash(is_intro_skipped(&hash),enabled){
+    if canonical_digest(&updated)!=expected_runtime_hash(is_intro_skipped(&hash),enabled){
         return Err("CDDA toggle checksum mismatch; CYBER.EXE unchanged".into());
     }
     replace_exe(path,&updated)?;
@@ -282,7 +307,7 @@ pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
 pub fn set_skip_intro(path:&Path,skip:bool)->Result<&'static str,String>{
     verify_exe(path)?;
     let original=fs::read(path).map_err(|e|e.to_string())?;
-    let hash=digest(&original);
+    let hash=canonical_digest(&original);
     let cdda=hash==PATCHED||hash==PATCHED_SKIP_INTRO;
     if skip==is_intro_skipped(&hash){
         return Ok(if skip{"Startup intro already disabled"}else{"Startup intro already enabled"});
@@ -297,7 +322,7 @@ pub fn set_skip_intro(path:&Path,skip:bool)->Result<&'static str,String>{
     }
     let mut updated=original;
     updated[SKIP_INTRO_OFFSET..SKIP_INTRO_OFFSET+2].copy_from_slice(&to);
-    if digest(&updated)!=expected_runtime_hash(skip,cdda){
+    if canonical_digest(&updated)!=expected_runtime_hash(skip,cdda){
         return Err("Startup intro checksum mismatch; CYBER.EXE unchanged".into());
     }
     replace_exe(path,&updated)?;
@@ -399,6 +424,18 @@ mod tests {
         assert_eq!(&data[CD_CHECK.0..CD_CHECK.0+5],&before[CD_CHECK.0..CD_CHECK.0+5]);
         assert_eq!(&data[INTRO_GATES[0].0..INTRO_GATES[0].0+2],&before[INTRO_GATES[0].0..INTRO_GATES[0].0+2]);
         assert_eq!(&data[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+CDDA_NAME.len()],CDDA_NAME);
+    }
+    #[test] fn new_import_is_canonicalized_to_known_hash(){
+        assert_eq!(CDDA_NAME.len(),24);
+        assert_eq!(CDDA_NAME[22],0);
+        assert_eq!(CDDA_NAME[23],0);
+        let mut fresh=prepare_stage(Edition::IntroOnly);
+        patch_bytes(&mut fresh,Edition::IntroOnly).unwrap();
+        let mut old=fresh.clone();
+        old[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24].copy_from_slice(LEGACY_CDDA_NAME);
+        assert_eq!(canonical_digest(&fresh),digest(&old));
+        fresh[0x200]=1;
+        assert_ne!(canonical_digest(&fresh),digest(&old));
     }
     #[test] fn refuses_nonempty_import_name_padding(){
         let mut data=prepare_stage(Edition::IntroOnly);

@@ -7,8 +7,8 @@ use std::io::{Read,Write};
 use std::path::Path;
 use sha2::{Digest,Sha256};
 
-pub const DLL_NAME:&str="CyberGladiatorsCDDA.dll";
-const RECEIPT_NAME:&str="CyberGladiatorsCDDA.sha256";
+pub const DLL_NAME:&str="CyberGladiatorsFix.dll";
+const RECEIPT_NAME:&str="CyberGladiatorsFix.sha256";
 fn check(path:&Path)->Result<(),String>{
     let m=fs::symlink_metadata(path)
         .map_err(|e|format!("Missing {DLL_NAME} at {}: {e}",path.display()))?;
@@ -153,7 +153,7 @@ fn record_receipt(game:&Path,hash:&str)->Result<(),String>{
     let path=game.join(RECEIPT_NAME);
     let old=read_receipt(game)?;
     if old.as_deref()==Some(hash){return Ok(());}
-    let temp=game.join("CyberGladiatorsCDDA.sha256.tmp");
+    let temp=game.join("CyberGladiatorsFix.sha256.tmp");
     if temp.exists()||temp.is_symlink(){
         return Err("Existing CDDA digest receipt staging file; refusing overwrite".into());
     }
@@ -167,7 +167,7 @@ fn record_receipt(game:&Path,hash:&str)->Result<(),String>{
     if path.exists(){
         // Windows cannot rename over an existing target. Temporarily retire
         // it and restore on failure, never follow a symlink.
-        let retired=game.join("CyberGladiatorsCDDA.sha256.previous.tmp");
+        let retired=game.join("CyberGladiatorsFix.sha256.previous.tmp");
         if retired.exists()||retired.is_symlink(){let _=fs::remove_file(&temp);return Err("CDDA receipt backup staging path exists".into());}
         if let Err(e)=fs::rename(&path,&retired){let _=fs::remove_file(&temp);return Err(format!("Cannot retire CDDA receipt: {e}"));}
         if let Err(e)=fs::rename(&temp,&path){let restore=fs::rename(&retired,&path);let _=fs::remove_file(&temp);return Err(format!("Cannot update CDDA receipt: {e}; restore={restore:?}"));}
@@ -184,7 +184,7 @@ fn allows_upgrade(existing:&str,receipt:Option<&str>,consent:bool)->bool{
 fn prior_version_backup(game:&Path,hash:&str)->std::path::PathBuf {
     // Deterministic per-version backup: does not conflict with the existing
     // .previous.bak created when v0.2.1 was updated, and never overwrites it.
-    game.join(format!("CyberGladiatorsCDDA.dll.previous-{}.bak",&hash[..12]))
+    game.join(format!("CyberGladiatorsFix.dll.previous-{}.bak",&hash[..12]))
 }
 /// Fail safely with the exact path that needs inspection. A .tmp file may
 /// be the only recoverable copy of an interrupted upgrade: never remove it
@@ -281,14 +281,14 @@ pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),S
     // Upgrade any recognized older project-owned DLL, even if it was not one
     // of the original broken builds. Preserve the exact prior version under
     // a unique hash-qualified backup; never overwrite previous backups.
-    let staged=game.join("CyberGladiatorsCDDA.dll.updating.tmp");
+    let staged=game.join("CyberGladiatorsFix.dll.updating.tmp");
     let backup=prior_version_backup(game,&existing);
     require_vacant(&staged,"CDDA upgrade staging file")?;
     let reuse_backup=existing_backup_matches(&backup,&existing)?;
     // A matching archived copy already preserves the exact old DLL. Avoid
     // deleting or overwriting it: temporarily retire the *installed* copy,
     // and remove only the temporary duplicate after successful publication.
-    let rollback=game.join("CyberGladiatorsCDDA.dll.rollback.tmp");
+    let rollback=game.join("CyberGladiatorsFix.dll.rollback.tmp");
     if reuse_backup {require_vacant(&rollback,"CDDA upgrade rollback file")?;}
     let retired=if reuse_backup{&rollback}else{&backup};
     install_new(&source,&staged,&wanted)?;
@@ -334,8 +334,8 @@ mod tests {
     }
     #[test]
     fn dll_name_is_consistent_with_game_import_patch(){
-        assert_eq!(DLL_NAME,"CyberGladiatorsCDDA.dll");
-        assert_eq!(DLL_NAME.len()+1,24);
+        assert_eq!(DLL_NAME,"CyberGladiatorsFix.dll");
+        assert_eq!(DLL_NAME.len()+1,23);
     }
     #[test]
     fn identifies_exact_previously_distributed_broken_bridges(){
@@ -382,7 +382,7 @@ mod tests {
         let b=prior_version_backup(game,"acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13");
         assert_ne!(a,b);
         assert!(a.to_string_lossy().contains("567e74873301"));
-        assert_ne!(a,game.join("CyberGladiatorsCDDA.dll.previous.bak"));
+        assert_ne!(a,game.join("CyberGladiatorsFix.dll.previous.bak"));
     }
     #[test]
     fn upgrade_reuses_verified_backup_from_previous_cycle(){
@@ -412,8 +412,8 @@ mod tests {
         assert_eq!(fs::read(&target).unwrap(),new);
         assert_eq!(fs::read(&saved).unwrap(),old);
         assert_eq!(read_receipt(&game).unwrap().as_deref(),Some(digest(&source).unwrap().as_str()));
-        assert!(!game.join("CyberGladiatorsCDDA.dll.rollback.tmp").exists());
-        assert!(!game.join("CyberGladiatorsCDDA.dll.updating.tmp").exists());
+        assert!(!game.join("CyberGladiatorsFix.dll.rollback.tmp").exists());
+        assert!(!game.join("CyberGladiatorsFix.dll.updating.tmp").exists());
         // Idempotence: running the same ZIP again is safe.
         try_install_with_consent(&root,&game,true).unwrap();
         assert_eq!(fs::read(&saved).unwrap(),old);
@@ -424,7 +424,7 @@ mod tests {
         let dir=std::env::temp_dir().join(format!("cyber-cdda-collision-{}",std::process::id()));
         let _=fs::remove_dir_all(&dir);
         fs::create_dir(&dir).unwrap();
-        let staged=dir.join("CyberGladiatorsCDDA.dll.updating.tmp");
+        let staged=dir.join("CyberGladiatorsFix.dll.updating.tmp");
         assert!(require_vacant(&staged,"CDDA upgrade staging file").is_ok());
         fs::write(&staged,b"preserve").unwrap();
         let err=require_vacant(&staged,"CDDA upgrade staging file").unwrap_err();
