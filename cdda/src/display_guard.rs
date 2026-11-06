@@ -23,6 +23,8 @@ static INSTALLED:AtomicU32=AtomicU32::new(0);
 static CANDIDATES:AtomicU32=AtomicU32::new(0);
 static BLOCKED:AtomicU32=AtomicU32::new(0);
 static REPORTED:AtomicBool=AtomicBool::new(false);
+static STARTUP_ATTEMPTED:AtomicBool=AtomicBool::new(false);
+static STARTUP_PATH:AtomicU32=AtomicU32::new(0);
 
 #[link(name="kernel32")]
 unsafe extern "system" {
@@ -117,25 +119,39 @@ unsafe fn install_import_guard()->u32{
     }
     installed
 }
-#[no_mangle]
-pub unsafe extern "system" fn DllMain(
-    _instance:*mut c_void,reason:u32,_reserved:*mut c_void
-)->i32 {
-    if reason!=DLL_PROCESS_ATTACH{return 1;}
+// Rust's cdylib entrypoint is not guaranteed to forward DLL_PROCESS_ATTACH
+// to an exported function named DllMain. MSVC's CRT constructor table is
+// executed before CYBER.EXE enters main(). Keep this strictly loader-safe:
+// no heap, I/O, Rust TLS, DirectDraw COM calls or window management here.
+#[used]
+#[link_section = ".CRT$XCU"]
+static EARLY_GUARD_INIT: unsafe extern "C" fn() = crt_guard_init;
+
+unsafe extern "C" fn crt_guard_init(){
+    install_at_startup(2);
+}
+unsafe fn install_at_startup(path:u32){
+    if STARTUP_ATTEMPTED.swap(true,Ordering::AcqRel){return;}
+    STARTUP_PATH.store(path,Ordering::Release);
     let mut value=[0i8;4];
     let requested=GetEnvironmentVariableA(
         b"CYBER_WINE_DESKTOP_MODE_GUARD\0".as_ptr().cast(),
         value.as_mut_ptr(),value.len() as u32)==1 && value[0]==b'1' as i8;
-    if !requested{return 1;}
-    // A second opt-in prevents accidental effects in any other executable.
+    if !requested{return;}
     let enabled=GetEnvironmentVariableA(
         b"CYBER_GAMEFRAME_TEST\0".as_ptr().cast(),
         value.as_mut_ptr(),value.len() as u32)==1 && value[0]==b'1' as i8;
-    if !enabled{return 1;}
+    if !enabled{return;}
     let count=install_import_guard();
     INSTALLED.store(count,Ordering::Release);
     ACTIVE.store(count>0,Ordering::Release);
-    1 // never block loading the original game
+}
+#[no_mangle]
+pub unsafe extern "system" fn DllMain(
+    _instance:*mut c_void,reason:u32,_reserved:*mut c_void
+)->i32 {
+    if reason==DLL_PROCESS_ATTACH{install_at_startup(1);}
+    1
 }
 #[inline]
 fn suppress_mode_request()->i32{
@@ -156,10 +172,14 @@ unsafe extern "system" fn guard_ex_w(
 )->i32{suppress_mode_request()}
 
 pub fn report_once(){
-    if std::env::var("CYBER_WINE_DESKTOP_MODE_GUARD").as_deref()!=Ok("1")
-        || REPORTED.swap(true,Ordering::AcqRel){return;}
+    if REPORTED.swap(true,Ordering::AcqRel){return;}
+    let requested=std::env::var("CYBER_WINE_DESKTOP_MODE_GUARD").ok();
+    let gameframe=std::env::var("CYBER_GAMEFRAME_TEST").ok();
     super::log(&format!(
-        "WINE_DESKTOP_MODE_GUARD enabled={} user32_imports_matched={} hooks_installed={} suppressed_mode_requests={} other_renderers_untouched=1 no_display_mode_changes_by_guard=1",
+        "WINE_DESKTOP_MODE_GUARD requested={:?} gameframe={:?} startup_called={} startup_path={} enabled={} user32_imports_matched={} hooks_installed={} suppressed_mode_requests={} other_renderers_untouched=1",
+        requested.as_deref(),gameframe.as_deref(),
+        u8::from(STARTUP_ATTEMPTED.load(Ordering::Acquire)),
+        STARTUP_PATH.load(Ordering::Acquire),
         u8::from(ACTIVE.load(Ordering::Acquire)),
         CANDIDATES.load(Ordering::Acquire),
         INSTALLED.load(Ordering::Acquire),
