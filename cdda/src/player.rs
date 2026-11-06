@@ -176,7 +176,7 @@ pub fn run(rx:mpsc::Receiver<Command>,shared:Arc<Shared>,root:PathBuf){
         match rx.recv_timeout(Duration::from_millis(25)){
             Ok(Command::Play{track,to})=>{
                 playing=None; // calls waveOutReset and closes the old stream.
-                let path=root.join(format!("Track{track:02}.flac"));
+                let path=root.join("music").join(format!("Track{track:02}.flac"));
                 match AudioTrack::open(&path){
                     Ok(mut audio)=>{
                         if let Err(err)=audio.pump(){
