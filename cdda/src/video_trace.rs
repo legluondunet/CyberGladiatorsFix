@@ -99,7 +99,7 @@ const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
 const TRANSITION_TIMER_ID:usize=0x4359;
 const INITIAL_FRAME_TIMER_ID:usize=0x435a;
 const INITIAL_FRAME_COVER_MS:u32=300; // trial: let Cinepak decode behind black
-const TRANSITION_DELAY_MS:u32=1000; // only used by --smooth-video-test
+const TRANSITION_DELAY_MS:u32=2000; // only used by --smooth-video-test
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
@@ -641,7 +641,7 @@ fn start_transition_curtain()->bool {
         }
         stop_movie_input(h);
         // Playback may have been skipped before 300 ms. Ensure its initial
-        // reveal timer cannot run during the one-second exit curtain.
+        // reveal timer cannot run during the two-second exit curtain.
         if h.first_frame_timer {
             let _=KillTimer(h.host as *mut c_void,INITIAL_FRAME_TIMER_ID);
             h.first_frame_timer=false;
@@ -888,7 +888,7 @@ mod fullscreen_tests {
         assert_ne!(INITIAL_FRAME_TIMER_ID,TRANSITION_TIMER_ID);
         assert!(INITIAL_FRAME_COVER_MS>=200);
         assert!(INITIAL_FRAME_COVER_MS<=500);
-        assert_eq!(TRANSITION_DELAY_MS,1000);
+        assert_eq!(TRANSITION_DELAY_MS,2000);
     }
     #[test]
     fn smooth_window_is_managed_and_video_surface_initially_hidden(){
@@ -906,7 +906,7 @@ mod fullscreen_tests {
         assert!(!should_arm_curtain(false,0),"normal launch must close the host immediately");
         assert!(!should_arm_curtain(true,1),"failed MCI close must release the host");
         assert!(should_arm_curtain(true,0));
-        assert_eq!(TRANSITION_DELAY_MS,1000);
+        assert_eq!(TRANSITION_DELAY_MS,2000);
         assert_eq!(VIDEO_LEAD_IN_MS,1000);
     }
     #[test]
