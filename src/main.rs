@@ -25,6 +25,7 @@ Usage:
   CyberGladiatorsFix.exe [<disc.cue>]    Install/update verified US retail CD
   CyberGladiatorsFix.exe --launch        Play game with native fullscreen AVI
   CyberGladiatorsFix.exe --launch --smooth-video-test  Test earlier black intro and bounded video-to-3D curtain
+  CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan  Experimental native Vulkan with same smooth video
   CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
   CyberGladiatorsFix.exe --launch --3dfx-logo
   CyberGladiatorsFix.exe --verify        Strict original CD integrity check
@@ -200,6 +201,23 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
     show(&format!("GAME_STARTED pid={} intro_skipped=1 trace={trace}",child.id()),root);
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
 }
+/// Opt-in comparison of the validated smooth D3D9 handoff against nGlide's
+/// Vulkan renderer, retaining the same native MCI AVI, black curtain and
+/// guard-checked WndProc repair. No changes to the validated default launch.
+fn smooth_vulkan_launch(root:&Path)->Result<(),String>{
+    let game=root.join(install::DIR);
+    settings::ensure(&game)?;
+    if settings::read(&game)?{
+        return Err("--smooth-video-test --nglide-vulkan requires [Video] SkipIntro=0; INI unchanged".into());
+    }
+    let enable_cdda=settings::read_cdda(&game)?;
+    let child=verify::launch_smooth_vulkan(root)?;
+    show(&format!(
+        "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-Vulkan smooth_video=1 guarded_wndproc_repair=1 trace=false external_helper=0 music_flac={}",
+        child.id(),u8::from(enable_cdda)
+    ),root);
+    wait_game(child,root)
+}
 /// Reproduce the ORIGINAL in-process MCIAVI -> nGlide D3D9/DXVK crash.
 /// This explicitly bypasses our external-video curtain. No invasive Glide
 /// pointer hook is enabled. The first-chance observer in the optional CDDA
@@ -245,6 +263,10 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
+        [one,two,three] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--smooth-video-test")
+            && three.to_str()==Some("--nglide-vulkan")=>
+            return smooth_vulkan_launch(root),
         [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>
             return user_launch(root,true,false,false),
@@ -370,11 +392,12 @@ mod diagnostics_tests {
     fn help_lists_only_public_single_file_controls(){
         for expected in ["--launch","--trace","--verify","--max-graphics",
             "--upgrade-cdda","--check-bundle","--dxvk-rootcause",
-            "--dxvk-wndproc-repair-test","--smooth-video-test","--3dfx-logo","--version","--help",
+            "--dxvk-wndproc-repair-test","--smooth-video-test","--nglide-vulkan","--3dfx-logo","--version","--help",
             "CyberGladiatorsFix.log","one verified x86 WinMM"]{
             assert!(HELP.contains(expected),"{expected}");
         }
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
+        assert!(HELP.contains("--launch --smooth-video-test --nglide-vulkan"));
         assert!(!HELP.contains("--avi-4x3-test"));
         assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(!HELP.contains("--video-delay="));
