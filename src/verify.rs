@@ -144,6 +144,12 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
     launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3,smooth_test)
         .map(|child|(child,None))
 }
+/// Experimental nGlide Vulkan backend using the same smooth 4:3 native AVI
+/// and bounded curtain as the validated D3D9 launch. This is opt-in only;
+/// ordinary --launch and --launch --smooth-video-test remain D3D9.
+pub fn launch_smooth_vulkan(root:&Path)->Result<Child,String>{
+    launch_with_renderer_test(root,false,false,false,0,true,Some("2"),false,false,None,true,true,true)
+}
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,wndproc_repair,false)
 }
@@ -172,18 +178,21 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
     }
     Ok(())
 }
+fn guarded_video_backend_allowed(backend:Option<&str>,smooth_test:bool)->bool{
+    backend==Some("1") || (backend==Some("2") && smooth_test)
+}
 fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool,smooth_test:bool)->Result<Child,String>{
     // The normal game path uses one x86 WinMM bridge with a guarded native
     // AVI handoff. Trace-only backend tests follow a separate validated path.
     let normal_repair=wndproc_repair && !trace
-        && no_glide_hook && backend_override==Some("1")
+        && no_glide_hook && guarded_video_backend_allowed(backend_override,smooth_test)
         && !passthru_noop && video_delay_ms==0 && !dxvk_defer_surface
         && !desktop_refresh && dxvk_log_dir.is_none();
     if wndproc_repair && !normal_repair
         && (!trace||!no_glide_hook||backend_override!=Some("1")
             ||logo||passthru_noop||video_delay_ms!=0||dxvk_defer_surface
             ||desktop_refresh) {
-        return Err("WndProc repair requires native AVI, nGlide D3D9 and a hook-free launch".into());
+        return Err("WndProc repair requires a verified hook-free native AVI launch (D3D9, or opt-in smooth Vulkan)".into());
     }
     let diagnostic_fullscreen=avi_4x3 && trace && wndproc_repair
         && no_glide_hook && backend_override==Some("1")
@@ -194,7 +203,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         return Err("Smooth-video test may only run with the normal, guarded fullscreen AVI path".into());
     }
     if avi_4x3 && !normal_repair && !diagnostic_fullscreen {
-        return Err("Fullscreen native AVI host requires a guarded native-video launch with nGlide Direct3D9".into());
+        return Err("Fullscreen native AVI host requires a guarded native-video launch".into());
     }
     if !normal_repair {
         validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
@@ -271,7 +280,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }
     if avi_4x3 {
         cmd.env("CYBER_AVI_FULLSCREEN","1");
-        crate::show("AVI_4X3 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 only_skip_keys=ESC_ENTER_SPACE mouse_buttons_suppressed=1 renderer=nGlide_D3D9",root);
+        crate::show(&format!("AVI_4X3 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 only_skip_keys=ESC_ENTER_SPACE mouse_buttons_suppressed=1 renderer={}",if backend_override==Some("2"){"nGlide_Vulkan"}else{"nGlide_D3D9"}),root);
     }
     if smooth_test {
         cmd.env("CYBER_AVI_SMOOTH_TEST","1");
@@ -283,7 +292,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     if wndproc_repair {
         cmd.env(if trace{"CYBER_WNDPROC_REPAIR_TEST"}else{"CYBER_WNDPROC_REPAIR"},"1");
         if !trace {
-            crate::show("INTRO_NATIVE repair=enabled only_when_WineD3D_ANSI_WndProc_and_verified_game_class; renderer=nGlide_D3D9",root);
+            crate::show(&format!("INTRO_NATIVE repair=enabled only_when_WineD3D_ANSI_WndProc_and_verified_game_class; renderer={}",if backend_override==Some("2"){"nGlide_Vulkan"}else{"nGlide_D3D9"}),root);
         }
     }
     if trace {
@@ -370,9 +379,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }else{
         nglide::configure(&mut cmd,logo);
         if normal_repair {
-            // Reuse the same nGlide Direct3D9 backend validated under Wine:
-            // the normal native-AVI path must not quietly select Auto/Vulkan.
-            cmd.env("NGLIDE_BACKEND","1");
+            // Preserve validated D3D9 for both normal entrypoints. Only the
+            // dedicated smooth Vulkan experiment can select backend 2 here.
+            cmd.env("NGLIDE_BACKEND",backend_override.unwrap_or("1"));
         }
     }
     // All DLL/CDDA logs go directly into the launcher-adjacent session log.
@@ -395,7 +404,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }
     diagnostics::log(root,"CONFIG",&format!(
         "GAME launch: SkipIntro={} EnableCDDA={} NGLIDE_BACKEND={} NGLIDE_RESOLUTION=1 NGLIDE_ASPECT=1 NGLIDE_REFRESH={} NGLIDE_VSYNC=1 NGLIDE_GAMMA=5 NGLIDE_SPLASH={} DXVK_defer_surface={} trace={}",
-        u8::from(skip),u8::from(enable_cdda),backend_override.unwrap_or("0"),
+        u8::from(skip),u8::from(enable_cdda),if normal_repair {backend_override.unwrap_or("1")}else{backend_override.unwrap_or("0")},
         if desktop_refresh{"1 (desktop)"}else{"2 (60Hz)"},
         u8::from(logo),u8::from(dxvk_defer_surface),u8::from(trace)
     ));
@@ -441,6 +450,15 @@ mod experimental_launch_tests {
         assert!(validate_renderer_test(Some("0"),false,true,true,false,false,0).is_err());
         assert!(validate_renderer_test(Some("1"),false,true,false,false,false,0).is_err());
         assert!(validate_renderer_test(None,true,true,true,false,false,0).is_err());
+    }
+    #[test]
+    fn smooth_vulkan_is_opt_in_and_normal_video_stays_d3d9(){
+        assert!(guarded_video_backend_allowed(Some("1"),false));
+        assert!(guarded_video_backend_allowed(Some("1"),true));
+        assert!(guarded_video_backend_allowed(Some("2"),true));
+        assert!(!guarded_video_backend_allowed(Some("2"),false));
+        assert!(!guarded_video_backend_allowed(Some("0"),true));
+        assert!(!guarded_video_backend_allowed(None,true));
     }
     #[test]
     fn video_delay_is_bounded_and_trace_only(){
