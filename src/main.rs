@@ -11,7 +11,6 @@ mod graphics;
 mod settings;
 mod patch;
 mod verify;
-mod intro;
 mod diagnostics;
 mod bundle;
 
@@ -24,7 +23,7 @@ const HELP:&str=r"CyberGladiatorsFix — self-contained x64 installer, compatibi
 
 Usage:
   CyberGladiatorsFix.exe [<disc.cue>]    Install/update verified US retail CD
-  CyberGladiatorsFix.exe --launch        Play game (native AVI with CDDA; fallback otherwise)
+  CyberGladiatorsFix.exe --launch        Play game with native fullscreen AVI
   CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
   CyberGladiatorsFix.exe --launch --3dfx-logo
   CyberGladiatorsFix.exe --verify        Strict original CD integrity check
@@ -36,19 +35,17 @@ Usage:
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-One-file Windows distribution: the x86 CDDA DLL and isolated AVI player are
-included inside this EXE. A matching native Wine/Proton configuration and
-third-party nGlide are required to play. The game and nGlide are NOT bundled.
+One-file Windows distribution: one verified x86 WinMM video/CDDA DLL is
+embedded in this EXE. A matching Wine/Proton configuration and third-party
+nGlide are required to play. The game and nGlide are NOT bundled.
 
 A fresh CyberGladiatorsFix.log is written beside this EXE per invocation.
-When [Video] SkipIntro=0 and [Audio] EnableCDDA=1, the original game plays
-its native Cinepak AVI fullscreen with black pillarboxes in 4:3; only Escape,
-Enter and Space skip it, never mouse clicks or other keys. The x86 bridge
-applies a guarded WineD3D/DXVK window procedure repair after AVI close.
-When CDDA is disabled, the isolated AVI player
-is a temporary compatibility fallback with borderless fullscreen playback and
-keyboard skip. If SkipIntro=1, no video is played.
-Music remains optional: [Audio] EnableCDDA=1 enables FLAC playback.
+With [Video] SkipIntro=0, the original game plays its native Cinepak AVI
+fullscreen with black 4:3 pillarboxes; only Escape, Enter and Space skip it.
+The x86 bridge then applies a guarded WineD3D/DXVK WndProc repair.
+[Audio] EnableCDDA=1 enables FLAC music. EnableCDDA=0 forwards native CD
+audio commands to the real WinMM; it does NOT disable the native AVI player.
+If SkipIntro=1, no video is played.
 Original CD assets and CYBER.EXE.bak are never silently replaced.
 [Integrity] AllowModifiedIQ=1 permits same-size IQ differences on launch only;
 --verify always uses strict original hashes.
@@ -180,57 +177,22 @@ fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
-    if !skip{
-        if enable_cdda {
-            // Default player now uses the 4:3 host and input filters that
-            // were confirmed in Wine under the former opt-in trial. Tracing
-            // deliberately keeps its unmodified MCI baseline for forensics.
-            let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,!trace)?;
-            show(&format!(
-                "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-D3D9 guarded_wndproc_repair=1 trace={trace} external_helper=0",
-                child.id()
-            ),root);
-            let result=if trace{wait_diagnostic(child,root)}else{wait_game(child,root)};
-            report_dxvk_evidence(root,dxvk_logs);
-            return result;
-        }
-        show("INTRO fallback=isolated_MCI reason=CDDA_bridge_disabled; no window-procedure fix available without the in-process bridge",root);
-        return isolated_intro_launch(root,trace,logo);
+    if !skip {
+        // Native AVI always stays in the original game process, regardless
+        // of whether FLAC CDDA music was enabled in the existing user INI.
+        let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,!trace)?;
+        show(&format!(
+            "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-D3D9 guarded_wndproc_repair=1 trace={trace} external_helper=0 music_flac={}",
+            child.id(),u8::from(enable_cdda)
+        ),root);
+        let result=if trace{wait_diagnostic(child,root)}else{wait_game(child,root)};
+        report_dxvk_evidence(root,dxvk_logs);
+        return result;
     }
     show("INTRO skipped by user's [Video] SkipIntro=1; launching game without AVI",root);
     let child=verify::launch(root,logo,trace,false)?;
     show(&format!("GAME_STARTED pid={} intro_skipped=1 trace={trace}",child.id()),root);
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
-}
-/// One shared implementation for normal and trace isolated-intro launch.
-/// The isolated AVI/DXVK approach is user-confirmed; native in-process
-/// video remains reserved for the explicit root-cause diagnostic.
-fn isolated_intro_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
-    intro::play_before_game(root)?;
-    let exe=root.join(install::DIR).join("cyber.exe");
-    let launched=verify::launch_after_external_intro(root,trace,logo);
-    let (child,dxvk_logs)=match launched{
-        Ok(pair)=>pair,
-        Err(e)=>{
-            // Attempt to restore the recognized original intro patch if
-            // game creation failed after applying the skip override.
-            let _=patch::set_skip_intro(&exe,false);
-            return Err(e);
-        }
-    };
-    show(&format!(
-        "INTRO_EXTERNAL GAME_STARTED pid={} runtime_intro_skip=1 trace={} renderer=nGlide-D3D9 (DXVK when configured)",
-        child.id(),trace
-    ),root);
-    let result=if trace{wait_diagnostic(child,root)}else{wait_game(child,root)};
-    report_dxvk_evidence(root,dxvk_logs);
-    let restore=patch::set_skip_intro(&exe,false);
-    match &restore{
-        Ok(_)=>show("INTRO_EXTERNAL RESTORED original in-game intro patch; user INI unchanged",root),
-        Err(e)=>show(&format!("INTRO_EXTERNAL RESTORE_FAILED: {e}; next launch will reapply INI"),root),
-    }
-    restore?;
-    result
 }
 /// Reproduce the ORIGINAL in-process MCIAVI -> nGlide D3D9/DXVK crash.
 /// This explicitly bypasses our external-video curtain. No invasive Glide
@@ -291,10 +253,6 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--trace")
-            && three.to_str()==Some("--external-intro")=>
-            return isolated_intro_launch(root,true,false),
-        [one,two,three] if one.to_str()==Some("--launch")
-            && two.to_str()==Some("--trace")
             && matches!(three.to_str(),Some("--nglide-d3d9"|"--dxvk-defer-surface"|"--dxvk-desktop-refresh"|"--nglide-vulkan"))=>{
             let (backend,dialog,desktop_refresh,label)=match three.to_str().unwrap(){
                 "--nglide-d3d9"=>("1",false,false,"nGlide DirectX9 / DXVK control"),
@@ -348,10 +306,9 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         settings::ensure(&target)?;
         let skip_intro=settings::read(&target)?;
         let enable_cdda=settings::read_cdda(&target)?;
-        if upgrade_cdda && !enable_cdda {return Err("--upgrade-cdda requires [Audio] EnableCDDA=1".into());}
-        if enable_cdda {cdda::try_install_with_consent(root,&target,upgrade_cdda)?;}
+        cdda::try_install_with_consent(root,&target,upgrade_cdda)?;
         let status=patch::apply(&exe)?;
-        let audio=patch::set_cdda(&exe,enable_cdda)?;
+        let audio=patch::set_cdda(&exe,true)?;
         let intro=patch::set_skip_intro(&exe,skip_intro)?;
         let glide=nglide::try_install(root,&target)?;
         show(&format!("{status}. {audio}. {intro}. nGlide {}",if glide{"ready"}else{"missing"}),root);
@@ -407,7 +364,7 @@ mod diagnostics_tests {
         for expected in ["--launch","--trace","--verify","--max-graphics",
             "--upgrade-cdda","--check-bundle","--dxvk-rootcause",
             "--dxvk-wndproc-repair-test","--3dfx-logo","--version","--help",
-            "CyberGladiatorsFix.log","isolated AVI player"]{
+            "CyberGladiatorsFix.log","one verified x86 WinMM"]{
             assert!(HELP.contains(expected),"{expected}");
         }
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
