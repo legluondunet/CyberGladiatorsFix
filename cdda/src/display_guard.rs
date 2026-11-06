@@ -29,6 +29,7 @@ static STARTUP_PATH:AtomicU32=AtomicU32::new(0);
 #[link(name="kernel32")]
 unsafe extern "system" {
     fn GetModuleHandleA(name:*const c_char)->*mut c_void;
+    fn GetProcAddress(module:*mut c_void,name:*const c_char)->*mut c_void;
     fn GetEnvironmentVariableA(name:*const c_char,value:*mut c_char,size:u32)->u32;
     fn VirtualProtect(address:*mut c_void,size:usize,new_protect:u32,old:*mut u32)->i32;
 }
@@ -142,6 +143,13 @@ unsafe fn install_at_startup(path:u32){
         b"CYBER_GAMEFRAME_TEST\0".as_ptr().cast(),
         value.as_mut_ptr(),value.len() as u32)==1 && value[0]==b'1' as i8;
     if !enabled{return;}
+    // This experiment must never modify a native Windows process.
+    // Wine/Proton expose wine_get_version from already-loaded ntdll.
+    let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
+    if ntdll.is_null() ||
+        GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null(){
+        return;
+    }
     let count=install_import_guard();
     INSTALLED.store(count,Ordering::Release);
     ACTIVE.store(count>0,Ordering::Release);
