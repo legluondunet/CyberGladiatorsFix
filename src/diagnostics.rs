@@ -102,6 +102,84 @@ pub fn primary_desktop_size()->Option<(u32,u32)>{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     (w>=640 && h>=480 && w<=16384 && h<=16384).then_some((w as u32,h as u32))
 }
+/// Read-only Windows/Wine desktop-mode monitor for GameFrame startup.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+struct DisplayModeSample{
+    metrics_width:i32,
+    metrics_height:i32,
+    mode_width:u32,
+    mode_height:u32,
+    frequency:u32,
+}
+fn current_display_mode()->DisplayModeSample{
+    let mut mode:DevModeW=unsafe{std::mem::zeroed()};
+    mode.size=std::mem::size_of::<DevModeW>() as u16;
+    let valid=unsafe{EnumDisplaySettingsW(std::ptr::null(),-1,&mut mode)}!=0;
+    let (mw,mh,rate)=if valid{
+        (mode.pels_width,mode.pels_height,mode.frequency)
+    }else{(0,0,0)};
+    DisplayModeSample{
+        metrics_width:unsafe{GetSystemMetrics(0)},
+        metrics_height:unsafe{GetSystemMetrics(1)},
+        mode_width:mw,
+        mode_height:mh,
+        frequency:rate,
+    }
+}
+fn mode_description(mode:DisplayModeSample)->String{
+    format!("Win32_metrics={}x{} EnumDisplaySettings={}x{}@{}Hz",
+        mode.metrics_width,mode.metrics_height,
+        mode.mode_width,mode.mode_height,mode.frequency)
+}
+pub struct GameFrameDisplayWatch{
+    running:std::sync::Arc<std::sync::atomic::AtomicBool>,
+    worker:Option<std::thread::JoinHandle<()>>,
+}
+impl Drop for GameFrameDisplayWatch{
+    fn drop(&mut self){
+        self.running.store(false,std::sync::atomic::Ordering::Release);
+        if let Some(worker)=self.worker.take(){let _=worker.join();}
+    }
+}
+/// Diagnostic only. The parent launcher samples display geometry in its own
+/// Win32 context while CYBER.EXE runs, without calling ChangeDisplaySettings,
+/// resizing any window or sending messages to the game. One journal only.
+pub fn watch_gameframe_display(root:&Path)->GameFrameDisplayWatch{
+    use std::sync::atomic::{AtomicBool,Ordering};
+    let first=current_display_mode();
+    log(root,"DISPLAY",&format!("GAMEFRAME_WATCH start {}",mode_description(first)));
+    let running=std::sync::Arc::new(AtomicBool::new(true));
+    let flag=std::sync::Arc::clone(&running);
+    let path=root.to_path_buf();
+    let worker=std::thread::Builder::new().name("CyberDisplayWatch".into())
+        .spawn(move||{
+            let start=std::time::Instant::now();
+            let mut previous=first;
+            let mut count=0u32;
+            // A brief change near startup is relevant. Never continuously
+            // spam diagnostics when the original game is stable.
+            while flag.load(Ordering::Acquire){
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                let current=current_display_mode();
+                if current!=previous{
+                    count=count.saturating_add(1);
+                    log(&path,"DISPLAY",&format!(
+                        "GAMEFRAME_MODE_CHANGE index={count} since_watch_ms={} before=[{}] after=[{}] passive_observer=1",
+                        start.elapsed().as_millis(),
+                        mode_description(previous),mode_description(current)));
+                    previous=current;
+                }
+            }
+            log(&path,"DISPLAY",&format!(
+                "GAMEFRAME_WATCH stop elapsed_ms={} transitions={} final=[{}]",
+                start.elapsed().as_millis(),count,mode_description(current_display_mode())));
+        })
+        .ok();
+    if worker.is_none(){
+        log(root,"DISPLAY","GAMEFRAME_WATCH unavailable thread_start_failed; no changes to game");
+    }
+    GameFrameDisplayWatch{running,worker}
+}
 fn display_info()->String{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     let mut mode:DevModeW=unsafe{std::mem::zeroed()};
