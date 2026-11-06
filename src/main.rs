@@ -19,7 +19,6 @@ mod autostart;
 
 use std::ffi::OsString;
 use std::fs;
-use std::io::{BufRead,BufReader};
 use std::path::{Path,PathBuf};
 
 const NAME:&str="CyberGladiatorsFix";
@@ -208,57 +207,12 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let mut previous_glide=gameframe::Session::begin(root,&game)?;
-    let mut child=verify::launch_gameframe_test(root)?;
-    // Wine's DirectDraw trace goes to this process' stderr. Drain the pipe
-    // concurrently to avoid blocking the game when Wine emits many lines,
-    // but save only mode/cooperative-level evidence to the ONE existing log.
-    let trace_reader=child.stderr.take().map(|stderr|{
-        let root=root.to_path_buf();
-        std::thread::spawn(move||{
-            let mut read=BufReader::new(stderr);
-            let mut line=String::new();
-            let mut total=0u64;
-            let mut matches=0u64;
-            let mut written=0u32;
-            const MAX_LINES:u32=160;
-            loop{
-                line.clear();
-                let got=match read.read_line(&mut line){
-                    Ok(0)=>break,
-                    Ok(n)=>n,
-                    Err(_)=>break,
-                };
-                if got==0{break;}
-                total+=1;
-                let lower=line.to_ascii_lowercase();
-                let relevant=[
-                    "setdisplaymode","set_display_mode","changedisplaysettings",
-                    "setcooperativelevel","set_cooperative_level","restoredisplaymode",
-                    "directdrawcreate","set_display","display_mode","ddscl_",
-                ].iter().any(|term|lower.contains(term));
-                if relevant{
-                    matches+=1;
-                    if written<MAX_LINES{
-                        // Bounded trace protects log size; never duplicate all
-                        // Wine debug output or create a second diagnostic file.
-                        diagnostics::log(&root,"WINE_DDRAW",
-                            line.trim_end().chars().take(800).collect::<String>().as_str());
-                        written+=1;
-                    }
-                }
-            }
-            diagnostics::log(&root,"WINE_DDRAW_SUMMARY",
-                &format!("total_debug_lines={total} matching_display_calls={matches} captured={written} max_lines={MAX_LINES} intervention=none"));
-        })
-    });
+    let child=verify::launch_gameframe_test(root)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
     ),root);
     let result=wait_game(child,root);
-    if let Some(thread)=trace_reader{
-        if thread.join().is_err(){show("WINE_DDRAW_SUMMARY trace_reader_thread_failed=1",&root);}
-    }
     let restored=previous_glide.restore();
     match (result,restored){
         (Err(game),Err(dll))=>Err(format!("{game}; original Glide restoration failed: {dll}")),
