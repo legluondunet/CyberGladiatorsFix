@@ -101,6 +101,30 @@ jobs:
           if ($output -notmatch 'open_source_glide_embedded=1') { throw "GameFrame must be embedded into the one EXE" }
           Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
 
+      - name: Verify one-click auto-discovery fails safely without a retail CD
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          $dir = Split-Path -Parent $exe
+          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+            throw 'Test runner unexpectedly contains an installed game'
+          }
+          $text = (& $exe 2>&1 | Out-String)
+          if ($LASTEXITCODE -eq 0) {
+            throw 'Automatic no-argument launch unexpectedly succeeded without a CD or game'
+          }
+          if ($text -notmatch 'No installed game') {
+            throw "Missing diagnostic for absent retail image: $text"
+          }
+          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+            throw 'Automatic installer created a game directory without a valid CD'
+          }
+          if (!(Test-Path (Join-Path $dir 'CyberGladiatorsFix.log'))) {
+            throw 'Automatic launch did not produce its unified session log'
+          }
+          Write-Host 'One-click auto-discovery no-CD refusal: PASS'
+
       - name: Package one executable and Apache-2.0 notices
         shell: pwsh
         run: |
