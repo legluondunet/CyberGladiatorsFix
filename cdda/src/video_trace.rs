@@ -1254,9 +1254,17 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
         // This intentionally exposes the normal compositor handoff and
         // excludes our retained fullscreen HWND from nGlide initialization.
         // The verified D3D9 and default Vulkan smooth paths are unchanged.
+        let gameframe=smooth_enabled() && result==0 &&
+            std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1");
         let early_release=smooth_enabled() && result==0 &&
             std::env::var("CYBER_VULKAN_EARLY_HOST_RELEASE").as_deref()==Ok("1");
-        if early_release {
+        if gameframe {
+            // Do not retain the native AVI host across the first OpenGL
+            // grSstOpen. In this experiment, GameFrame itself owns the
+            // original game HWND and its desktop-sized presentation.
+            video_log("GAMEFRAME_VIDEO_HANDOFF original_MCI_close=1 host_release=early OpenGL_game_window=original no_black_postroll=1");
+            close_host("gameframe_early_release");
+        }else if early_release {
             video_log("VULKAN_EARLY_RELEASE after_native_MCI_close=1 no_black_postroll=1 no_handoff_timer=1 renderer_can_initialize_without_host=1");
             close_host("vulkan_early_release_ab");
             start_vulkan_fullscreen_recovery();
