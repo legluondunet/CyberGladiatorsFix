@@ -213,9 +213,11 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     // Preserve the exact native game's display-mode behavior and collect
     // Wine's read-only DirectDraw trace instead.
     cmd.env("CYBER_WINE_DESKTOP_MODE_GUARD","0");
-    cmd.env("WINEDEBUG","-all,+ddraw");
-    cmd.stderr(Stdio::piped());
-    crate::show("WINE_DDRAW_PASSIVE_TRACE interception=0 WINEDEBUG=-all,+ddraw stderr=bounded_filtered_unified_log",root);
+    // Only the verified 1996 game on Wine and the dedicated GameFrame
+    // build may forward its 640x480x16 DirectDraw request to the already
+    // captured native desktop size. This still calls real DirectDraw.
+    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","1");
+    crate::show("WINE_DDRAW_NATIVE_FORWARD enabled=1 native_DirectDraw_state_preserved=1 old_noop_hook_disabled=1 game_only=1",root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
