@@ -370,6 +370,10 @@ pub unsafe extern "system" fn mciSendStringA(
     // only three recognized MCI window/rectangle commands. The opt-in smooth
     // experiment prepares a black host earlier and releases it later.
     let substitute=command.as_deref().and_then(video_trace::rewrite_for_4_3);
+    // Opt-in trial: hold the already-painted black AVI host for one second
+    // before starting the original MCI movie. In the validated normal launch
+    // this function is a no-op, and WinMM playback is forwarded immediately.
+    if let Some(ref text)=command {video_trace::before_mci_play(text);}
     let mut result=native(substitute.as_ref().map_or(cmd,|v|v.as_ptr()),out,len,hwnd);
     if let Some(ref text)=command {
         video_trace::on_4_3_command_result(text,substitute.is_some(),result);
