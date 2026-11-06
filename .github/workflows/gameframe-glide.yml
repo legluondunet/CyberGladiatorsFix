@@ -2,7 +2,7 @@ name: CyberGladiatorsFix - Windows x64 one-file with embedded GameFrame
 
 on:
   push:
-    branches: [experiment/gameframe-glide, main, test/b69-wine-staging-avi, test/b69-wine-display-guard]
+    branches: [experiment/gameframe-glide, main, test/b69-wine-staging-avi, test/b69-wine-display-guard, test/b69-wine-display-crt-init]
     paths:
       - '.github/workflows/gameframe-glide.yml'
       - 'tools/gameframe/**'
