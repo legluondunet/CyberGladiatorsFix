@@ -6,7 +6,7 @@
 //! logs the captured address later on its own healthy thread.
 use std::ffi::c_void;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU32,AtomicUsize,Ordering};
+use std::sync::atomic::{AtomicBool,AtomicU32,AtomicUsize,Ordering};
 
 #[repr(C)]
 struct ExceptionRecord {
@@ -37,6 +37,9 @@ const FROM_ADDRESS:u32=0x0000_0004;
 const UNCHANGED_REFCOUNT:u32=0x0000_0002;
 
 static INSTALLED:OnceLock<bool>=OnceLock::new();
+// Only the opt-in smooth Vulkan crash experiment may keep observing new
+// fault sites after the first one. Normal trace retains first-event semantics.
+static VULKAN_FOLLOWUP_FAULTS:AtomicBool=AtomicBool::new(false);
 static SEQUENCE:AtomicU32=AtomicU32::new(0);
 static REPORTED:AtomicU32=AtomicU32::new(0);
 static CODE:AtomicU32=AtomicU32::new(0);
@@ -68,15 +71,28 @@ extern "system" {
 fn interesting(code:u32)->bool {
     matches!(code,0xc000_0005|0xc000_00fd|0xc000_001d|0xc000_0094|0xc000_0409)
 }
+fn capture_new_fault(previous:bool,stack_overflow:bool,followups:bool,same_site:bool)->bool{
+    !previous || (stack_overflow && !same_site) || (followups && !same_site)
+}
 unsafe extern "system" fn observe(pointers:*mut ExceptionPointers)->i32 {
     if pointers.is_null(){return CONTINUE_SEARCH;}
     let record=unsafe{(*pointers).record};
     if record.is_null(){return CONTINUE_SEARCH;}
     let error=unsafe{&*record};
     if !interesting(error.code){return CONTINUE_SEARCH;}
-    // Allow a stack overflow to supersede a previous, possibly benign
-    // first-chance access violation; otherwise capture the first event only.
-    if SEQUENCE.load(Ordering::Acquire)!=0 && error.code!=STACK_OVERFLOW {
+    // A first-chance exception is not necessarily the fatal one. Native
+    // Vulkan may first fault in glide.dll and later in CYBER.EXE. Only the
+    // experiment retains distinct later fault sites, without logging from
+    // this handler or touching the game's exception disposition.
+    let followups=VULKAN_FOLLOWUP_FAULTS.load(Ordering::Relaxed);
+    let previous=SEQUENCE.load(Ordering::Acquire)!=0;
+    let access_address=if error.code==ACCESS_VIOLATION && error.parameter_count>=2 {
+        error.information[1]
+    }else{0};
+    let same_site=error.code==CODE.load(Ordering::Relaxed)
+        && error.address as usize==INSTRUCTION.load(Ordering::Relaxed)
+        && access_address==ACCESS_ADDRESS.load(Ordering::Relaxed);
+    if !capture_new_fault(previous,error.code==STACK_OVERFLOW,followups,same_site){
         return CONTINUE_SEARCH;
     }
     CODE.store(error.code,Ordering::Relaxed);
@@ -452,12 +468,17 @@ pub fn snapshot(stage:&str){
 pub fn maybe_install(){
     if std::env::var("CYBER_GLIDE_TRACE").as_deref()!=Ok("1"){return;}
     INSTALLED.get_or_init(||unsafe {
+        let followups=std::env::var("CYBER_VULKAN_PASSIVE_FAULT_PROBE").as_deref()==Ok("1");
+        VULKAN_FOLLOWUP_FAULTS.store(followups,Ordering::Release);
         let handler=AddVectoredExceptionHandler(1,Some(observe));
         if handler.is_null(){
             crate::log(&format!("EXCEPTION_OBSERVER unavailable Win32={}",GetLastError()));
             false
         }else{
-            crate::log("EXCEPTION_OBSERVER installed (deferred first-chance capture, never suppresses exceptions)");
+            crate::log(&format!(
+                "EXCEPTION_OBSERVER installed (deferred first-chance capture, never suppresses exceptions, distinct_followup_fault_sites={})",
+                if followups{1}else{0}
+            ));
             true
         }
     });
@@ -478,6 +499,16 @@ mod tests {
         data[0x3c..0x40].copy_from_slice(&0x7ffu32.to_le_bytes());
         assert!(pe_identity(&data).is_none());
         assert!(pe_identity(&data[..16]).is_none());
+    }
+    #[test]
+    fn native_vulkan_records_distinct_followup_faults_only(){
+        assert!(capture_new_fault(false,false,false,false));
+        assert!(!capture_new_fault(true,false,false,false));
+        assert!(!capture_new_fault(true,false,false,true));
+        assert!(capture_new_fault(true,false,true,false));
+        assert!(!capture_new_fault(true,false,true,true));
+        assert!(capture_new_fault(true,true,false,false));
+        assert!(!capture_new_fault(true,true,false,true));
     }
     #[test]
     fn only_relevant_exceptions_are_captured(){
