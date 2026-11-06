@@ -206,9 +206,8 @@ fn diagnose_dxvk(root:&Path,wndproc_repair:bool)->Result<(),String>{
     if settings::read(&game)? {
         return Err("DXVK root-cause reproduction requires [Video] SkipIntro=0 in the existing game INI; do not alter the original game assets".into());
     }
-    if !settings::read_cdda(&game)? {
-        return Err("DXVK root-cause stack observer requires [Audio] EnableCDDA=1 to load the 32-bit diagnostic bridge; no other file is modified".into());
-    }
+    // The single x86 WinMM bridge is loaded irrespective of the CDDA music
+    // preference; audio opt-out does not disable AVI or exception telemetry.
     show("DXVK_ROOTCAUSE BEGIN mode=native_in_game_AVI renderer=nGlide_D3D9 diagnostic_glide_hook=OFF external_video=OFF dxvk_deferred_surface=OFF",root);
     if wndproc_repair {
         show("DXVK_WNDPROC_REPAIR_TEST experimental=1 scope=game_process_only: after native AVI closes, restore original game ANSI window class proc ONLY if current Win32 WndProc resolves to WineD3D; abort on unexpected module, HWND, thread, Unicode or game class. No DXVK/Wine DLL or game files are modified",root);
