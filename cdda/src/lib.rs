@@ -347,6 +347,7 @@ macro_rules! forward_winmm {
 pub unsafe extern "system" fn mciSendStringA(
     cmd:*const c_char,out:*mut c_char,len:u32,hwnd:Handle
 )->u32 {
+    let entry=std::time::Instant::now();
     mark_trace_session_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
@@ -359,14 +360,15 @@ pub unsafe extern "system" fn mciSendStringA(
     };
     if let Some(ref text)=command {
         if text.trim().eq_ignore_ascii_case("open avivideo"){
+            video_trace::timing("MCI_AVIVIDEO_OPEN_BEGIN");
             exception_trace::maybe_install();
             glide_trace::maybe_install();
         }
         if let Some(entry)=video_trace::before(text){log(&entry);}
     }
-    // Preserve the game's original MCI timeline and WinMM implementation.
-    // The fullscreen experiment only substitutes the target HWND and 4:3
-    // destination in the three recognized splash-video commands.
+    // Preserve the original WinMM timeline. 4:3 is established by rewriting
+    // only three recognized MCI window/rectangle commands. The opt-in smooth
+    // experiment prepares a black host earlier and releases it later.
     let substitute=command.as_deref().and_then(video_trace::rewrite_for_4_3);
     let mut result=native(substitute.as_ref().map_or(cmd,|v|v.as_ptr()),out,len,hwnd);
     if let Some(ref text)=command {
@@ -387,11 +389,27 @@ pub unsafe extern "system" fn mciSendStringA(
         }else{String::new()};
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
         if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
-            // The experiment's popup has already been destroyed before the
-            // existing, user-validated DXVK/WineD3D window procedure repair.
+            // The normal launch has already removed its video host.
+            // Only --smooth-video-test may leave a no-activate black
+            // curtain temporarily visible. The guarded WndProc repair stays
+            // at the exact same MCI close boundary as the validated build.
             glide_trace::after_video_close();
             glide_trace::maybe_repair_windowproc_after_video_close();
             glide_trace::maybe_delay_after_video_close();
+        }
+    }
+    // One monotonic total-call duration for each non-polled video command.
+    // The very frequent "status movie mode" queries are intentionally
+    // excluded to keep the single session log small.
+    if let Some(ref text)=command {
+        let lower=text.trim().to_ascii_lowercase();
+        if (lower.starts_with("open ")||lower.starts_with("play movie")
+            ||lower.starts_with("close ")||lower.starts_with("window movie")
+            ||lower.starts_with("put movie"))
+            && (lower.contains("movie")||lower.contains("avivideo")
+                ||lower.contains("splash4.avi")){
+            log(&format!("VIDEO_TIMING mci_command={lower:?} total_call_ms={} result={result}",
+                entry.elapsed().as_millis()));
         }
     }
     result
