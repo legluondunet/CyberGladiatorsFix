@@ -181,6 +181,12 @@ fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:boo
 fn guarded_video_backend_allowed(backend:Option<&str>,smooth_test:bool)->bool{
     backend==Some("1") || (backend==Some("2") && smooth_test)
 }
+/// nGlide's forced 60-Hz mode has yielded DISP_CHANGE_BADMODE (-2) under
+/// direct Vulkan on the user's 120-Hz Wine desktop. Test native Vulkan with
+/// the desktop's supported refresh rate, and leave validated D3D9 at 60 Hz.
+fn selected_refresh(backend:Option<&str>,desktop_refresh:bool)->&'static str{
+    if desktop_refresh || backend==Some("2") {"1"}else{"2"}
+}
 fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool,smooth_test:bool)->Result<Child,String>{
     // The normal game path uses one x86 WinMM bridge with a guarded native
     // AVI handoff. Trace-only backend tests follow a separate validated path.
@@ -284,7 +290,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }
     if smooth_test {
         cmd.env("CYBER_AVI_SMOOTH_TEST","1");
-        crate::show("VIDEO_SMOOTH_TEST enabled=1 pre_mci_black_host=1 initially_hidden_avi_surface=1 wm_fullscreen_managed_request=1 pre_video_black_ms=1000 post_video_black_sync_hold_ms=1000 true_black_video_surface=1 true_black_avi_cover=1 prevent_3d_resume_during_hold=1 NGLIDE_REFRESH=2 (60Hz, unchanged) no_D3D9_hook=1",root);
+        crate::show(&format!("VIDEO_SMOOTH_TEST enabled=1 pre_mci_black_host=1 initially_hidden_avi_surface=1 wm_fullscreen_managed_request=1 pre_video_black_ms=1000 post_video_black_sync_hold_ms=1000 true_black_video_surface=1 true_black_avi_cover=1 prevent_3d_resume_during_hold=1 NGLIDE_REFRESH={} no_D3D9_hook=1",if selected_refresh(backend_override,desktop_refresh)=="1"{"1 (desktop; Vulkan-only experiment)"}else{"2 (60Hz, validated D3D9)"}),root);
     }
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
     // This is a one-shot, guard-checked in-process fix. No long-running
@@ -305,11 +311,11 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             // renderer for mode 2, not DXVK. The D3D9 branch uses DXVK only
             // if the Wine prefix actually provides DXVK's d3d9.dll.
             cmd.env("NGLIDE_BACKEND",backend);
-            if desktop_refresh {
-                // nGlide documents refresh 1 as "By desktop", while 2
-                // forces 60 Hz. The submitted DXVK log shows repeated mode
-                // switches between 60 Hz and the 120-Hz desktop. Test only
-                // this per-process difference, leaving normal launches alone.
+            if selected_refresh(backend_override,desktop_refresh)=="1" {
+                // nGlide mode 1 follows the desktop; mode 2 forces 60 Hz.
+                // Direct Vulkan caused Wine DISP_CHANGE_BADMODE (-2) with
+                // 60 Hz just before a null read inside CYBER.EXE.
+                // This is an isolated Vulkan A/B test, not a proven fix.
                 cmd.env("NGLIDE_REFRESH","1");
             }
             // A/B baselines must not inherit a prior inline DXVK_CONFIG
@@ -370,7 +376,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             Ok(_)=>"other",Err(_)=>"unset",
         };
         writeln!(output,"CyberGladiatorsFix --launch --trace")
-            .and_then(|_|writeln!(output,"WINEDEBUG=+timestamp,+pid,+tid,+seh,+loaddll; D7VK_LOG_PATH=same_privately_captured_directory_as_DXVK; NGLIDE_BACKEND={} {}; NGLIDE_REFRESH={}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if desktop_refresh{"1 (by desktop)"}else{"2 (60 Hz)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"unique temporary directory"}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
+            .and_then(|_|writeln!(output,"WINEDEBUG=+timestamp,+pid,+tid,+seh,+loaddll; D7VK_LOG_PATH=same_privately_captured_directory_as_DXVK; NGLIDE_BACKEND={} {}; NGLIDE_REFRESH={}; DXVK_DEFER_SURFACE={dxvk_defer_surface}; DXVK_DIAGNOSTICS={}; DXVK_LOG_PATH={}; CYBER_GLIDE_TRACE=1; CYBER_GLIDE_PASSTHRU_NOOP={}; CYBER_VIDEO_CLOSE_DELAY_MS={video_delay_ms}; CYBER_GLIDE_HOOK_DISABLED={}; PROTON_USE_WINED3D={proton_wined3d} (launcher env, not backend proof); CDDA enabled={enable_cdda}; SkipIntro={skip}",backend_override.unwrap_or("0"),if backend_override.is_some(){"(forced)"}else{"(auto)"},if selected_refresh(backend_override,desktop_refresh)=="1"{"1 (by desktop)"}else{"2 (60 Hz)"},if backend_override==Some("1"){"HUD+log"}else{"off"},if backend_override==Some("1"){"unique temporary directory"}else{"inherited"},if passthru_noop{1}else{0},if no_glide_hook{1}else{0}))
             .and_then(|_|output.flush())
             .map_err(|e|format!("Cannot initialize Wine trace in session log: {e}"))?;
         let errors=output.try_clone().map_err(|e|format!("Cannot capture Wine stderr: {e}"))?;
@@ -382,6 +388,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             // Preserve validated D3D9 for both normal entrypoints. Only the
             // dedicated smooth Vulkan experiment can select backend 2 here.
             cmd.env("NGLIDE_BACKEND",backend_override.unwrap_or("1"));
+            if selected_refresh(backend_override,desktop_refresh)=="1" {
+                cmd.env("NGLIDE_REFRESH","1");
+            }
         }
     }
     // All DLL/CDDA logs go directly into the launcher-adjacent session log.
@@ -405,7 +414,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     diagnostics::log(root,"CONFIG",&format!(
         "GAME launch: SkipIntro={} EnableCDDA={} NGLIDE_BACKEND={} NGLIDE_RESOLUTION=1 NGLIDE_ASPECT=1 NGLIDE_REFRESH={} NGLIDE_VSYNC=1 NGLIDE_GAMMA=5 NGLIDE_SPLASH={} DXVK_defer_surface={} trace={}",
         u8::from(skip),u8::from(enable_cdda),if normal_repair {backend_override.unwrap_or("1")}else{backend_override.unwrap_or("0")},
-        if desktop_refresh{"1 (desktop)"}else{"2 (60Hz)"},
+        if selected_refresh(backend_override,desktop_refresh)=="1"{"1 (desktop)"}else{"2 (60Hz)"},
         u8::from(logo),u8::from(dxvk_defer_surface),u8::from(trace)
     ));
     cmd.spawn().map_err(|e|format!("Unable to start CYBER.EXE: {e}"))
@@ -459,6 +468,13 @@ mod experimental_launch_tests {
         assert!(!guarded_video_backend_allowed(Some("2"),false));
         assert!(!guarded_video_backend_allowed(Some("0"),true));
         assert!(!guarded_video_backend_allowed(None,true));
+    }
+    #[test]
+    fn vulkan_refresh_follows_desktop_without_changing_d3d9(){
+        assert_eq!(selected_refresh(Some("2"),false),"1");
+        assert_eq!(selected_refresh(Some("1"),false),"2");
+        assert_eq!(selected_refresh(Some("1"),true),"1");
+        assert_eq!(selected_refresh(None,false),"2");
     }
     #[test]
     fn video_delay_is_bounded_and_trace_only(){
