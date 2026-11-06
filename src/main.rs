@@ -168,10 +168,10 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
         }
     }
 }
-/// Native AVI is now preferred for the field-validated WineD3D/DXVK case
-/// while retaining the isolated-AVI fallback when the optional CDDA bridge
-/// is disabled. The x86 bridge is the only place where the guarded fix runs;
-/// the original video and game resource bytes remain untouched.
+/// The original AVI always plays inside CYBER.EXE, with a temporary 4:3
+/// black host in the normal path. One x86 WinMM bridge provides video and
+/// the guarded DXVK repair; EnableCDDA controls only music emulation.
+/// Original game video and resource bytes remain untouched.
 fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
