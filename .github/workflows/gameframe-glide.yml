@@ -71,6 +71,23 @@ jobs:
           Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
           Get-FileHash 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll' -Algorithm SHA256 | Format-List | Out-String | Write-Host
 
+      - name: Smoke test native Windows x86 loader (no rendering)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = (Resolve-Path 'dist/GameFrame-Glide-EXPERIMENTAL').Path
+          $smoke = Join-Path $dir 'GameFrameGlideSmoke.exe'
+          rustc --edition=2021 --target i686-pc-windows-msvc tools/gameframe/smoke_load.rs -o $smoke
+          if ($LASTEXITCODE -ne 0) { throw "Cannot compile Windows x86 loader smoke" }
+          Push-Location $dir
+          try {
+            & ".\GameFrameGlideSmoke.exe"
+            if ($LASTEXITCODE -ne 0) { throw "Windows x86 load smoke failed" }
+          } finally {
+            Pop-Location
+            Remove-Item -Force $smoke
+          }
+
       - name: Upload GameFrame Windows x86 Glide proof of concept
         uses: actions/upload-artifact@v4
         with:
