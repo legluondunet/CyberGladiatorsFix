@@ -96,10 +96,10 @@ const WM_TIMER:u32=0x0113;
 const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
 const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
-// One deterministic 2-second hold runs in the MCI close call *before* the
+// One deterministic 1-second hold runs in the MCI close call *before* the
 // verified game can return to nGlide / resume its 3D display.
 const INITIAL_FRAME_COVER_MS:u32=300; // trial: let Cinepak decode behind black
-const TRANSITION_DELAY_MS:u64=2000; // only used by --smooth-video-test
+const TRANSITION_DELAY_MS:u64=1000; // only used by --smooth-video-test
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
@@ -427,7 +427,18 @@ fn host_exstyle(smooth:bool)->u32 {
         if smooth{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
 }
 fn video_surface_style(smooth:bool)->u32 {
-    WS_CHILD|SS_BLACKRECT|if smooth{0}else{WS_VISIBLE}
+    // The ordinary validated launch retains STATIC/SS_BLACKRECT. The opt-in
+    // path paints with a genuinely black stock brush instead of Wine's
+    // theme-dependent COLOR_3DDKSHADOW (which can look gray).
+    WS_CHILD|if smooth{0}else{SS_BLACKRECT|WS_VISIBLE}
+}
+fn video_surface_class(smooth:bool)->&'static [u8]{
+    if smooth{HOST_CLASS}else{b"STATIC\0"}
+}
+fn first_frame_cover_style()->u32{
+    // Our custom black-painted child must not use SS_BLACKRECT: under Wine,
+    // that STATIC style is implemented with GetSysColor(COLOR_3DDKSHADOW).
+    WS_CHILD|WS_VISIBLE
 }
 unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     let base=GetModuleHandleA(std::ptr::null()) as usize;
@@ -475,10 +486,10 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log(&format!("SKIP fullscreen_host_create_failed={}",GetLastError()));
         return None;
     }
-    // Hidden from its very first Win32 creation in the smooth path: MCI can
-    // initialize the child video window without ever showing an unpainted
-    // gray STATIC background during the one-second black pre-roll.
-    let surface=CreateWindowExA(0,b"STATIC\0".as_ptr(),b"\0".as_ptr(),
+    // In smooth mode use our already-registered custom window class to paint
+    // the MCI parent solid RGB(0,0,0), independent of Wine's system theme.
+    // Keep it hidden from the very first CreateWindowExA invocation.
+    let surface=CreateWindowExA(0,video_surface_class(smooth).as_ptr(),b"\0".as_ptr(),
         video_surface_style(smooth),x,y,w,h,host,
         std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
     if surface.is_null(){
@@ -494,13 +505,13 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log("SKIP unexpected_video_surface_client_size");
         return None;
     }
-    // Separate opaque black sibling above the MCI surface. This allows the
-    // real Wine Cinepak window to become visible and start painting while
-    // its first uninitialized gray frames remain covered. The validated
-    // ordinary launch never creates this window.
+    // Cover the MCI surface with the SAME explicit-black painted class.
+    // The previous STATIC/SS_BLACKRECT cover used COLOR_3DDKSHADOW under
+    // Wine and therefore appeared as a gray rectangle during BOTH pauses.
+    // The ordinary launch never creates this overlay.
     let first_frame_cover=if smooth {
-        let overlay=CreateWindowExA(0,b"STATIC\0".as_ptr(),b"\0".as_ptr(),
-            WS_CHILD|WS_VISIBLE|SS_BLACKRECT,x,y,w,h,host,
+        let overlay=CreateWindowExA(0,HOST_CLASS.as_ptr(),b"\0".as_ptr(),
+            first_frame_cover_style(),x,y,w,h,host,
             std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
         if overlay.is_null(){
             video_log(&format!(
@@ -509,7 +520,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
             ));
         } else {
             video_log(&format!(
-                "FIRST_FRAME_COVER_CREATED hwnd={:#x} pos=({x},{y}) size={w}x{h}",
+                "FIRST_FRAME_COVER_CREATED hwnd={:#x} pos=({x},{y}) size={w}x{h} paint=explicit_RGB000 stock_brush=BLACK_BRUSH theme_dependent=0",
                 overlay as usize
             ));
         }
@@ -955,7 +966,17 @@ mod fullscreen_tests {
         assert!(first_frame_cover_is_due(start,start+Duration::from_secs(1)));
         assert!(INITIAL_FRAME_COVER_MS>=200);
         assert!(INITIAL_FRAME_COVER_MS<=500);
-        assert_eq!(TRANSITION_DELAY_MS,2000);
+        assert_eq!(TRANSITION_DELAY_MS,1000);
+    }
+    #[test]
+    fn smooth_avi_parent_and_cover_paint_explicit_black_without_theme(){
+        assert_eq!(video_surface_class(true),HOST_CLASS);
+        assert_eq!(video_surface_class(false),b"STATIC\0");
+        assert_eq!(video_surface_style(true)&SS_BLACKRECT,0);
+        assert_eq!(first_frame_cover_style()&SS_BLACKRECT,0);
+        assert_ne!(first_frame_cover_style()&WS_VISIBLE,0);
+        assert_ne!(video_surface_style(false)&SS_BLACKRECT,0);
+        assert_eq!(BLACK_BRUSH,4);
     }
     #[test]
     fn smooth_window_is_managed_and_video_surface_initially_hidden(){
@@ -970,16 +991,16 @@ mod fullscreen_tests {
     }
     #[test]
     fn transition_curtain_holds_exactly_two_seconds_before_3d_resume(){
-        assert_eq!(TRANSITION_DELAY_MS,2000);
+        assert_eq!(TRANSITION_DELAY_MS,1000);
         assert_eq!(VIDEO_LEAD_IN_MS,1000);
-        assert!(Duration::from_millis(TRANSITION_DELAY_MS)>Duration::from_millis(VIDEO_LEAD_IN_MS));
+        assert_eq!(Duration::from_millis(TRANSITION_DELAY_MS),Duration::from_millis(VIDEO_LEAD_IN_MS));
     }
     #[test]
     fn transition_curtain_is_opt_in_and_requires_successful_mci_close(){
         assert!(!should_arm_curtain(false,0),"normal launch must close the host immediately");
         assert!(!should_arm_curtain(true,1),"failed MCI close must release the host");
         assert!(should_arm_curtain(true,0));
-        assert_eq!(TRANSITION_DELAY_MS,2000);
+        assert_eq!(TRANSITION_DELAY_MS,1000);
         assert_eq!(VIDEO_LEAD_IN_MS,1000);
     }
     #[test]
