@@ -96,13 +96,10 @@ const WM_TIMER:u32=0x0113;
 const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
 const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
-const TRANSITION_TIMER_ID:usize=0x4359;
-const CURTAIN_RAISE_TIMER_ID:usize=0x435b;
-const CURTAIN_RAISE_INTERVAL_MS:u32=50;
-// This is a temporary topmost hold, not a focus change or a renderer hook.
-// Game/nGlide may become topmost while D3D9 starts after a skipped AVI.
+// One deterministic 2-second hold runs in the MCI close call *before* the
+// verified game can return to nGlide / resume its 3D display.
 const INITIAL_FRAME_COVER_MS:u32=300; // trial: let Cinepak decode behind black
-const TRANSITION_DELAY_MS:u32=2000; // only used by --smooth-video-test
+const TRANSITION_DELAY_MS:u64=2000; // only used by --smooth-video-test
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
@@ -204,8 +201,6 @@ extern "system" {
         module:*mut c_void,thread_id:u32)->*mut c_void;
     fn CallNextHookEx(hook:*mut c_void,code:i32,wparam:usize,lparam:isize)->isize;
     fn UnhookWindowsHookEx(hook:*mut c_void)->i32;
-    fn SetTimer(hwnd:*mut c_void,id:usize,timeout_ms:u32,callback:*const c_void)->usize;
-    fn KillTimer(hwnd:*mut c_void,id:usize)->i32;
     fn ShowWindow(hwnd:*mut c_void,mode:i32)->i32;
     fn IsWindow(hwnd:*mut c_void)->i32;
     fn SetWindowPos(hwnd:*mut c_void,insert_after:*mut c_void,
@@ -235,7 +230,6 @@ struct NativeHost {
     keyboard_hook:usize,
     mouse_hook:usize,
     holding_for_transition:bool,
-    curtain_raise_timer:bool,
     curtain_raise_attempts:u32,
     curtain_raise_failures:u32,
 }
@@ -259,15 +253,6 @@ unsafe extern "system" fn black_host_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg{
-        WM_TIMER if wparam==TRANSITION_TIMER_ID=>{
-            timing("CURTAIN_TIMER_FIRED");
-            close_host("transition_timer");
-            0
-        }
-        WM_TIMER if wparam==CURTAIN_RAISE_TIMER_ID=>{
-            keep_transition_curtain_on_top();
-            0
-        }
         WM_ERASEBKGND=>{
             let mut rect=WinRect::default();
             if GetClientRect(hwnd,&mut rect)!=0 {
@@ -558,7 +543,6 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
         holding_for_transition:false,
-        curtain_raise_timer:false,
         curtain_raise_attempts:0,
         curtain_raise_failures:0
     })
@@ -597,16 +581,9 @@ fn close_host(reason:&str){
             }
             stop_movie_input(&mut h);
             if h.holding_for_transition {
-                let _=KillTimer(h.host as *mut c_void,TRANSITION_TIMER_ID);
-            }
-            if h.curtain_raise_timer {
-                let _=KillTimer(h.host as *mut c_void,CURTAIN_RAISE_TIMER_ID);
-            }
-            if h.holding_for_transition {
                 video_log(&format!(
-                    "CURTAIN_TOPMOST_SUMMARY attempts={} failures={} keepalive_active={}",
-                    h.curtain_raise_attempts,h.curtain_raise_failures,
-                    u8::from(h.curtain_raise_timer)
+                    "CURTAIN_TOPMOST_SUMMARY attempts={} failures={} mode=synchronous_before_3d",
+                    h.curtain_raise_attempts,h.curtain_raise_failures
                 ));
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
@@ -615,12 +592,10 @@ fn close_host(reason:&str){
         }
     }
 }
-/// One optional no-activate curtain: retain the existing black host after
-/// the AVI has closed, hide only its MCI surface, and release the host via
-/// a bounded Win32 timer on the owning game thread. We do not intercept D3D9,
-/// guess a first-present signal or change the proven WndProc repair order.
-/// WM_TIMER is delivered when the game pumps UI messages: a game thread which
-/// *never* pumps cannot be rescued by a timer, so this is trial-only.
+/// The exit curtain is prepared in the original MCI close thread and kept
+/// visible with a synchronous hold AFTER the guarded WndProc repair. This
+/// prevents the game from reaching the next nGlide/3D phase until the hold
+/// ends, rather than repeatedly raising a competing fullscreen window.
 // The original game polls mciSendStringA("status movie mode") many times
 // per second while its UI thread is NOT pumping ordinary Win32 WM_TIMER
 // messages. Unlike the after-video curtain, a Win32 timer cannot reliably
@@ -675,36 +650,47 @@ unsafe fn promote_curtain(h:&mut NativeHost)->i32 {
     }
     promoted
 }
-fn keep_transition_curtain_on_top(){
+/// Called after the original guarded WineD3D/DXVK WndProc repair, before
+/// returning to CYBER.EXE from `mciSendStringA("close avivideo")`. The game
+/// cannot yet enter its 3dfx/D3D9 next phase, so the already-painted black
+/// fullscreen host remains the stable front surface for the requested 2 s.
+/// This intentionally delays all subsequent game work and CDDA initialization
+/// until after the transition; there is no extra helper or timer thread.
+pub fn hold_post_video_black_before_3d(){
     if !smooth_enabled(){return;}
-    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
-    let Some(h)=guard.as_mut() else{return;};
-    if !h.holding_for_transition || h.owner_thread!=unsafe{GetCurrentThreadId()}{
+    let armed={
+        let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+        match guard.as_mut(){
+            Some(h) if h.holding_for_transition
+                && h.owner_thread==unsafe{GetCurrentThreadId()}
+                && unsafe{IsWindow(h.host as *mut c_void)}!=0=>{
+                let raised=unsafe{promote_curtain(h)};
+                video_log(&format!(
+                    "CURTAIN_PRE_3D_REASSERT topmost_result={raised} active=1"
+                ));
+                true
+            },
+            _=>false,
+        }
+    };
+    if !armed{
+        video_log("CURTAIN_SYNC_SKIP no_owned_active_host; falling_back_to_game");
         return;
     }
-    unsafe {
-        // Make the post-AVI image *actually* black, not merely a hidden MCI
-        // surface whose background might not have repainted after closing.
-        let _=promote_curtain(h);
-    }
-}
-/// Run right after the existing guarded WineD3D/DXVK WndProc repair.
-/// Reasserting topmost at this exact boundary protects the first instant
-/// when the game resumes 3D; the 50 ms timer handles later window raises.
-pub fn reinforce_post_video_curtain(){
-    if !smooth_enabled(){return;}
-    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
-    let Some(h)=guard.as_mut() else{return;};
-    if !h.holding_for_transition || h.owner_thread!=unsafe{GetCurrentThreadId()}{
-        return;
-    }
-    unsafe {
-        let promoted=promote_curtain(h);
-        video_log(&format!(
-            "CURTAIN_POST_WNDPROC_REASSERT topmost_result={promoted} active=1"
-        ));
-        timing("CURTAIN_POST_WNDPROC_REASSERT");
-    }
+    timing("POST_VIDEO_BLACK_HOLD_BEGIN");
+    video_log(&format!(
+        "POST_VIDEO_BLACK_HOLD mode=synchronous_before_3d requested_ms={TRANSITION_DELAY_MS}"
+    ));
+    // As with the validated 1-second AVI pre-roll, never keep the host mutex
+    // locked during Sleep: no window dispatch from this game thread is needed.
+    let started=Instant::now();
+    std::thread::sleep(Duration::from_millis(TRANSITION_DELAY_MS));
+    video_log(&format!(
+        "POST_VIDEO_BLACK_HOLD_END actual_ms={} before_game_3d_resume=1",
+        started.elapsed().as_millis()
+    ));
+    timing("POST_VIDEO_BLACK_HOLD_END");
+    close_host("post_video_sync_hold_complete");
 }
 fn start_transition_curtain()->bool {
     let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
@@ -715,13 +701,12 @@ fn start_transition_curtain()->bool {
             return false;
         }
         stop_movie_input(h);
-        // Playback can end before the 300 ms initial cover has elapsed.
+        // Playback can end before the first-frame cover deadline. A leftover
+        // cover must never intercept input or outlive the movie.
         if h.first_frame_cover_started.take().is_some(){
             video_log("FIRST_FRAME_COVER_CANCELLED reason=movie_closed before_status_poll_release");
         }
         let hidden=ShowWindow(h.surface as *mut c_void,SW_HIDE);
-        // Restore the opaque child cover over the central video region, and
-        // explicitly repaint both pillarboxes before nGlide initializes D3D.
         let covered=if h.first_frame_cover!=0 &&
             IsWindow(h.first_frame_cover as *mut c_void)!=0{
             ShowWindow(h.first_frame_cover as *mut c_void,SW_SHOW);
@@ -732,23 +717,10 @@ fn start_transition_curtain()->bool {
         let _=InvalidateRect(h.host as *mut c_void,std::ptr::null(),1);
         let _=UpdateWindow(h.host as *mut c_void);
         let promoted=promote_curtain(h);
-        let timer=SetTimer(h.host as *mut c_void,TRANSITION_TIMER_ID,
-            TRANSITION_DELAY_MS,std::ptr::null());
-        if timer==0 {
-            video_log(&format!("SMOOTH_ABORT SetTimer_failed win32={}",GetLastError()));
-            return false;
-        }
         h.holding_for_transition=true;
-        let raise_timer=SetTimer(h.host as *mut c_void,CURTAIN_RAISE_TIMER_ID,
-            CURTAIN_RAISE_INTERVAL_MS,std::ptr::null());
-        h.curtain_raise_timer=raise_timer!=0;
         video_log(&format!(
-            "SMOOTH_CURTAIN_ACTIVE timer_ms={TRANSITION_DELAY_MS} keep_topmost_ms={CURTAIN_RAISE_INTERVAL_MS} topmost_initial={promoted} mci_hide_previous_visible={hidden} black_child_restack={covered} keepalive_timer={} no_activate=1 no_D3D9_hook=1",
-            u8::from(h.curtain_raise_timer)
+            "SMOOTH_CURTAIN_ARMED mode=synchronous_before_3d requested_ms={TRANSITION_DELAY_MS} topmost_initial={promoted} mci_hide_previous_visible={hidden} black_child_restack={covered} no_activate=1 no_D3D9_hook=1"
         ));
-        if !h.curtain_raise_timer{
-            video_log("SMOOTH_CURTAIN_WARNING topmost_keepalive_timer_unavailable; initial_topmost_request_only");
-        }
         timing("CURTAIN_ARMED_AFTER_AVI_CLOSE");
         true
     }
@@ -997,10 +969,10 @@ mod fullscreen_tests {
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
     }
     #[test]
-    fn transition_curtain_uses_distinct_keepalive_and_release_timers(){
-        assert_ne!(CURTAIN_RAISE_TIMER_ID,TRANSITION_TIMER_ID);
-        assert!(CURTAIN_RAISE_INTERVAL_MS>=25 && CURTAIN_RAISE_INTERVAL_MS<=100);
+    fn transition_curtain_holds_exactly_two_seconds_before_3d_resume(){
         assert_eq!(TRANSITION_DELAY_MS,2000);
+        assert_eq!(VIDEO_LEAD_IN_MS,1000);
+        assert!(Duration::from_millis(TRANSITION_DELAY_MS)>Duration::from_millis(VIDEO_LEAD_IN_MS));
     }
     #[test]
     fn transition_curtain_is_opt_in_and_requires_successful_mci_close(){
