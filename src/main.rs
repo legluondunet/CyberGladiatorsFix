@@ -27,6 +27,7 @@ Usage:
   CyberGladiatorsFix.exe --launch --gameframe-test  GameFrame OpenGL/A-B experiment (matching Windows x86 glide.dll required)
   CyberGladiatorsFix.exe --launch --gameframe-test --avi-in-game-window  GameFrame A/B: show original MCI AVI inside Glide game HWND, not in independent fullscreen popup
   CyberGladiatorsFix.exe --launch --gameframe-test --avi-in-game-window --avi-unscaled-probe  Diagnostic: original 640x480 MCI picture centered, no GDI upscale
+  CyberGladiatorsFix.exe --launch --gameframe-test --avi-first-present-handoff  Native fullscreen GDI AVI, retain black host until GameFrame's first real OpenGL swap
   CyberGladiatorsFix.exe --launch --smooth-video-test  Test earlier black intro and bounded video-to-3D curtain
   CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan  Experimental native Vulkan with same smooth video
   CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release  Isolate Vulkan from the AVI's retained fullscreen black host
@@ -208,14 +209,14 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// Only the opt-in GameFrame experiment uses this dedicated launcher.
 /// It preserves the old native-video and nGlide paths completely.
-fn user_gameframe_launch(root:&Path,video_in_game_window:bool,native_size_probe:bool)->Result<(),String>{
+fn user_gameframe_launch(root:&Path,video_in_game_window:bool,native_size_probe:bool,first_present_handoff:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
-    let child=verify::launch_gameframe_test(root,video_in_game_window,native_size_probe)?;
+    let child=verify::launch_gameframe_test(root,video_in_game_window,native_size_probe,first_present_handoff)?;
     show(&format!(
-        "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe_test=1 native_video_4x3=1 avi_in_game_window={} avi_unscaled_probe={} music_flac={} WndProc_repair=disabled",
-        child.id(),u8::from(video_in_game_window),u8::from(native_size_probe),u8::from(enable_cdda)
+        "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe_test=1 native_video_4x3=1 avi_in_game_window={} avi_unscaled_probe={} first_present_handoff={} music_flac={} WndProc_repair=disabled",
+        child.id(),u8::from(video_in_game_window),u8::from(native_size_probe),u8::from(first_present_handoff),u8::from(enable_cdda)
     ),root);
     wait_game(child,root)
 }
@@ -280,16 +281,20 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
         [one,two] if one.to_str()==Some("--launch")&&two.to_str()==Some("--gameframe-test")=>
-            return user_gameframe_launch(root,false,false),
+            return user_gameframe_launch(root,false,false,false),
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-in-game-window")=>
-            return user_gameframe_launch(root,true,false),
+            return user_gameframe_launch(root,true,false,false),
+        [one,two,three] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--gameframe-test")
+            && three.to_str()==Some("--avi-first-present-handoff")=>
+            return user_gameframe_launch(root,false,false,true),
         [one,two,three,four] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-in-game-window")
             && four.to_str()==Some("--avi-unscaled-probe")=>
-            return user_gameframe_launch(root,true,true),
+            return user_gameframe_launch(root,true,true,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
@@ -443,6 +448,7 @@ mod diagnostics_tests {
         assert!(HELP.contains("--launch --gameframe-test"));
         assert!(HELP.contains("--launch --gameframe-test --avi-in-game-window"));
         assert!(HELP.contains("--avi-unscaled-probe"));
+        assert!(HELP.contains("--avi-first-present-handoff"));
         assert!(!HELP.contains("--avi-4x3-test"));
         assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(!HELP.contains("--video-delay="));
