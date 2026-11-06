@@ -122,6 +122,54 @@ fn copy_asset(iso:&mut File,asset:&Asset,dst:&Path)->Result<String,String>{
     out.flush().map_err(|e|e.to_string())?;
     Ok(hash)
 }
+/// Independent re-hash of all files in the staged installation BEFORE
+/// publication. This is intentionally distinct from the hashes captured
+/// while extracting the CD, and must never trust an unverified source path.
+fn verify_staged_manifest(staged:&Path,manifest:&str)->Result<(),String>{
+    use std::io::Read;
+    if manifest.len()>4*1024*1024||!manifest.starts_with("# CyberGladiatorsFix manifest v1\n"){
+        return Err("Invalid staged manifest".into());
+    }
+    let mut paths=BTreeSet::new();
+    let mut count=0usize;
+    for line in manifest.lines().skip(1){
+        let fields:Vec<_>=line.split('\t').collect();
+        if fields.len()!=3{return Err("Malformed staged manifest row".into());}
+        let name=fields[0];
+        if name.is_empty()||name.contains(['\\',':','\r','\n'])
+            ||!paths.insert(name.to_ascii_lowercase()){
+            return Err(format!("Unsafe or duplicate staged manifest entry {name}"));
+        }
+        let size=fields[1].parse::<u64>().map_err(|e|e.to_string())?;
+        if fields[2].len()!=64||!fields[2].bytes().all(|b|b.is_ascii_hexdigit()){
+            return Err("Invalid staged manifest digest".into());
+        }
+        let mut path=staged.to_path_buf();
+        for item in Path::new(name).components(){
+            let std::path::Component::Normal(part)=item else{return Err("Unsafe staged relative path".into())};
+            path.push(part);
+            let m=fs::symlink_metadata(&path).map_err(|e|e.to_string())?;
+            if m.file_type().is_symlink(){return Err("Staged manifest contains symlink".into());}
+        }
+        let m=fs::symlink_metadata(&path).map_err(|e|e.to_string())?;
+        if !m.is_file()||m.len()!=size {
+            return Err(format!("Staged file size mismatch: {name}"));
+        }
+        let mut input=File::open(&path).map_err(|e|e.to_string())?;
+        let mut digest=Sha256::new();
+        let mut buffer=[0u8;65536];
+        loop {
+            let n=input.read(&mut buffer).map_err(|e|e.to_string())?;
+            if n==0{break;}digest.update(&buffer[..n]);
+        }
+        if format!("{:x}",digest.finalize())!=fields[2]{
+            return Err(format!("Staged file SHA-256 mismatch: {name}"));
+        }
+        count+=1;
+    }
+    if count==0{return Err("Empty staged game manifest".into());}
+    Ok(())
+}
 fn image_file(path:&Path)->Result<File,String>{
     let m=fs::symlink_metadata(path).map_err(|e|e.to_string())?;
     if !m.is_file()||m.file_type().is_symlink(){return Err("Image must be a regular file".into());}
@@ -197,7 +245,11 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         graphics::create_defaults(&staged)?;
         let audio_report=audio::extract(cue_path,&staged)?;
         manifest.push_str(&audio_report.manifest_rows);
-        fs::write(staged.join(MANIFEST),manifest).map_err(|e|e.to_string())?;
+        fs::write(staged.join(MANIFEST),&manifest).map_err(|e|e.to_string())?;
+        verify_staged_manifest(&staged,&manifest)?;
+        patch::verify_exe(&staged.join("cyber.exe"))?;
+        cdda::verify(&staged)?;
+        // No incomplete or corrupted game installation can be published.
         // GameFrame is embedded and activated by autostart at first launch.
         // Do not copy proprietary nGlide into a fresh open-source install.
         fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
