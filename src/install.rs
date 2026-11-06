@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Minimal, conservative CD image installation built on ScorchedPlanetFix's
 //! ISO parser (isomage) and strict known-executable fingerprint design.
-use crate::{audio,cdda,cue,graphics,nglide,patch,settings};
+use crate::{audio,cdda,cue,graphics,patch,settings};
 use isomage::{cat_node,detect_and_parse_filesystem,TreeNode};
 use sha2::{Digest,Sha256};
 use std::collections::{BTreeSet, BTreeMap};
@@ -198,12 +198,13 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         let audio_report=audio::extract(cue_path,&staged)?;
         manifest.push_str(&audio_report.manifest_rows);
         fs::write(staged.join(MANIFEST),manifest).map_err(|e|e.to_string())?;
-        let has_glide=nglide::try_install(root,&staged)?;
+        // GameFrame is embedded and activated by autostart at first launch.
+        // Do not copy proprietary nGlide into a fresh open-source install.
         fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
-        let audio_note=format!("{} lossless FLAC tracks saved as TrackNN.flac; {} tracks omitted (missing BIN files)",
+        let audio_note=format!("{} lossless FLAC tracks saved in music/TrackNN.flac; {} tracks omitted (missing BIN files)",
             audio_report.extracted,audio_report.missing.len());
-        Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0, EnableCDDA=1), native 4:3 AVI + FLAC bridge selected, nGlide {}. Audio: {}. Installed to {}.",
-            files.len(),outcome,if has_glide{"installed"}else{"missing (install separately)"},audio_note,destination.display()))
+        Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0, EnableCDDA=1), native 4:3 AVI and embedded WinMM bridge selected. Renderer: bundled open-source GameFrame staged at first launch. Audio: {}. Installed to {}.",
+            files.len(),outcome,audio_note,destination.display()))
     })();
     if operation.is_err(){let _=fs::remove_dir_all(&staged);}
     operation
