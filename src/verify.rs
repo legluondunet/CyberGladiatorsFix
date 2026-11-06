@@ -158,7 +158,7 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// GameFrame's verified native AVI -> first real OpenGL-present launch.
 /// The original nGlide setup is never changed; the selected Apache-2.0
 /// Glide DLL was temporarily installed by gameframe::Session.
-pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
+pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     let skip_intro=settings::read(&game)?;
@@ -170,15 +170,15 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     let actual_bridge=patch::file_hash(&game.join(cdda::DLL_NAME))?;
     let embedded_bridge=patch::digest(crate::bundle::CDDA_DLL);
     if actual_bridge!=embedded_bridge{
-        return Err(format!("GameFrame Wine experiment requires its paired WinMM DLL: installed={actual_bridge} embedded={embedded_bridge}"));
+        return Err(format!("GameFrame requires its paired WinMM DLL: installed={actual_bridge} embedded={embedded_bridge}"));
     }
-    crate::show(&format!("GAMEFRAME_BRIDGE_CHECK installed_bridge_sha256={actual_bridge} equals_embedded=1 experiment_env=1"),root);
+    crate::show(&format!("GAMEFRAME_BRIDGE_CHECK installed_bridge_sha256={actual_bridge} equals_embedded=1 matched_bundle=1"),root);
     patch::set_cdda(&exe,true)?;
     patch::set_skip_intro(&exe,skip_intro)?;
     verify_launch_assets(root)?;
     let glide=game.join("glide.dll");
     let glide_hash=patch::file_hash(&glide)?;
-    // The source-pinned experimental DLL has a distinct known build hash.
+    // The embedded source-pinned DLL has an exact SHA-256 identity.
     // Fail closed: never apply the GameFrame-specific address/Win32 logic
     // to an arbitrary proprietary nGlide or a different wrapper build.
     let expected=option_env!("CYBER_GAMEFRAME_GLIDE_SHA256").ok_or(
@@ -226,9 +226,9 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     cmd.env("CYBER_AVI_SMOOTH_TEST","1");
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
     crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=unified",root);
-    diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (exact experiment build)"));
+    diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (embedded_verified_build)"));
     diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro={} EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(skip_intro),u8::from(enable_cdda)));
-    cmd.spawn().map_err(|e|format!("Unable to start GameFrame Cyber Gladiators experiment: {e}"))
+    cmd.spawn().map_err(|e|format!("Unable to start Cyber Gladiators through GameFrame: {e}"))
 }
 
 /// Experimental nGlide Vulkan backend using the same smooth 4:3 native AVI
