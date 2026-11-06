@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Explicit GameFrame selection from a one-file launcher.
+//! Default GameFrame renderer managed by the one-file launcher.
 //! Preserve the user's installed Glide DLL exactly while the game runs;
 //! never ship, modify, or silently overwrite proprietary nGlide.
 use sha2::{Digest,Sha256};
