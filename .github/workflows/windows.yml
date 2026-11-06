@@ -68,7 +68,7 @@ jobs:
         run: |
           & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --check-bundle
           if ($LASTEXITCODE -ne 0) { throw "Embedded x86 runtime verification failed" }
-          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsCDDA.dll") {
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.dll") {
             throw "Unexpected external CDDA DLL in the user distribution folder"
           }
           if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsIntro.exe") {
