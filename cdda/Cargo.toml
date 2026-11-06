@@ -1,0 +1,23 @@
+[package]
+name = "cyber-gladiators-cdda"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Targeted Windows MCI CD-audio to FLAC bridge for CyberGladiators"
+license = "GPL-3.0-or-later"
+authors = ["legluondunet assisted by ChatGPT (OpenAI)"]
+publish = false
+
+[lib]
+name = "CyberGladiatorsFix"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+claxon = "=0.4.3"
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = false
+panic = "abort"

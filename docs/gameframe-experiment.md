@@ -1,0 +1,119 @@
+CyberGladiatorsFix — one-click Windows x64 GameFrame build
+=======================================================
+
+This artifact contains the Windows x64 launcher, LICENSE-GPL-3.0,
+LICENSE-APACHE and this README. The EXE embeds BOTH 32-bit Windows DLLs:
+  1. CyberGladiatorsFix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
+  2. glide.dll — Apache-2.0 GameFrame Glide-to-OpenGL wrapper
+
+The original Cyber Gladiators (1996) game and its copyrighted CD audio
+are NOT included. No nGlide, DXVK or standalone video player is shipped.
+
+QUICK START
+-----------
+Place CyberGladiatorsFix.exe beside the CUE/BIN dump of your original,
+supported US retail CD and double-click the EXE. Under Wine/Proton use:
+
+  wine CyberGladiatorsFix.exe
+
+No --launch or additional option is required. The launcher searches
+for an existing CyberGladiatorsFix/ installation first, verifies game
+file hashes, then starts it. If no installation exists, it finds one
+adjacent .cue file, extracts the original files from the referenced .bin
+tracks into a temporary staging folder, verifies all extracted files,
+installs the embedded DLLs and starts the game. A completed installation
+does not require the CD image again. An absent or ambiguous CD or an
+unverified existing installation triggers a clear error, never a
+silent replacement of the player's files.
+
+Supported retail image: CUE/BIN, including separate CD audio tracks.
+Standalone ISO support is a future option, NOT part of this build.
+
+Game installation:
+  CyberGladiatorsFix/
+    cyber.exe
+    CYBER.EXE.bak
+    glide.dll
+    CyberGladiatorsFix.dll
+    CyberGladiatorsFix.ini
+    CyberGladiatorsFix.manifest
+    music/
+      Track02.flac
+      ...
+    (original game IQ, graphics, AVI and other data)
+
+Music is stored under music/TrackNN.flac, not the game root. An old
+verified root-level FLAC installation migrates automatically without
+lossy re-encoding. The old manifest is archived. Original IQ resources
+remain untouched; AllowModifiedIQ=1 tolerates only recognized same-size
+IQ modifications for launch, never for --verify.
+
+SINGLE EXE, TWO DLLs
+--------------------
+Both DLLs have SHA-256 and PE32 checks before installation. The first
+clean install retains GameFrame glide.dll after gameplay. If the user
+already has a different valid glide.dll, it is backed up byte-for-byte
+and restored after the game process exits; known, unknown, ambiguous
+and symlink cases are treated conservatively.
+
+The WinMM import name in the patched US retail executable now refers
+to CyberGladiatorsFix.dll rather than the old CyberGladiatorsCDDA.dll.
+The rename is verified by reversing only the known import name bytes
+and checking the SHA-256 of the previously pinned retail patch.
+The original CYBER.EXE.bak is never changed.
+
+The game is Glide 640x480, presented in 4:3 pillarboxed fullscreen at
+the desktop resolution and limited to 60 FPS. The original Cinepak AVI
+plays in native Wine/Windows MCI. Its temporary GDI video host stays
+black after AVI close until the FIRST REAL successful GameFrame OpenGL
+SwapBuffers, which releases the host on the original game UI thread.
+A bounded timeout prevents indefinite black. The native-size
+DirectDraw forwarding fix was validated on build #85 (2026-11-06)
+under Wine-staging 11.17 with and without a Wine virtual desktop
+and under Proton reporting Wine 11.0 with uninterrupted full AVI.
+The real IDirectDraw::SetDisplayMode method is called at the
+prelaunch width and height with the game's original 16-bit depth.
+The game continues to render internally at 640x480. The reported
+desktop dimensions did not change; a physical monitor mode/color
+depth transition has not been independently ruled out.
+Native Windows never enables this Wine-only interception.
+
+TEST THIS BUILD
+---------------
+Start from your own CUE/BIN next to the EXE, not from an installed game.
+Let the full intro AVI play, verify music, input, focus and 4:3 scene;
+then exit normally. Start the EXE a second time without the CD files
+to verify installed-game detection, and check that glide.dll persists.
+Review the ONE CyberGladiatorsFix.log next to the launcher. Native
+Windows 10/11 gameplay remains to be field-tested.
+
+Useful commands:
+  CyberGladiatorsFix.exe                 auto-install/verify and play
+  CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
+  CyberGladiatorsFix.exe --verify        strict SHA-256 check
+  CyberGladiatorsFix.exe --max-graphics  max game settings
+  CyberGladiatorsFix.exe --check-bundle  embedded DLL checks
+  CyberGladiatorsFix.exe --version
+  CyberGladiatorsFix.exe --help
+
+This artifact is a testing build, not a public release. Build 85
+is the validated Wine-staging/Proton functional baseline. The audit
+branch must pass CI and be tested again before integration into
+draft PR #2. No GitHub PR merge has been performed.
+
+PROVEN HISTORICAL BASELINE
+--------------------------
+Build #37, 2026-11-06, commit 63e0d7dd7490162bd2701f847a333f9f06d6d2f2:
+The user verified a complete fullscreen 4:3 AVI, a seamless transition
+with no desktop flashes, a stable 1920x1080 borderless game at ~59.6 FPS,
+FLAC soundtrack and clean process exit under Wine. Build #42 proved the
+one-file dual-DLL packaging and restored the previously installed DLL.
+Subsequent builds removed failed/unused GDI-child experiments.
+
+Third-party GameFrame pin:
+  https://github.com/tanepiper/game-frame
+  f195a074a63cc150673c38becdec696163b0b3d1
+  Apache-2.0, full license text in LICENSE-APACHE
+
+CyberGladiatorsFix license: GPL-3.0-or-later (LICENSE-GPL-3.0)
+Authorship: legluondunet assisted by ChatGPT (OpenAI)

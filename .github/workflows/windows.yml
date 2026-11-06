@@ -1,0 +1,81 @@
+name: Windows - legacy nGlide build checks (not a distributable)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-x64:
+    name: Windows x64 (MSVC)
+    runs-on: windows-latest
+    steps:
+      - name: Check out sources
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc, i686-pc-windows-msvc
+
+      - name: Build Windows x86 CDDA bridge DLL
+        run: cargo build --release --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
+
+      - name: Test Windows x86 CDDA bridge
+        run: cargo test --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
+
+      - name: Build release EXE
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Run unit tests
+        run: cargo test --target x86_64-pc-windows-msvc
+
+      - name: Smoke test command-line version and help
+        shell: pwsh
+        run: |
+          & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "Version smoke test failed" }
+          & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --help
+          if ($LASTEXITCODE -ne 0) { throw "Help smoke test failed" }
+
+      - name: Smoke test one session log and system probe
+        shell: pwsh
+        run: |
+          Push-Location target/x86_64-pc-windows-msvc/release
+          try {
+            & "./CyberGladiatorsFix.exe" --verify
+            if ($LASTEXITCODE -eq 0) { throw "Verify unexpectedly succeeded without a game installation" }
+            if (!(Test-Path "CyberGladiatorsFix.log")) { throw "Missing unified session log" }
+            $content = Get-Content -Raw "CyberGladiatorsFix.log"
+            foreach ($expected in @("[SESSION] BEGIN", "[SYSTEM]", "[HOST]", "[RUNTIME]", "[CONFIG]", "[SESSION] END failure", "DISPLAY=", "Win32_OS=")) {
+              if (!$content.Contains($expected)) { throw "Session log missing $expected" }
+            }
+            $before = (Get-Item "CyberGladiatorsFix.log").LastWriteTimeUtc
+            & "./CyberGladiatorsFix.exe" --help | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Help smoke test failed" }
+            if ((Get-Item "CyberGladiatorsFix.log").LastWriteTimeUtc -ne $before) {
+              throw "Help unexpectedly reset the previous session log"
+            }
+          } finally { Pop-Location }
+
+      - name: Verify only the embedded x86 WinMM bridge is bundled
+        shell: pwsh
+        run: |
+          & "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe" --check-bundle
+          if ($LASTEXITCODE -ne 0) { throw "Embedded x86 runtime verification failed" }
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.dll") {
+            throw "Unexpected external CDDA DLL in the user distribution folder"
+          }
+          if (Test-Path "target/x86_64-pc-windows-msvc/release/CyberGladiatorsIntro.exe") {
+            throw "Unexpected external intro EXE in the user distribution folder"
+          }
+
+      # This legacy job validates the nGlide-compatible launcher build,
+      # but its EXE cannot run the one-click GameFrame default because it
+      # intentionally does not embed GameFrame. Never publish it to users.
+      # The GameFrame workflow is the ONE supported distributable pipeline.

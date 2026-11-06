@@ -1,0 +1,174 @@
+name: CyberGladiatorsFix - Windows x64 one-file with embedded GameFrame
+
+on:
+  push:
+    branches: [experiment/gameframe-glide, main, audit/build85-gameframe]
+    paths:
+      - '.github/workflows/gameframe-glide.yml'
+      - 'tools/gameframe/**'
+      - 'docs/gameframe-experiment.md'
+      - 'docs/BUILD85_AUDIT.md'
+      - 'cdda/**'
+      - 'src/**'
+      - 'build.rs'
+      - 'README.md'
+      - 'Cargo.toml'
+  pull_request:
+    branches: [main, ci/windows-x64-first-build]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gameframe-glide:
+    name: Windows x64 GameFrame full embedded bundle
+    runs-on: windows-latest
+    steps:
+      - name: Check out CyberGladiatorsFix prototype
+        uses: actions/checkout@v4
+
+      - name: Check out pinned upstream GameFrame
+        uses: actions/checkout@v4
+        with:
+          repository: tanepiper/game-frame
+          ref: f195a074a63cc150673c38becdec696163b0b3d1
+          path: third_party/game-frame
+          persist-credentials: false
+
+      - name: Install 32-bit Windows Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc, x86_64-pc-windows-msvc
+
+      - name: Apply narrow Cyber Gladiators adaptations to pinned GameFrame sources
+        shell: pwsh
+        run: |
+          python tools/gameframe/patch_gameframe.py third_party/game-frame
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame integration patch failed; upstream source drift?" }
+          python tools/gameframe/patch_fullscreen.py third_party/game-frame
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame fullscreen stabilization patch failed; upstream source drift?" }
+          python tools/gameframe/patch_first_present.py third_party/game-frame
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame first GL present patch failed; upstream source drift?" }
+
+      - name: Compile upstream Glide wrapper using MSVC and decorated Win32 exports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = (Resolve-Path 'third_party/game-frame/wrappers/Cargo.toml').Path
+          $upstreamDef = (Resolve-Path 'third_party/game-frame/wrappers/glide/glide2x.def').Path
+          # GNU/MinGW uses an internal grGlideInit@0 COFF symbol while the
+          # 32-bit MSVC target uses _grGlideInit@0. Preserve the original
+          # exported names, changing ONLY the internal alias on the right.
+          $def = Join-Path $env:RUNNER_TEMP 'gameframe-glide-msvc.def'
+          $original = Get-Content -Raw $upstreamDef
+          $converted = [regex]::Replace($original, '(?m)^(_[A-Za-z0-9_]+@\d+)=(\w+@\d+)\r?$', '$1=_$2')
+          $n = ([regex]::Matches($converted, '(?m)^_[A-Za-z0-9_]+@\d+=_[A-Za-z0-9_]+@\d+\r?$')).Count
+          if ($n -ne 156) { throw "Expected 156 adapted Glide symbols; got $n" }
+          Set-Content -Path $def -Value $converted -Encoding ascii
+          $env:RUSTFLAGS = "-C link-arg=/DEF:$def"
+          cargo build -p glide --release --target i686-pc-windows-msvc --manifest-path $manifest
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame Glide Windows x86 MSVC compilation failed" }
+
+      - name: Check PE32 machine, DLL exports and Glide 2.11 compatibility
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pefile
+          if ($LASTEXITCODE -ne 0) { throw "PE analysis setup failed" }
+          $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
+          python tools/gameframe/audit_exports.py $dll third_party/game-frame/wrappers/glide/glide2x.def
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame DLL export check failed" }
+
+      - name: Build matching standalone GameFrame x64 launcher and embedded x86 WinMM bridge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
+          $env:CYBER_GAMEFRAME_GLIDE_SHA256 = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:CYBER_GAMEFRAME_GLIDE_DLL_PATH = (Resolve-Path $dll).Path
+          cargo build --release --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build embedded WinMM bridge" }
+          cargo test --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw "WinMM bridge tests failed" }
+          cargo build --release --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame launcher build failed" }
+          cargo test --target x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame launcher unit tests failed" }
+          & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --help
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame help smoke failed" }
+          & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle
+          if ($LASTEXITCODE -ne 0) { throw "Embedded WinMM/GameFrame bundle mismatch" }
+          $output = (& 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle | Out-String)
+          if ($output -notmatch 'open_source_glide_embedded=1') { throw "GameFrame must be embedded into the one EXE" }
+          Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
+
+      - name: Verify one-click auto-discovery fails safely without a retail CD
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          $dir = Split-Path -Parent $exe
+          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+            throw 'Test runner unexpectedly contains an installed game'
+          }
+          $text = (& $exe 2>&1 | Out-String)
+          if ($LASTEXITCODE -eq 0) {
+            throw 'Automatic no-argument launch unexpectedly succeeded without a CD or game'
+          }
+          if ($text -notmatch 'No installed game') {
+            throw "Missing diagnostic for absent retail image: $text"
+          }
+          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+            throw 'Automatic installer created a game directory without a valid CD'
+          }
+          if (!(Test-Path (Join-Path $dir 'CyberGladiatorsFix.log'))) {
+            throw 'Automatic launch did not produce its unified session log'
+          }
+          Write-Host 'One-click auto-discovery no-CD refusal: PASS'
+          # The expected native EXE exit was nonzero; reset it explicitly,
+          # otherwise pwsh propagates that value despite successful assertions.
+          exit 0
+
+      - name: Package one executable and Apache-2.0 notices
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path dist/GameFrame-Glide-EXPERIMENTAL -Force | Out-Null
+          Copy-Item 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' 'dist/GameFrame-Glide-EXPERIMENTAL/CyberGladiatorsFix.exe'
+          if (Test-Path 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll') { throw "One-file distribution must not ship a separate GameFrame glide.dll" }
+          Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
+          Copy-Item 'LICENSE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-GPL-3.0'
+          Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
+          $release = 'dist/GameFrame-Glide-EXPERIMENTAL'
+          $executables = @(Get-ChildItem $release -File | Where-Object { $_.Extension -eq '.exe' -or $_.Extension -eq '.dll' })
+          if ($executables.Count -ne 1 -or $executables[0].Name -ne 'CyberGladiatorsFix.exe') {
+            throw "One-file distribution must contain exactly one executable and no external DLL"
+          }
+          Get-FileHash (Join-Path $release 'CyberGladiatorsFix.exe') -Algorithm SHA256 | Format-List | Out-String | Write-Host
+
+      - name: Smoke test native Windows x86 loader (no rendering)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'gameframe-loader-smoke'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll' (Join-Path $dir 'glide.dll')
+          $smoke = Join-Path $dir 'GameFrameGlideSmoke.exe'
+          rustc --edition=2021 --target i686-pc-windows-msvc tools/gameframe/smoke_load.rs -o $smoke
+          if ($LASTEXITCODE -ne 0) { throw "Cannot compile Windows x86 loader smoke" }
+          Push-Location $dir
+          try {
+            & ".\GameFrameGlideSmoke.exe"
+            if ($LASTEXITCODE -ne 0) { throw "Windows x86 load smoke failed" }
+          } finally {
+            Pop-Location
+            Remove-Item -Recurse -Force $dir
+          }
+
+      - name: Upload GameFrame Windows x86 Glide proof of concept
+        uses: actions/upload-artifact@v4
+        with:
+          name: CyberGladiatorsFix-Windows-x64-OneFile-GameFrame
+          path: dist/GameFrame-Glide-EXPERIMENTAL/
+          if-no-files-found: error
+          retention-days: 14
