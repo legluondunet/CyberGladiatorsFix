@@ -1,20 +1,12 @@
-name: CyberGladiatorsFix - Windows x64 one-file with embedded GameFrame
+name: CyberGladiatorsFix - Windows x64 one-file pre-release checks
 
 on:
+  # Run the complete release build for every change, not just selected paths.
+  # This covers license, toolchain, packaging, CI and metadata updates too.
   push:
-    branches: [experiment/gameframe-glide, main, audit/build85-gameframe]
-    paths:
-      - '.github/workflows/gameframe-glide.yml'
-      - 'tools/gameframe/**'
-      - 'docs/gameframe-experiment.md'
-      - 'docs/BUILD85_AUDIT.md'
-      - 'cdda/**'
-      - 'src/**'
-      - 'build.rs'
-      - 'README.md'
-      - 'Cargo.toml'
+    branches: [main]
   pull_request:
-    branches: [main, ci/windows-x64-first-build]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -22,10 +14,10 @@ permissions:
 
 jobs:
   gameframe-glide:
-    name: Windows x64 GameFrame full embedded bundle
+    name: Windows x64 one-file GameFrame validation
     runs-on: windows-latest
     steps:
-      - name: Check out CyberGladiatorsFix prototype
+      - name: Check out CyberGladiatorsFix
         uses: actions/checkout@v4
 
       - name: Check out pinned upstream GameFrame
@@ -102,6 +94,30 @@ jobs:
           if ($output -notmatch 'open_source_glide_embedded=1') { throw "GameFrame must be embedded into the one EXE" }
           Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
 
+      - name: Check version and strict no-install verification preserve the one-session log
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'Version smoke test failed' }
+          & $exe --verify 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'Strict --verify unexpectedly succeeded without retail assets' }
+          $log = Join-Path (Split-Path -Parent $exe) 'CyberGladiatorsFix.log'
+          if (!(Test-Path $log)) { throw 'Strict --verify failed without a session log' }
+          $body = Get-Content -Raw $log
+          foreach ($part in @('[SESSION] BEGIN', '[SYSTEM]', '[CONFIG]', '[SESSION] END failure')) {
+            if (!$body.Contains($part)) { throw "Unified log missing: $part" }
+          }
+          $hash = (Get-FileHash $log -Algorithm SHA256).Hash
+          & $exe --help | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Help smoke test failed' }
+          if ((Get-FileHash $log -Algorithm SHA256).Hash -ne $hash) {
+            throw '--help unexpectedly changed the prior unified session log'
+          }
+          Write-Host 'Strict verify + one log + read-only help: PASS'
+          exit 0
+
       - name: Verify one-click auto-discovery fails safely without a retail CD
         shell: pwsh
         run: |
@@ -133,13 +149,13 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path dist/GameFrame-Glide-EXPERIMENTAL -Force | Out-Null
-          Copy-Item 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' 'dist/GameFrame-Glide-EXPERIMENTAL/CyberGladiatorsFix.exe'
-          if (Test-Path 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll') { throw "One-file distribution must not ship a separate GameFrame glide.dll" }
-          Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
-          Copy-Item 'LICENSE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-GPL-3.0'
-          Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
-          $release = 'dist/GameFrame-Glide-EXPERIMENTAL'
+          New-Item -ItemType Directory -Path dist/CyberGladiatorsFix-PreRelease -Force | Out-Null
+          Copy-Item 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' 'dist/CyberGladiatorsFix-PreRelease/CyberGladiatorsFix.exe'
+          if (Test-Path 'dist/CyberGladiatorsFix-PreRelease/glide.dll') { throw "One-file distribution must not ship a separate GameFrame glide.dll" }
+          Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/CyberGladiatorsFix-PreRelease/LICENSE-APACHE'
+          Copy-Item 'LICENSE' 'dist/CyberGladiatorsFix-PreRelease/LICENSE-GPL-3.0'
+          Copy-Item 'docs/DISTRIBUTION.md' 'dist/CyberGladiatorsFix-PreRelease/README.txt'
+          $release = 'dist/CyberGladiatorsFix-PreRelease'
           $executables = @(Get-ChildItem $release -File | Where-Object { $_.Extension -eq '.exe' -or $_.Extension -eq '.dll' })
           if ($executables.Count -ne 1 -or $executables[0].Name -ne 'CyberGladiatorsFix.exe') {
             throw "One-file distribution must contain exactly one executable and no external DLL"
@@ -165,10 +181,10 @@ jobs:
             Remove-Item -Recurse -Force $dir
           }
 
-      - name: Upload GameFrame Windows x86 Glide proof of concept
+      - name: Upload Windows x64 pre-release package
         uses: actions/upload-artifact@v4
         with:
-          name: CyberGladiatorsFix-Windows-x64-OneFile-GameFrame
-          path: dist/GameFrame-Glide-EXPERIMENTAL/
+          name: CyberGladiatorsFix-Windows-x64-PreRelease
+          path: dist/CyberGladiatorsFix-PreRelease/
           if-no-files-found: error
           retention-days: 14
