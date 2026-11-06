@@ -94,8 +94,12 @@ fn verify_assets(root:&Path,allow_modified_iq:bool)->Result<(String,Vec<String>)
     nglide::verify(&game)?;
     let audio=if patch::cdda_active(&game.join("cyber.exe"))? {
         cdda::verify(&game)?;
-        "CDDA bridge enabled and verified"
-    }else{"native WinMM (CDDA bypass)"};
+        if settings::read_cdda(&game)? {
+            "WinMM bridge verified; FLAC CDDA music selected"
+        }else{
+            "WinMM bridge verified; native system CD audio selected"
+        }
+    }else{"legacy native WinMM import (bridge not yet active)"};
     let label=if warnings.is_empty(){"all assets match original CD"}
         else{"modified IQ data permitted by explicit INI option; other assets match original CD"};
     Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}; {label}"),warnings))
@@ -127,10 +131,9 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 /// versus nGlide's direct Vulkan renderer. Never assume D3D9 implies DXVK.
 /// Each D3D9 experiment writes DXVK logs into its own newly-created folder:
 /// pre-existing DXVK logs can never masquerade as evidence from this run.
-/// Normal native AVI path verified with the guarded WineD3D/DXVK WndProc
-/// repair; no external MCI player is launched. For now it requires the
-/// optional WinMM/CDDA bridge, with the separate-video compatibility path
-/// retained for installations with CDDA disabled.
+/// Native AVI and the guarded WineD3D/DXVK repair always run through the
+/// x86 WinMM bridge; the INI EnableCDDA switch controls only virtual FLAC
+/// music, never the original Cinepak player or its full-screen presentation.
 pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
     if avi_4x3 && trace {
@@ -236,21 +239,20 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     let configured_skip=settings::read(&game)?;
     let skip=skip_intro_override.unwrap_or(configured_skip);
     let enable_cdda=settings::read_cdda(&game)?;
-    if avi_4x3 && (!enable_cdda||skip) {
-        return Err("Native AVI 4:3 host requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1; INI not modified".into());
+    if avi_4x3 && skip {
+        return Err("Native AVI 4:3 host requires [Video] SkipIntro=0; INI not modified".into());
     }
-    // --no-glide-hook by itself is an AVI/3dfx-transition probe, so it
-    // requires the intro. In a *forced renderer* A/B comparison, permitting
-    // SkipIntro=1 provides an important control: D3D9 rendering without the
-    // video-to-Glide transition. CDDA stays enabled to preserve diagnostics.
-    if no_glide_hook && !isolated && (!enable_cdda || (skip && backend_override.is_none())){
-        return Err("--no-glide-hook requires [Audio] EnableCDDA=1 and [Video] SkipIntro=0 unless running a forced renderer comparison".into());
+    // The WinMM bridge is always installed for video; audio/music remains
+    // opt-in or opt-out independently. Require the video when a particular
+    // diagnostic is observing the video-to-Glide transition.
+    if no_glide_hook && !isolated && skip && backend_override.is_none(){
+        return Err("--no-glide-hook requires [Video] SkipIntro=0 unless running a forced renderer comparison".into());
     }
-    if wndproc_repair && (!enable_cdda || skip) {
-        return Err("WndProc repair experiment requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1".into());
+    if wndproc_repair && skip {
+        return Err("WndProc repair experiment requires [Video] SkipIntro=0".into());
     }
-    if video_delay_ms!=0 && (!enable_cdda || skip){
-        return Err("--video-delay requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1".into());
+    if video_delay_ms!=0 && skip{
+        return Err("--video-delay requires [Video] SkipIntro=0".into());
     }
     // The diagnostic Glide hook lives exclusively inside the x86 CDDA bridge.
     // A legacy INI may still select EnableCDDA=0, so running the NO-OP A/B
@@ -259,12 +261,11 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     require_cd_audio_for_passthru(passthru_noop,enable_cdda)?;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
-    // If the user explicitly opts into CDDA, copy/upgrade the project's
-    // verified DLL first. Never switch the import descriptor to an absent DLL.
-    if enable_cdda {cdda::try_install(root,&game)?;}
-    // Prepare the exact import and intro variants *before* verification and
-    // launch; disabled CDDA must not load or require the 32-bit DLL.
-    patch::set_cdda(&exe,enable_cdda)?;
+    // Always use the verified WinMM DLL for native fullscreen AVI and the
+    // WndProc repair. The user's EnableCDDA option only selects FLAC music
+    // emulation versus forwarding the native system CD-audio MCI commands.
+    cdda::try_install(root,&game)?;
+    patch::set_cdda(&exe,true)?;
     patch::set_skip_intro(&exe,skip)?;
     verify_launch_assets(root)?;
     if logo{nglide::check_logo(&game)?;}
@@ -292,13 +293,14 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     for key in ["CYBER_VIDEO_CLOSE_DELAY_MS","CYBER_GLIDE_HOOK_DISABLED",
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
         "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
-        "CYBER_AVI_FULLSCREEN"]{
+        "CYBER_AVI_FULLSCREEN","CYBER_CDDA_MUSIC"]{
         cmd.env_remove(key);
     }
     if avi_4x3 {
         cmd.env("CYBER_AVI_FULLSCREEN","1");
         crate::show("AVI_4X3 native_MCIAVI=1 host=black_popup_no_activate target=full_monitor_4x3 only_skip_keys=ESC_ENTER_SPACE mouse_buttons_suppressed=1 renderer=nGlide_D3D9",root);
     }
+    cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
     // This is a one-shot, guard-checked in-process fix. No long-running
     // diagnostics, DLL hooks or Wine prefix changes in the normal path.
     if wndproc_repair {
@@ -408,10 +410,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             diagnostics::log(root,"MODULE",&format!("{label} sha256={hash}"));
         }
     }
-    if enable_cdda {
-        if let Ok(hash)=patch::file_hash(&game.join(cdda::DLL_NAME)){
-            diagnostics::log(root,"MODULE",&format!("CDDA bridge sha256={hash}"));
-        }
+    if let Ok(hash)=patch::file_hash(&game.join(cdda::DLL_NAME)){
+        diagnostics::log(root,"MODULE",&format!("WinMM video/CDDA bridge sha256={hash}"));
     }
     if let Ok(iq)=settings::read_allow_modified_iq(&game){
         diagnostics::log(root,"CONFIG",&format!("effective AllowModifiedIQ={} (strict --verify unaffected)",u8::from(iq)));
