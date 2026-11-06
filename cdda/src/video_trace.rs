@@ -849,7 +849,11 @@ fn gameframe_prepare_window(phase:&str){
         let already_fullscreen=before.left==0&&before.top==0
             &&before.right==desktop_w&&before.bottom==desktop_h;
         if already_fullscreen {
-            video_log("GAMEFRAME_HANDOFF_PREPARE fullscreen_already_correct=1 changed=0");
+            // Polls are frequent while MCI plays: avoid hundreds of harmless
+            // "already correct" messages in the user's one session log.
+            if phase!="movie_status_poll"{
+                video_log(&format!("GAMEFRAME_HANDOFF_PREPARE stage={phase} fullscreen_already_correct=1 changed=0"));
+            }
             return;
         }
         // The host is still present and topmost. This changes only the
@@ -870,6 +874,45 @@ fn gameframe_prepare_window(phase:&str){
             hwnd as usize,before.left,before.top,before.right,before.bottom,
             after.left,after.top,after.right,after.bottom,desktop_w,desktop_h
         ));
+    }
+}
+
+/// During in-window MCI, the video's 1440x1080 CHILD is *clipped* by
+/// the game's parent client area. The game/WinMM can revert that parent to
+/// 640x480 after the initial pre-MCI size correction; the symptom is only a
+/// left-hand fragment of the movie. Inspect and restore the parent BEFORE
+/// uncovering frames, and periodically during MCI's real status-poll loop.
+/// No new top-level window, timer, focus change, AVI decoder or Glide hook.
+fn gameframe_keep_movie_parent(phase:&str){
+    if !gameframe_video_in_window(){return;}
+    let h=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=h else{return;};
+    if h.owner_thread!=unsafe{GetCurrentThreadId()}{return;}
+    static POLLS:AtomicU32=AtomicU32::new(0);
+    let n=if phase=="movie_status_poll"{
+        let n=POLLS.fetch_add(1,Ordering::Relaxed)+1;
+        if n%8!=1{return;}
+        n
+    }else{0};
+    gameframe_prepare_window(phase);
+    // Record parent/host/surface geometry so clipping can be distinguished
+    // from an MCI destination-scaling issue if this A/B test still fails.
+    if phase!="movie_status_poll"||n<=24||n%400==1{
+        unsafe {
+            let mut parent=WinRect::default();
+            let mut host=WinRect::default();
+            let mut surface=WinRect::default();
+            let p=GetClientRect(h.game as *mut c_void,&mut parent);
+            let hh=GetClientRect(h.host as *mut c_void,&mut host);
+            let ss=GetClientRect(h.surface as *mut c_void,&mut surface);
+            video_log(&format!(
+                "GAMEFRAME_MOVIE_GEOMETRY stage={phase} parent_client={}x{} host_client={}x{} surface_client={}x{} get_client_ok={p},{hh},{ss} parent_hwnd={:#x} host_hwnd={:#x} surface_hwnd={:#x} poll={n}",
+                parent.right-parent.left,parent.bottom-parent.top,
+                host.right-host.left,host.bottom-host.top,
+                surface.right-surface.left,surface.bottom-surface.top,
+                h.game,h.host,h.surface
+            ));
+        }
     }
 }
 
@@ -1250,6 +1293,9 @@ pub fn before_mci_play(command:&str) {
     video_log(&format!("PRE_VIDEO_BLACK_HOLD duration_ms={VIDEO_LEAD_IN_MS}"));
     std::thread::sleep(Duration::from_millis(VIDEO_LEAD_IN_MS));
     timing("PRE_VIDEO_BLACK_END");
+    // Reassert the PARENT HWND while the first-frame black cover is still
+    // present: a 640x480 parent would otherwise clip the 1440x1080 child.
+    gameframe_keep_movie_parent("before_MCI_play");
 }
 fn reveal_playing_video() {
     if !smooth_enabled(){return;}
@@ -1353,6 +1399,9 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     let command=text.trim();
     // Called after each native WinMM status poll on the original game
     // thread: reliable even while that thread does not dispatch WM_TIMER.
+    if command.eq_ignore_ascii_case("status movie mode"){
+        gameframe_keep_movie_parent("movie_status_poll");
+    }
     maybe_release_first_frame_cover(command);
     if command.eq_ignore_ascii_case("open avivideo") {
         if result==0{
@@ -1376,6 +1425,7 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     }
     if command.eq_ignore_ascii_case("play movie window") && result==0{
         timing("MCI_PLAY_RETURNED");
+        gameframe_keep_movie_parent("after_MCI_play_before_reveal");
         reveal_playing_video();
         enable_movie_keys();
     }
