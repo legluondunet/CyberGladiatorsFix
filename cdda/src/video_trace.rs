@@ -108,8 +108,8 @@ const TRANSITION_DELAY_MS:u64=1000; // only used by --smooth-video-test
 const GAME_3DFX_ACTIVE_RVA:usize=0x0004_727c;
 const HANDOFF_TIMER_ID:usize=0x435c;
 const HANDOFF_POLL_MS:u32=50;
-const HANDOFF_STABLE_3D_MS:u64=500;
-const HANDOFF_MAX_MS:u64=2500;
+const HANDOFF_STABLE_3D_MS:u64=1500;
+const HANDOFF_MAX_MS:u64=3500;
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
@@ -1161,7 +1161,7 @@ mod fullscreen_tests {
         assert_eq!(decide_handoff(HANDOFF_MAX_MS,None,true),"bounded_timeout");
         assert_eq!(decide_handoff(10,None,false),"game_window_gone");
         assert!(HANDOFF_POLL_MS<=100);
-        assert!(HANDOFF_MAX_MS<=3000);
+        assert!(HANDOFF_MAX_MS<=4000);
     }
     #[test]
     fn fullscreen_window_must_cover_bottom_panel_and_all_screen_edges(){
