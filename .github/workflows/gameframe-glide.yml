@@ -1,0 +1,74 @@
+name: GameFrame experimental Glide 2.x DLL (Windows x86)
+
+on:
+  push:
+    branches: [experiment/gameframe-glide]
+    paths:
+      - '.github/workflows/gameframe-glide.yml'
+      - 'tools/gameframe/**'
+      - 'docs/gameframe-experiment.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gameframe-glide:
+    name: Windows 32-bit GameFrame Glide proof of concept
+    runs-on: windows-latest
+    steps:
+      - name: Check out CyberGladiatorsFix prototype
+        uses: actions/checkout@v4
+
+      - name: Check out pinned upstream GameFrame
+        uses: actions/checkout@v4
+        with:
+          repository: tanepiper/game-frame
+          ref: f195a074a63cc150673c38becdec696163b0b3d1
+          path: third_party/game-frame
+          persist-credentials: false
+
+      - name: Install 32-bit Windows Rust target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+
+      - name: Compile upstream Glide wrapper using MSVC and its original export table
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $manifest = (Resolve-Path 'third_party/game-frame/wrappers/Cargo.toml').Path
+          $def = (Resolve-Path 'third_party/game-frame/wrappers/glide/glide2x.def').Path
+          # The source normally uses its Zig/MinGW linker. MSVC is available
+          # on the GitHub Windows runner. Pass its exact documented .def table
+          # to the linker instead of inventing undecorated Glide exports.
+          $env:RUSTFLAGS = "-C link-arg=/DEF:$def"
+          cargo build -p glide --release --target i686-pc-windows-msvc --manifest-path $manifest
+          if ($LASTEXITCODE -ne 0) { throw "Failed to build GameFrame Glide with Windows MSVC" }
+
+      - name: Check PE32 machine, DLL exports and Glide 2.11 compatibility
+        shell: pwsh
+        run: |
+          python -m pip install --disable-pip-version-check pefile
+          if ($LASTEXITCODE -ne 0) { throw "PE analysis setup failed" }
+          $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
+          python tools/gameframe/audit_exports.py $dll third_party/game-frame/wrappers/glide/glide2x.def
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame DLL export check failed" }
+
+      - name: Package experimental Glide DLL and upstream notices
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path dist/GameFrame-Glide-EXPERIMENTAL -Force | Out-Null
+          Copy-Item 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll' 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll'
+          Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
+          Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
+          Get-FileHash 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll' -Algorithm SHA256 | Format-List | Out-String | Write-Host
+
+      - name: Upload GameFrame Windows x86 Glide proof of concept
+        uses: actions/upload-artifact@v4
+        with:
+          name: GameFrame-Glide-Windows-x86-EXPERIMENTAL
+          path: dist/GameFrame-Glide-EXPERIMENTAL/
+          if-no-files-found: error
+          retention-days: 14
