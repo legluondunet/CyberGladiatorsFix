@@ -7,7 +7,7 @@ use std::path::Path;
 
 pub const NAME:&str="CyberGladiatorsFix.ini";
 const MAX_SIZE:u64=4096;
-const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n; Experimental CD audio bridge (disabled by default).\r\n; 0 = system WinMM; 1 = FLAC CDDA bridge.\r\n[Audio]\r\nEnableCDDA=0\r\n\r\n; Disabled by default. Opt-in for games which update IQ data while running.\r\n; --verify remains strict even when this option is enabled.\r\n[Integrity]\r\nAllowModifiedIQ=0\r\n";
+const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n; CD audio bridge enabled for native video + lossless music by default.\r\n; 0 = system WinMM + legacy isolated AVI fallback; 1 = FLAC CDDA bridge.\r\n[Audio]\r\nEnableCDDA=1\r\n\r\n; Disabled by default. Opt-in for games which update IQ data while running.\r\n; --verify remains strict even when this option is enabled.\r\n[Integrity]\r\nAllowModifiedIQ=0\r\n";
 
 fn parse(text:&str)->Result<bool,String>{
     let mut video=false;
@@ -42,8 +42,8 @@ fn parse(text:&str)->Result<bool,String>{
     choice.ok_or_else(||"CyberGladiatorsFix.ini is missing SkipIntro=0 or SkipIntro=1".into())
 }
 
-/// Experimental music is opt-in. Legacy INIs lacking [Audio] remain
-/// compatible and preserve original system WinMM imports.
+/// New installs enable the tested WinMM bridge and in-process video. Legacy
+/// INIs lacking [Audio] remain backward compatible and use system WinMM.
 fn parse_cdda(text:&str)->Result<bool,String>{
     let mut audio=false;
     let mut seen_section=false;
@@ -191,8 +191,8 @@ mod tests{
             "[Integrity]\nAllowModifiedIQ=0\n[Integrity]\nAllowModifiedIQ=1\n",
         ] {assert!(parse_iq_policy(bad).is_err(),"{bad}");}
     }
-    #[test] fn audio_bridge_defaults_off_and_supports_opt_in(){
-        assert!(!parse_cdda(DEFAULT).unwrap());
+    #[test] fn new_installs_enable_bridge_but_legacy_ini_without_audio_stays_off(){
+        assert!(parse_cdda(DEFAULT).unwrap());
         assert!(!parse_cdda("[Video]\nSkipIntro=1\n").unwrap());
         assert!(parse_cdda("[Video]\nSkipIntro=1\n[Audio]\nEnableCDDA=1\n").unwrap());
         assert!(!parse_cdda("[Video]\nSkipIntro=1\n[Audio]\nEnableCDDA=off\n").unwrap());
@@ -209,6 +209,7 @@ mod tests{
     #[test] fn defaults_play_video_and_are_parseable(){
         assert!(!parse(DEFAULT).unwrap());
         assert_eq!(NAME,"CyberGladiatorsFix.ini");
+        assert!(parse_cdda(DEFAULT).unwrap());
     }
     #[test] fn accepts_skip_toggle_and_comments(){
         assert!(parse("[Video]\r\nSkipIntro=1\r\n").unwrap());
