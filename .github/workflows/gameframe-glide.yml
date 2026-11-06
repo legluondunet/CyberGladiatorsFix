@@ -1,8 +1,8 @@
-name: GameFrame experimental Glide 2.x DLL (Windows x86)
+name: CyberGladiatorsFix - Windows x64 one-file with embedded GameFrame
 
 on:
   push:
-    branches: [experiment/gameframe-glide]
+    branches: [experiment/gameframe-glide, main]
     paths:
       - '.github/workflows/gameframe-glide.yml'
       - 'tools/gameframe/**'
@@ -11,6 +11,9 @@ on:
       - 'src/**'
       - 'build.rs'
       - 'README.md'
+      - 'Cargo.toml'
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -18,7 +21,7 @@ permissions:
 
 jobs:
   gameframe-glide:
-    name: Windows 32-bit GameFrame Glide proof of concept
+    name: Windows x64 GameFrame full embedded bundle
     runs-on: windows-latest
     steps:
       - name: Check out CyberGladiatorsFix prototype
@@ -137,7 +140,7 @@ jobs:
       - name: Upload GameFrame Windows x86 Glide proof of concept
         uses: actions/upload-artifact@v4
         with:
-          name: GameFrame-Glide-Windows-x86-EXPERIMENTAL
+          name: CyberGladiatorsFix-Windows-x64-OneFile-GameFrame
           path: dist/GameFrame-Glide-EXPERIMENTAL/
           if-no-files-found: error
           retention-days: 14
