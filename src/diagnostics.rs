@@ -211,8 +211,8 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
             settings::read_allow_modified_iq(&game)) {
             (Ok(skip),Ok(cdda),Ok(iq))=>{
                 write_line(&mut file,"CONFIG",&format!(
-                    "SkipIntro={} EnableCDDA={} AllowModifiedIQ={} CDDA_FORMAT=FLAC/44100Hz/16bit/stereo",
-                    u8::from(skip),u8::from(cdda),u8::from(iq)
+                    "SkipIntro={} EnableCDDA={} AllowModifiedIQ={} CDDA_FORMAT={}",
+                    u8::from(skip),u8::from(cdda),u8::from(iq),cd_audio_backend(cdda)
                 )).map_err(|e|e.to_string())?;
             }
             _=>write_line(&mut file,"CONFIG",
@@ -231,9 +231,18 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
     }
     file.sync_all().map_err(|e|format!("Cannot commit log header: {e}"))
 }
+// Record the *selected* CD audio backend, not a hardcoded FLAC claim when
+// EnableCDDA=0 asks the same WinMM bridge to forward original CD audio calls.
+fn cd_audio_backend(enabled:bool)->&'static str{
+    if enabled{"FLAC/44100Hz/16bit/stereo"}else{"system_WinMM_native_CD_audio"}
+}
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test] fn config_log_distinguishes_music_from_video_bridge(){
+        assert_eq!(cd_audio_backend(true),"FLAC/44100Hz/16bit/stereo");
+        assert_eq!(cd_audio_backend(false),"system_WinMM_native_CD_audio");
+    }
     #[test] fn only_known_cli_switches_enter_log(){
         assert_eq!(command_label(&[]),"install_or_update");
         assert_eq!(command_label(&["--launch".into(),"--trace".into()]),"--launch --trace");
