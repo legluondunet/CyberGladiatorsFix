@@ -298,6 +298,10 @@ fn gameframe_video_in_window()->bool{
         && std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1")
         && std::env::var("CYBER_GAMEFRAME_AVI_IN_WINDOW").as_deref()==Ok("1")
 }
+fn avi_unscaled_probe()->bool{
+    gameframe_video_in_window()
+        && std::env::var("CYBER_GAMEFRAME_AVI_UNSCALED").as_deref()==Ok("1")
+}
 fn embedded_movie_host_style()->u32{WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN}
 fn embedded_movie_host_exstyle()->u32{0}
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
@@ -544,7 +548,15 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     }
     let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
     let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
-    let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
+    let (x,y,w,h)=if embedded&&avi_unscaled_probe(){
+        // Diagnostic only: the source is verified 640x480. If the whole
+        // picture is visible WITHOUT stretching in the same game HWND,
+        // the clipping is in Wine's GDI destination scaling/presentation,
+        // not the MCI source or the Win32 parent/child dimensions.
+        (screen_w.saturating_sub(640)/2,screen_h.saturating_sub(480)/2,640,480)
+    }else{
+        fit_4_3(screen_w,screen_h)?
+    };
     // The external AVI child used to start at x=240, while Wine's GDI
     // destination already had a 4:3 scaling transform. Wine could then
     // clip the first 240 source pixels (540 final pixels at 2.25x).
@@ -645,7 +657,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     }
     if embedded {
         video_log(&format!(
-            "GAMEFRAME_MCI_SURFACE_ORIGIN origin=({surface_x},{surface_y}) client={surface_w}x{surface_h} destination=({x},{y} {w}x{h}) centered_by=MCI_destination_not_child_position 4x3=1 HDC_origin_expected=0,0"
+            "GAMEFRAME_MCI_SURFACE_ORIGIN origin=({surface_x},{surface_y}) client={surface_w}x{surface_h} destination=({x},{y} {w}x{h}) centered_by=MCI_destination_not_child_position 4x3=1 HDC_origin_expected=0,0 unscaled_probe={}",
+            u8::from(avi_unscaled_probe())
         ));
     }
     // Force a fresh black paint before Wine's MCI window becomes visible.
@@ -1518,6 +1531,7 @@ mod fullscreen_tests {
         let (surface_x,surface_y,surface_w,surface_h)=(0,0,1920,1080);
         assert_eq!((surface_x,surface_y,surface_w,surface_h),(0,0,1920,1080));
         assert_eq!((x,y,w,h),(240,0,1440,1080));
+        assert_eq!(((1920-640)/2,(1080-480)/2,640,480),(640,300,640,480));
     }
     #[test]
     fn x86_sendinput_layout_and_alt_enter_events(){
