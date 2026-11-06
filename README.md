@@ -2,7 +2,16 @@
 
 **Modern compatibility patch, installer and launcher for Cyber Gladiators (1996), Windows x86.** Designed to work on recent Windows versions and Wine/Proton. Source under GPL-3.0-or-later.
 
-> **Development build / test candidate:** The current implementation has been built and unit-tested with Windows CI, but must still be exercised end-to-end on an actual game installation under Wine and native Windows before a public release.
+> **Development build / test candidate:** The open-source GameFrame build #37 has been validated end-to-end under Wine 11.0, including full 4:3 AVI and the first-OpenGL-frame handoff. **Native Windows gameplay is not yet validated**; the Windows CI checks build, exports and DLL loading but cannot test actual game graphics.
+
+
+### GameFrame OpenGL — GPLv3-compatible one-EXE test build
+
+The optional, open-source [GameFrame](https://github.com/tanepiper/game-frame) Glide 2.11 wrapper is licensed **Apache-2.0** and combined with this GPLv3 patcher under both licenses' conditions. The special GameFrame Windows x64 artifact contains just **one executable** plus notices and documentation; it embeds the x86 WinMM bridge and the GameFrame x86 glide.dll. It does not distribute nGlide or any Cyber Gladiators game files.
+
+Run `CyberGladiatorsFix.exe --launch --gameframe`. This explicitly switches to the embedded GameFrame DLL **only while CYBER.EXE runs**, saves the existing `glide.dll` byte-for-byte to a hash-qualified backup, then restores it on normal exit. The launcher validates PE32 architecture and SHA-256 before installing or restoring. If a prior interrupted session leaves a backup, the launcher restores it on the next GameFrame session; ambiguous or modified DLLs cause a safe refusal instead of an overwrite. The prior standalone `--gameframe-test --avi-first-present-handoff` remains a compatibility alias.
+
+The **validated Wine 11.0 GameFrame experiment** plays the original AVI in a compatible native MCI/GDI fullscreen host, preserves its 4:3 aspect ratio, and hides that host only upon notification of a completed OpenGL `SwapBuffers`. Gameplay then runs in the original input HWND, borderless fullscreen, at ~60 FPS with unified logging. Native Windows gameplay and the automatic one-EXE DLL staging require a further field test before final release.
 
 ## What's included?
 

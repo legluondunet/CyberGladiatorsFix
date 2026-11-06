@@ -9,6 +9,8 @@ on:
       - 'docs/gameframe-experiment.md'
       - 'cdda/**'
       - 'src/**'
+      - 'build.rs'
+      - 'README.md'
   workflow_dispatch:
 
 permissions:
@@ -79,6 +81,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
           $env:CYBER_GAMEFRAME_GLIDE_SHA256 = (Get-FileHash $dll -Algorithm SHA256).Hash.ToLowerInvariant()
+          $env:CYBER_GAMEFRAME_GLIDE_DLL_PATH = (Resolve-Path $dll).Path
           cargo build --release --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
           if ($LASTEXITCODE -ne 0) { throw "Failed to build embedded WinMM bridge" }
           cargo test --target i686-pc-windows-msvc --manifest-path cdda/Cargo.toml
@@ -90,16 +93,18 @@ jobs:
           & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --help
           if ($LASTEXITCODE -ne 0) { throw "GameFrame help smoke failed" }
           & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle
-          if ($LASTEXITCODE -ne 0) { throw "Embedded CDDA bridge bundle mismatch" }
+          if ($LASTEXITCODE -ne 0) { throw "Embedded WinMM/GameFrame bundle mismatch" }
+          $output = (& 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle | Out-String)
+          if ($output -notmatch 'open_source_glide_embedded=1') { throw "GameFrame must be embedded into the one EXE" }
           Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
 
-      - name: Package experimental Glide DLL and upstream notices
+      - name: Package one executable and Apache-2.0 notices
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           New-Item -ItemType Directory -Path dist/GameFrame-Glide-EXPERIMENTAL -Force | Out-Null
-          Copy-Item 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll' 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll'
           Copy-Item 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' 'dist/GameFrame-Glide-EXPERIMENTAL/CyberGladiatorsFix.exe'
+          if (Test-Path 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll') { throw "One-file distribution must not ship a separate GameFrame glide.dll" }
           Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
           Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
           Get-FileHash 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll' -Algorithm SHA256 | Format-List | Out-String | Write-Host
@@ -108,7 +113,9 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $dir = (Resolve-Path 'dist/GameFrame-Glide-EXPERIMENTAL').Path
+          $dir = Join-Path $env:RUNNER_TEMP 'gameframe-loader-smoke'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Copy-Item 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll' (Join-Path $dir 'glide.dll')
           $smoke = Join-Path $dir 'GameFrameGlideSmoke.exe'
           rustc --edition=2021 --target i686-pc-windows-msvc tools/gameframe/smoke_load.rs -o $smoke
           if ($LASTEXITCODE -ne 0) { throw "Cannot compile Windows x86 loader smoke" }
@@ -118,7 +125,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Windows x86 load smoke failed" }
           } finally {
             Pop-Location
-            Remove-Item -Force $smoke
+            Remove-Item -Recurse -Force $dir
           }
 
       - name: Upload GameFrame Windows x86 Glide proof of concept

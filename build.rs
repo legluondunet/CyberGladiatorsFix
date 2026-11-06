@@ -2,6 +2,16 @@
 use std::process::Command;
 fn main(){
     println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rustc-check-cfg=cfg(gameframe_embedded)");
+    println!("cargo:rerun-if-env-changed=CYBER_GAMEFRAME_GLIDE_DLL_PATH");
+    println!("cargo:rerun-if-env-changed=CYBER_GAMEFRAME_GLIDE_SHA256");
+    if let Ok(path)=std::env::var("CYBER_GAMEFRAME_GLIDE_DLL_PATH"){
+        let sha=std::env::var("CYBER_GAMEFRAME_GLIDE_SHA256")
+            .expect("GameFrame x86 DLL path requires SHA-256 pin");
+        assert!(std::path::Path::new(&path).is_file(),"Missing embedded GameFrame DLL");
+        assert_eq!(sha.len(),64,"Invalid GameFrame SHA-256 pin");
+        println!("cargo:rustc-cfg=gameframe_embedded");
+    }
     let sha=std::env::var("GITHUB_SHA").ok().filter(|v|!v.is_empty()).or_else(||{
         let o=Command::new("git").args(["rev-parse","--short=8","HEAD"]).output().ok()?;
         o.status.success().then(||String::from_utf8_lossy(&o.stdout).trim().to_string())
