@@ -166,6 +166,13 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
     cdda::try_install(root,&game)?;
+    // Never attribute results to a new DLL if an old bridge stayed installed.
+    let actual_bridge=patch::file_hash(&game.join(cdda::DLL_NAME))?;
+    let embedded_bridge=patch::digest(crate::bundle::CDDA_DLL);
+    if actual_bridge!=embedded_bridge{
+        return Err(format!("GameFrame Wine experiment requires its paired WinMM DLL: installed={actual_bridge} embedded={embedded_bridge}"));
+    }
+    crate::show(&format!("WINE_GUARD_BRIDGE_CHECK installed_bridge_sha256={actual_bridge} equals_embedded=1 experiment_env=1"),root);
     patch::set_cdda(&exe,true)?;
     patch::set_skip_intro(&exe,skip_intro)?;
     verify_launch_assets(root)?;
