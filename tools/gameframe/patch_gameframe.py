@@ -42,7 +42,7 @@ pub struct MONITORINFO {
 
     path = glide / "window.rs"
     src = path.read_text(encoding="utf-8")
-    marker = "/// Find (or make) the window and size it to \`w × h\` pixels with no frame."
+    marker = "/// Find (or make) the window and size it to `w × h` pixels with no frame."
     insert = """/// Cyber Gladiators' tested PE32 build keeps its real input HWND at this
 /// game-owned global. Under the opt-in experiment, prefer THAT window rather
 /// than the first visible top-level window (the MCI overlay or a HUD can be
