@@ -172,7 +172,7 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     if actual_bridge!=embedded_bridge{
         return Err(format!("GameFrame Wine experiment requires its paired WinMM DLL: installed={actual_bridge} embedded={embedded_bridge}"));
     }
-    crate::show(&format!("WINE_GUARD_BRIDGE_CHECK installed_bridge_sha256={actual_bridge} equals_embedded=1 experiment_env=1"),root);
+    crate::show(&format!("GAMEFRAME_BRIDGE_CHECK installed_bridge_sha256={actual_bridge} equals_embedded=1 experiment_env=1"),root);
     patch::set_cdda(&exe,true)?;
     patch::set_skip_intro(&exe,skip_intro)?;
     verify_launch_assets(root)?;
@@ -211,7 +211,7 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
     // The native Windows loader always leaves this interception inactive.
     cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","1");
-    crate::show("WINE_DDRAW_NATIVE_FORWARD enabled=1 native_DirectDraw_state_preserved=1 game_only=1 native_windows_untouched=1",root);
+    crate::show("WINE_DDRAW_NATIVE_FORWARD requested=1 activation=wine_only original_DirectDraw_called=1 game_only=1",root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
