@@ -11,8 +11,8 @@ The Windows download contains **one file: `CyberGladiatorsFix.exe` (64-bit)**, e
 CyberGladiatorsFix can:
 
 - Install a verified **US retail CUE/BIN** data track, preserving the original CD resources and creating a backed-up, validated `CYBER.EXE` with compatibility/no-CD patches.
-- Extract CD-audio tracks as lossless `TrackNN.flac` files and emulate legacy CD-audio MCI via a 32-bit WinMM forwarding DLL (optional).
-- Start the original game's **640×480 Cinepak introduction in the game process** when [Video] SkipIntro=0 and [Audio] EnableCDDA=1. Under Wine, a dedicated black fullscreen host centers the video in **4:3** without distortion. Only **Escape, Enter and Space** can skip the video; mouse button clicks and other keys do not. After the AVI closes, a guarded Win32 window-procedure repair prevents the previously observed WineD3D/DXVK stack overflow. The AVI presentation, native playback and mouse/keyboard policy have been validated in Wine 11.0; the standard launch path still needs a final regression check. The same native in-game AVI runs when FLAC CDDA music is disabled; the system WinMM handles only CD audio.
+- Extract CD-audio tracks as lossless `TrackNN.flac` files; the same 32-bit WinMM forwarding DLL optionally emulates legacy CD audio, or forwards CD commands to real WinMM when disabled.
+- Start the original game's **640×480 Cinepak introduction in the game process** when [Video] SkipIntro=0, regardless of [Audio] EnableCDDA. Under Wine, a dedicated black fullscreen host centers the video in **4:3** without distortion. Only **Escape, Enter and Space** can skip the video; mouse button clicks and other keys do not. After the AVI closes, a guarded Win32 window-procedure repair prevents the previously observed WineD3D/DXVK stack overflow. The AVI presentation, native playback and mouse/keyboard policy have been validated in Wine 11.0; the standard launch path still needs a final regression check. The same native in-game AVI runs when FLAC CDDA music is disabled; the system WinMM handles only CD audio.
 - Start the game with nGlide Direct3D9, which uses DXVK when correctly installed in Wine/Proton. On native Windows it uses the platform's Direct3D9 provider.
 - Store **all launcher, video, CDDA, Wine, and collected DXVK diagnostics in one `CyberGladiatorsFix.log` beside the launcher**, with a fresh header describing the relevant effective user/hardware/game configuration.
 
@@ -21,7 +21,7 @@ CyberGladiatorsFix can:
 1. Obtain the latest successful **`CyberGladiatorsFix-Windows-x64-OneFile`** artifact from [GitHub Actions](https://github.com/legluondunet/CyberGladiatorsFix/actions). Extract `CyberGladiatorsFix.exe` to a **writable game/patcher directory**. This Windows EXE also runs under a configured Wine/Proton prefix.
 2. Provide the original supported **US retail `.cue` and its `.bin` tracks** in or next to that directory. To install, run `CyberGladiatorsFix.exe` without parameters from the CUE directory, or pass the path of the CUE.
 3. Install the third-party **nGlide** separately from [Zeus Software](https://www.zeus-software.com/downloads/nglide). Its valid 32-bit `glide.dll` must be in the game folder or available from the supported system directory.
-4. Use the launcher's INI in `CyberGladiatorsFix/CyberGladiatorsFix.ini` to select video, audio and integrity behavior, then launch the game using the patcher. **Do not run `CYBER.EXE` directly** if you require the out-of-process intro workaround.
+4. Use the launcher's INI in `CyberGladiatorsFix/CyberGladiatorsFix.ini` to select video, audio and integrity behavior, then launch the game using the patcher. **Launch through `CyberGladiatorsFix.exe --launch`**, not `CYBER.EXE` directly, to apply the intended game-specific video, DXVK and CDDA configuration.
 
 If the installation already exists, running the patcher without arguments performs a checked update; it does not re-extract or overwrite the original CD assets. The game backup `CYBER.EXE.bak` is preserved. An unknown CD edition or executable is rejected.
 
@@ -93,7 +93,7 @@ On **2026-11-05**, a Wine 11.0 / GE-Proton DXVK test with `--dxvk-wndproc-repair
 
 ### DXVK native-intro root-cause investigation (developer only)
 
-The normal `--launch` path uses the in-process fullscreen AVI with the guarded WndProc repair when CDDA is enabled. To investigate **why the original 1996 in-process AVI → nGlide Direct3D9/DXVK transition crashes**, use the explicit diagnostic command, not the external video workaround:
+The normal `--launch` path uses the in-process fullscreen AVI with the guarded WndProc repair regardless of the FLAC music setting. To investigate **why the original 1996 in-process AVI → nGlide Direct3D9/DXVK transition crashes**, use the explicit diagnostic command, not the external video workaround:
 
 ```sh
 WINEDEBUG=fixme-all wine CyberGladiatorsFix.exe --dxvk-rootcause
