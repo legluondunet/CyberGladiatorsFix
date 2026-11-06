@@ -104,12 +104,6 @@ fn verify_assets(root:&Path,allow_modified_iq:bool)->Result<(String,Vec<String>)
         else{"modified IQ data permitted by explicit INI option; other assets match original CD"};
     Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), nGlide and {audio}; {label}"),warnings))
 }
-fn require_cd_audio_for_passthru(passthru_noop:bool,enable_cdda:bool)->Result<(),String>{
-    if passthru_noop && !enable_cdda {
-        return Err("--passthru-noop requires [Audio] EnableCDDA=1 in CyberGladiatorsFix.ini (game folder); no files were patched".into());
-    }
-    Ok(())
-}
 pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
     launch_with_video_delay(root,logo,trace,passthru_noop,0)
 }
@@ -230,11 +224,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     if video_delay_ms!=0 && skip{
         return Err("--video-delay requires [Video] SkipIntro=0".into());
     }
-    // The diagnostic Glide hook lives exclusively inside the x86 CDDA bridge.
-    // A legacy INI may still select EnableCDDA=0, so running the NO-OP A/B
-    // experiment would silently skip the hook and give a misleading result.
-    // Fail before any change to the game EXE if the bridge is not requested.
-    require_cd_audio_for_passthru(passthru_noop,enable_cdda)?;
+    // The verified x86 WinMM bridge is installed regardless of music policy.
+    // Glide/video diagnostics remain available when FLAC music is disabled.
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
     // Always use the verified WinMM DLL for native fullscreen AVI and the
@@ -448,13 +439,5 @@ mod experimental_launch_tests {
         assert!(matches!(500u64,100|250|500|1000));
         assert!(matches!(1000u64,100|250|500|1000));
         assert!(!matches!(10000u64,100|250|500|1000));
-    }
-    #[test]
-    fn pass_through_experiment_refuses_native_winmm_without_cd_audio_proxy() {
-        let failure=require_cd_audio_for_passthru(true,false).unwrap_err();
-        assert!(failure.contains("EnableCDDA=1"));
-        assert!(require_cd_audio_for_passthru(true,true).is_ok());
-        assert!(require_cd_audio_for_passthru(false,false).is_ok());
-        assert!(require_cd_audio_for_passthru(false,true).is_ok());
     }
 }
