@@ -64,7 +64,9 @@ fn target_monitor(hwnd: HWND) -> Option<RECT> {
 /// limited to the first 120 swaps, and keeps the previous 30-frame
 /// debounced recovery as a fallback. No GL context recreation.
 pub fn cyber_prepare_before_first_present() {
-    if std::env::var("CYBER_GAMEFRAME_AVI_IN_WINDOW").as_deref() != Ok("1")
+    let in_window = std::env::var("CYBER_GAMEFRAME_AVI_IN_WINDOW").as_deref() == Ok("1");
+    let first_present = std::env::var("CYBER_GAMEFRAME_AVI_FIRST_PRESENT").as_deref() == Ok("1");
+    if !(in_window || first_present)
         || std::env::var("CYBER_GAMEFRAME_TEST").as_deref() != Ok("1") {
         return;
     }
