@@ -12,6 +12,7 @@ mod player;
 mod video_trace;
 mod glide_trace;
 mod exception_trace;
+mod display_guard;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
@@ -329,6 +330,7 @@ macro_rules! forward_winmm {
         #[allow(non_snake_case)]
         pub unsafe extern "system" fn $function($($arg:$typ),*)->$return {
             mark_trace_session_once();
+    display_guard::report_once();
             let Some(address)=system_proc(concat!(stringify!($function),"\0").as_bytes()) else {
                 return $failure;
             };
