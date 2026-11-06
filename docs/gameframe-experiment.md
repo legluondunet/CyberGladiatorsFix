@@ -62,10 +62,30 @@ renders video black, hides the picture, changes focus, or crashes,
 re-run the standard GameFrame test command from the SAME matched
 archive; no reinstall or rollback is necessary.
 
+Build #20: fixes based on the first GameFrame in-window playback report.
+The AVI child is correctly 1440x1080 but the game HWND can revert to a
+640x480 client area DURING MCI playback. That clips the child, making only
+the left section of the movie visible. The WinMM bridge now checks and
+repairs the original parent window during black pre-roll, before MCI
+reveals frames and periodically (every eighth native status poll) while
+the video plays. It logs actual parent, host and video-surface client
+geometry, which distinguishes parent clipping from a codec/scaling issue.
+No change to the Wine MCI decoder, 4:3 ratio or video image contents.
+
+After MCI close, the game also resets the original HWND to 648x513.
+The modified GameFrame wrapper now performs ONE additional guarded
+pre-presentation geometry correction before issuing the FIRST OpenGL
+buffer swap (only in --avi-in-game-window). The older 30-swap
+debounced recovery remains as a failsafe, without repeated
+SetWindowPos requests. This keeps the 60 FPS cap and the stable
+no-flicker mode.
+
 Log markers:
   GAMEFRAME_VIDEO_IN_WINDOW enabled via launcher
   GAMEFRAME_HANDOFF_PREPARE stage=before_MCI_AVIVIDEO_open
   GAMEFRAME_IN_WINDOW_CREATED parent_is_game=1 independent_top_level=0
+  GAMEFRAME_MOVIE_GEOMETRY parent_client=... host_client=... surface_client=...
+  GAMEFRAME_FIRST_PRESENT_PREPARE before_GL_swap=1 (if 640x480 reset is found)
   GAMEFRAME_HANDOFF_PREPARE stage=after_MCI_close_before_host_destroy
   HOST_CLOSED reason=gameframe_in_window_movie_closed
 
