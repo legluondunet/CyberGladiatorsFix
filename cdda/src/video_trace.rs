@@ -545,6 +545,27 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log(&format!("SKIP GetMonitorInfoA_failed={}",GetLastError()));
         return None;
     }
+    // Wine-staging may report 640x480 here after the original game starts,
+    // even though the launcher captured the real 1920x1080 desktop. Only in
+    // the verified GameFrame first-present path, use that prelaunch geometry
+    // for the temporary native MCI/GDI host on the primary monitor. Merely
+    // sizing this window does not request a display-mode change.
+    if gameframe_first_present_handoff() {
+        let reported=info.monitor;
+        let raw=std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").ok();
+        let captured=gameframe_prelaunch_desktop(raw.as_deref());
+        let (selected,used)=choose_gameframe_avi_monitor(reported,captured,true);
+        info.monitor=selected;
+        video_log(&format!(
+            "GAMEFRAME_AVI_DESKTOP_GEOMETRY transient_monitor=({},{} {}x{}) prelaunch_desktop={} selected_host=({},{} {}x{}) used_prelaunch={} change_display_settings=0",
+            reported.left,reported.top,
+            reported.right-reported.left,reported.bottom-reported.top,
+            raw.as_deref().unwrap_or("missing"),
+            selected.left,selected.top,
+            selected.right-selected.left,selected.bottom-selected.top,
+            u8::from(used)
+        ));
+    }
     let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
     let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
     let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
@@ -785,6 +806,19 @@ fn start_vulkan_fullscreen_recovery(){
 /// Correct it BEFORE destroying the still-visible AVI host, on the actual
 /// game UI thread. The existing GameFrame per-frame checker remains the
 /// bounded fallback if the game resizes again afterwards.
+// The launcher snapshot is authoritative for a primary-monitor GameFrame AVI
+// host: Wine may temporarily expose the game's 640x480 mode during MCI open.
+// All other renderers and non-primary monitors retain native monitor geometry.
+fn choose_gameframe_avi_monitor(
+    monitor:WinRect,prelaunch:Option<(i32,i32)>,gameframe:bool
+)->(WinRect,bool){
+    if gameframe && monitor.left==0 && monitor.top==0 {
+        if let Some((w,h))=prelaunch {
+            return (WinRect{left:0,top:0,right:w,bottom:h},true);
+        }
+    }
+    (monitor,false)
+}
 fn gameframe_prelaunch_desktop(raw:Option<&str>)->Option<(i32,i32)>{
     let (w,h)=raw?.split_once('x')?;
     let (w,h)=(w.parse::<i32>().ok()?,h.parse::<i32>().ok()?);
@@ -1468,6 +1502,35 @@ mod fullscreen_tests {
         assert_eq!(gameframe_prelaunch_desktop(None),None);
         assert_eq!(gameframe_popup_style(0x14ce0000),0x940a0000);
         assert_eq!(gameframe_popup_style(0x940a0000),0x940a0000);
+    }
+    #[test]
+    fn gameframe_avi_host_uses_prelaunch_desktop_not_transient_wine_mode(){
+        let transient=WinRect{left:0,top:0,right:640,bottom:480};
+        let desktop=gameframe_prelaunch_desktop(Some("1920x1080"));
+        let (host,used)=choose_gameframe_avi_monitor(transient,desktop,true);
+        assert!(used);
+        assert_eq!((host.left,host.top,host.right,host.bottom),(0,0,1920,1080));
+        assert_eq!(fit_4_3(host.right-host.left,host.bottom-host.top),
+            Some((240,0,1440,1080)));
+
+        // The already-working Proton path remains at native desktop size.
+        let proton=WinRect{left:0,top:0,right:1920,bottom:1080};
+        let (same,used)=choose_gameframe_avi_monitor(proton,desktop,true);
+        assert!(used);
+        assert_eq!((same.right,same.bottom),(1920,1080));
+
+        // Non-GameFrame, secondary displays and invalid/missing snapshots
+        // must not use primary monitor coordinates.
+        let (normal,used)=choose_gameframe_avi_monitor(transient,desktop,false);
+        assert!(!used);
+        assert_eq!((normal.right,normal.bottom),(640,480));
+        let secondary=WinRect{left:1920,top:0,right:3200,bottom:1024};
+        let (other,used)=choose_gameframe_avi_monitor(secondary,desktop,true);
+        assert!(!used);
+        assert_eq!((other.left,other.right),(1920,3200));
+        let (fallback,used)=choose_gameframe_avi_monitor(transient,None,true);
+        assert!(!used);
+        assert_eq!((fallback.right,fallback.bottom),(640,480));
     }
     #[test]
     fn x86_sendinput_layout_and_alt_enter_events(){
