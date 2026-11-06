@@ -27,6 +27,7 @@ Usage:
   CyberGladiatorsFix.exe --launch --smooth-video-test  Test earlier black intro and bounded video-to-3D curtain
   CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan  Experimental native Vulkan with same smooth video
   CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release  Isolate Vulkan from the AVI's retained fullscreen black host
+  CyberGladiatorsFix.exe --launch --smooth-video-test --nglide-vulkan --vulkan-early-release --vulkan-auto-fullscreen-test  Test bounded nGlide Alt+Enter recovery
   CyberGladiatorsFix.exe --trace         Play and collect detailed diagnostics
   CyberGladiatorsFix.exe --launch --3dfx-logo
   CyberGladiatorsFix.exe --verify        Strict original CD integrity check
@@ -205,17 +206,17 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 /// Opt-in comparison of the validated smooth D3D9 handoff against nGlide's
 /// Vulkan renderer, retaining the same native MCI AVI, black curtain and
 /// guard-checked WndProc repair. No changes to the validated default launch.
-fn smooth_vulkan_launch(root:&Path,early_release:bool)->Result<(),String>{
+fn smooth_vulkan_launch(root:&Path,early_release:bool,auto_fullscreen:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     if settings::read(&game)?{
         return Err("--smooth-video-test --nglide-vulkan requires [Video] SkipIntro=0; INI unchanged".into());
     }
     let enable_cdda=settings::read_cdda(&game)?;
-    let child=verify::launch_smooth_vulkan(root,early_release)?;
+    let child=verify::launch_smooth_vulkan(root,early_release,auto_fullscreen)?;
     show(&format!(
-        "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-Vulkan smooth_video=1 early_host_release={} guarded_wndproc_repair=1 trace=false external_helper=0 music_flac={}",
-        child.id(),u8::from(early_release),u8::from(enable_cdda)
+        "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-Vulkan smooth_video=1 early_host_release={} auto_fullscreen={} guarded_wndproc_repair=1 trace=false external_helper=0 music_flac={}",
+        child.id(),u8::from(early_release),u8::from(auto_fullscreen),u8::from(enable_cdda)
     ),root);
     wait_game(child,root)
 }
@@ -267,12 +268,18 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--smooth-video-test")
             && three.to_str()==Some("--nglide-vulkan")=>
-            return smooth_vulkan_launch(root,false),
+            return smooth_vulkan_launch(root,false,false),
         [one,two,three,four] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--smooth-video-test")
             && three.to_str()==Some("--nglide-vulkan")
             && four.to_str()==Some("--vulkan-early-release")=>
-            return smooth_vulkan_launch(root,true),
+            return smooth_vulkan_launch(root,true,false),
+        [one,two,three,four,five] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--smooth-video-test")
+            && three.to_str()==Some("--nglide-vulkan")
+            && four.to_str()==Some("--vulkan-early-release")
+            && five.to_str()==Some("--vulkan-auto-fullscreen-test")=>
+            return smooth_vulkan_launch(root,true,true),
         [one] if one.to_str()==Some("--trace")=>return user_launch(root,true,false,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--trace")=>
             return user_launch(root,true,false,false),
@@ -405,6 +412,7 @@ mod diagnostics_tests {
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
         assert!(HELP.contains("--launch --smooth-video-test --nglide-vulkan"));
         assert!(HELP.contains("--vulkan-early-release"));
+        assert!(HELP.contains("--vulkan-auto-fullscreen-test"));
         assert!(!HELP.contains("--avi-4x3-test"));
         assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(!HELP.contains("--video-delay="));
