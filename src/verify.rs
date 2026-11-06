@@ -165,9 +165,11 @@ pub fn launch_gameframe_test(root:&Path)->Result<Child,String>{
     // The source-pinned experimental DLL has a distinct known build hash.
     // Fail closed: never apply the GameFrame-specific address/Win32 logic
     // to an arbitrary proprietary nGlide or a different wrapper build.
-    const EXPERIMENTAL_GLIDE_SHA256:&str="370be13b3910ff437a8f668cd477023fdb4c3d8f62d0a71b7dd40767555548dc";
-    if !glide_hash.eq_ignore_ascii_case(EXPERIMENTAL_GLIDE_SHA256) {
-        return Err(format!("GameFrame test requires the matching experimental glide.dll (expected SHA-256={EXPERIMENTAL_GLIDE_SHA256}; found {glide_hash}). Original nGlide and game assets untouched"));
+    let expected=option_env!("CYBER_GAMEFRAME_GLIDE_SHA256").ok_or(
+        "This launcher was not built as a matched GameFrame test package; use the paired experimental launcher and glide.dll"
+    )?;
+    if !glide_hash.eq_ignore_ascii_case(expected) {
+        return Err(format!("GameFrame test requires the paired experimental glide.dll (expected SHA-256={expected}; found {glide_hash}). Original nGlide and game assets untouched"));
     }
     let mut cmd=Command::new(&exe);
     cmd.current_dir(&game);
