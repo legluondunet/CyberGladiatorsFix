@@ -124,6 +124,9 @@ jobs:
             throw 'Automatic launch did not produce its unified session log'
           }
           Write-Host 'One-click auto-discovery no-CD refusal: PASS'
+          # The expected native EXE exit was nonzero; reset it explicitly,
+          # otherwise pwsh propagates that value despite successful assertions.
+          exit 0
 
       - name: Package one executable and Apache-2.0 notices
         shell: pwsh
