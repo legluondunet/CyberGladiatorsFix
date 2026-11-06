@@ -57,6 +57,61 @@ fn target_monitor(hwnd: HWND) -> Option<RECT> {
     Some(rect)
 }
 
+/// The in-game-window AVI has closed, but CYBER.EXE changes its HWND to
+/// 648x513 again BEFORE the Glide game renders its first menu frame.
+/// Prepare the correct borderless parent BEFORE the first OpenGL Swap,
+/// rather than 30+ swaps afterwards. This may adjust at most ONCE, is
+/// limited to the first 120 swaps, and keeps the previous 30-frame
+/// debounced recovery as a fallback. No GL context recreation.
+pub fn cyber_prepare_before_first_present() {
+    if std::env::var("CYBER_GAMEFRAME_AVI_IN_WINDOW").as_deref() != Ok("1")
+        || std::env::var("CYBER_GAMEFRAME_TEST").as_deref() != Ok("1") {
+        return;
+    }
+    static CHECKS:std::sync::atomic::AtomicU32=std::sync::atomic::AtomicU32::new(0);
+    static REPAIRED:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+    if REPAIRED.load(std::sync::atomic::Ordering::Relaxed)
+        || CHECKS.fetch_add(1,std::sync::atomic::Ordering::Relaxed)>=120 {
+        return;
+    }
+    let Some(hwnd)=cyber_game_window() else {return};
+    unsafe {
+        if IsWindowVisible(hwnd)==0 || IsIconic(hwnd)!=0 || GetForegroundWindow()!=hwnd {
+            return;
+        }
+        let mut pid=0;
+        let tid=GetWindowThreadProcessId(hwnd,&mut pid);
+        if tid==0 || tid!=GetCurrentThreadId() || pid!=GetCurrentProcessId() {
+            return;
+        }
+        let Some(target)=target_monitor(hwnd) else {return};
+        let mut rect=RECT::default();
+        if GetWindowRect(hwnd,&mut rect)==0 {return;}
+        let exact=rect.left==target.left && rect.top==target.top
+            && rect.right==target.right && rect.bottom==target.bottom;
+        if exact {return;}
+        if REPAIRED.compare_exchange(false,true,
+            std::sync::atomic::Ordering::Relaxed,
+            std::sync::atomic::Ordering::Relaxed).is_err() {return;}
+        let style=GetWindowLongA(hwnd,GWL_STYLE) as u32;
+        let clean=(style & !0x00c4_0000u32)|0x8000_0000u32|WS_VISIBLE;
+        let style_changed=style!=clean;
+        if style_changed {
+            SetWindowLongA(hwnd,GWL_STYLE,clean as i32);
+        }
+        let flags=SWP_NOZORDER|0x10|
+            if style_changed {0x20} else {0}; // NOACTIVATE, conditional FRAMECHANGED
+        let ok=SetWindowPos(hwnd,null_mut(),target.left,target.top,
+            target.right-target.left,target.bottom-target.top,flags);
+        let mut after=RECT::default();
+        let readback=GetWindowRect(hwnd,&mut after);
+        log!("GAMEFRAME_FIRST_PRESENT_PREPARE before_GL_swap=1 hwnd={hwnd:?} old_rect=({},{},{},{}) target=({},{},{},{}) new_rect=({},{},{},{}) old_style={style:#010x} new_style={clean:#010x} SetWindowPos={ok} readback_ok={readback} mode_change=none focus_change=none",
+            rect.left,rect.top,rect.right,rect.bottom,
+            target.left,target.top,target.right,target.bottom,
+            after.left,after.top,after.right,after.bottom);
+    }
+}
+
 /// The original game can restore its 640x480 window after grSstOpen.
 /// Check the REAL game HWND, but never resize a correctly positioned
 /// fullscreen window merely because its harmless Win32 style flags differ.
@@ -164,6 +219,13 @@ pub fn cyber_maintain_fullscreen() {
 
     file = src_dir / "api/sst.rs"
     src = file.read_text(encoding="utf-8")
+    src = once(src, "    super::lfb::finish_write();\n    push(Cmd::Swap);",
+        """    super::lfb::finish_write();
+    // The child AVI and OpenGL share one original game HWND. Repair the
+    // game's post-video 648x513 reset BEFORE the very first GL present.
+    crate::window::cyber_prepare_before_first_present();
+    push(Cmd::Swap);""",
+        "repair original HWND before first GL present (AVI-in-window only)")
     src = once(src, "    cyber_frame_pace();",
         """    cyber_frame_pace();
     crate::window::cyber_maintain_fullscreen();""",
