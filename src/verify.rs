@@ -275,7 +275,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }
     if smooth_test {
         cmd.env("CYBER_AVI_SMOOTH_TEST","1");
-        crate::show("VIDEO_SMOOTH_TEST enabled=1 earlier_black_host=1 bounded_black_handoff=1 max_hold_ms=350 NGLIDE_REFRESH=2 (60Hz, unchanged) no_D3D9_hook=1",root);
+        crate::show("VIDEO_SMOOTH_TEST enabled=1 earlier_black_host=1 pre_video_black_ms=1000 post_video_black_timer_ms=1000 NGLIDE_REFRESH=2 (60Hz, unchanged) no_D3D9_hook=1",root);
     }
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
     // This is a one-shot, guard-checked in-process fix. No long-running
