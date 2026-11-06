@@ -10,7 +10,7 @@ pub const NO_CD_ONLY: &str = "d397053de4b1a8573bd851915e7aeb3773f3b7010a08b85162
 pub const INTRO_ONLY: &str = "d8329312a8f63f5efea1720b422429f530799c6887f31c18ba71f970390900b6";
 pub const PATCHED: &str = "71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb";
 pub const PATCHED_SKIP_INTRO: &str = "05215ec70462c0e34de7a5d3f9bf32adebb0a6a17b2946bcb768efb1db1b328f";
-/// Verified fallback: original system WinMM import, no experimental CDDA hook.
+/// Legacy verified variant with direct system WinMM import (upgrade support).
 pub const PATCHED_NO_CDDA: &str = INTRO_ONLY;
 pub const PATCHED_NO_CDDA_SKIP: &str = "339c2a0a51ab48849bfc12d07d1caf9745a6fef43b80e195c8d404aeb80e2ff9";
 pub const LEN: usize = 351_776;
@@ -220,7 +220,8 @@ const INTRO_SKIP_BYTES:[u8;2]=[0xeb,0x2f];
 /// Applies the [Video] SkipIntro setting before the game starts. Both
 /// exact SHA-256 executable variants are supported and the retail backup
 /// remains untouched. No game assets, IQ data or cyber.ini are modified.
-/// Current exact-hash state of the experimental CDDA import.
+/// Whether the exact verified x86 WinMM bridge import is installed, regardless
+/// of the user's independent EnableCDDA music preference.
 pub fn cdda_active(path:&Path)->Result<bool,String>{
     verify_exe(path)?;
     let hash=file_hash(path)?;
@@ -239,17 +240,18 @@ fn is_intro_skipped(hash:&str)->bool{
     hash==PATCHED_SKIP_INTRO || hash==PATCHED_NO_CDDA_SKIP
 }
 
-/// Switch the exact import-table descriptor between the experimental CDDA
-/// proxy and the system WinMM DLL. Four SHA-256 variants are recognized.
-/// The caller owns the INI toggle; the original retail EXE backup and game
-/// resources are never modified.
+/// Switch between the recognized WinMM bridge import and the legacy system
+/// WinMM import. Four SHA-256 variants are supported for safe upgrades.
+/// The launcher always enables the verified bridge for native Cinepak video;
+/// FLAC music selection is a separate per-process option, not an EXE patch.
+/// The retail backup and original CD resources are never changed.
 pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
     verify_exe(path)?;
     let original=fs::read(path).map_err(|e|e.to_string())?;
     let hash=digest(&original);
     let current=hash==PATCHED||hash==PATCHED_SKIP_INTRO;
     if current==enabled {
-        return Ok(if enabled{"CDDA bridge already enabled"}else{"CDDA bridge already disabled"});
+        return Ok(if enabled{"WinMM video/CDDA bridge already imported"}else{"Legacy system WinMM import already selected"});
     }
     let mut updated=original;
     let name=u32::from_le_bytes(updated[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4]
@@ -272,7 +274,7 @@ pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
     }
     replace_exe(path,&updated)?;
     verify_exe(path)?;
-    Ok(if enabled{"Experimental CDDA enabled"}else{"Experimental CDDA disabled (native WinMM)"})
+    Ok(if enabled{"WinMM video/CDDA bridge import enabled"}else{"Legacy system WinMM import restored"})
 }
 
 /// Applies the [Video] SkipIntro setting before game start, independently of
