@@ -65,10 +65,12 @@ fn after_in(state:&mut MovieState,command:&str,code:u32,reply:&str)->Option<Stri
 }
 
 
-// Opt-in 4:3 native AVI host experiment. These Win32 operations happen inside
+// Native 4:3 AVI host for the normal CDDA-enabled game launcher. These Win32
+// operations happen inside
 // CYBER.EXE on the original MCI calling thread. The game's own AVI playback
 // and the field-validated after-video WineD3D/DXVK WndProc repair are preserved.
-// No fullscreen window is created during normal launches.
+// A fullscreen host is used only when the launcher verified the game,
+// SkipIntro=0 and the in-process WinMM/CDDA bridge.
 use std::ffi::{c_void,CString};
 use std::sync::atomic::{AtomicBool,AtomicU32,Ordering};
 
@@ -190,7 +192,7 @@ fn video_host()->&'static Mutex<Option<NativeHost>> {
     VIDEO_HOST.get_or_init(||Mutex::new(None))
 }
 fn video_enabled()->bool {
-    std::env::var("CYBER_AVI_FULLSCREEN_TEST").as_deref()==Ok("1")
+    std::env::var("CYBER_AVI_FULLSCREEN").as_deref()==Ok("1")
 }
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
 
@@ -272,7 +274,7 @@ unsafe extern "system" fn movie_keyboard_filter(
 // A WH_MOUSE hook runs only for this game's thread and can suppress mouse
 // buttons before they reach its Win32 message loop. If MCI creates a video
 // window on a *different* thread, those messages are not intercepted; the
-// diagnostic count tells us whether this is the path used under Wine.
+// diagnostic count records whether the Wine video uses this input path.
 fn blocked_movie_mouse_message(message:u32)->bool{
     matches!(message,
         WM_LBUTTONDOWN|WM_LBUTTONUP|WM_LBUTTONDBLCLK|
