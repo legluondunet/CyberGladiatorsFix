@@ -274,8 +274,9 @@ pub fn maybe_repair_windowproc_after_video_close(){
             return;
         }
         report(&format!(
-            "WNDPROC_REPAIR APPLIED hwnd={hwnd:?} old={prior:#x} ({origin}) new={class_proc:#x} (cyber.exe original class WndProc) scope=in_process_only experimental=1"
+            "WNDPROC_REPAIR APPLIED hwnd={hwnd:?} old={prior:#x} ({origin}) new={class_proc:#x} (cyber.exe original class WndProc) scope=in_process_only guarded=1"
         ));
+        crate::video_trace::timing("WNDPROC_REPAIR_APPLIED");
     }
 }
 
