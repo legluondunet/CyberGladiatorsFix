@@ -13,7 +13,7 @@
 //! Keep DLL_PROCESS_ATTACH loader-lock work allocation-free and log-free.
 //! The first MCI command reports counters to the existing unified log.
 use std::ffi::{c_char,c_void};
-use std::sync::atomic::{AtomicBool,AtomicU32,AtomicUsize,Ordering};
+use std::sync::atomic::{AtomicBool,AtomicU32,Ordering};
 
 const IMAGE_BASE:usize=0x0040_0000;
 const PAGE_READWRITE:u32=0x04;
@@ -23,10 +23,6 @@ static INSTALLED:AtomicU32=AtomicU32::new(0);
 static CANDIDATES:AtomicU32=AtomicU32::new(0);
 static BLOCKED:AtomicU32=AtomicU32::new(0);
 static REPORTED:AtomicBool=AtomicBool::new(false);
-static ORIGINAL_A:AtomicUsize=AtomicUsize::new(0);
-static ORIGINAL_W:AtomicUsize=AtomicUsize::new(0);
-static ORIGINAL_EX_A:AtomicUsize=AtomicUsize::new(0);
-static ORIGINAL_EX_W:AtomicUsize=AtomicUsize::new(0);
 
 #[link(name="kernel32")]
 unsafe extern "system" {
@@ -110,11 +106,9 @@ unsafe fn install_import_guard()->u32{
                 slot.write_volatile(replacement as u32);
                 let mut unused=0;
                 let _=VirtualProtect(slot.cast(),4,old,&mut unused);
-                let original_atomic=match id{
-                    0=>&ORIGINAL_A,1=>&ORIGINAL_W,
-                    2=>&ORIGINAL_EX_A,_=>&ORIGINAL_EX_W
-                };
-                original_atomic.store(before as usize,Ordering::Release);
+                // The verified game must not switch the desktop to its old
+                // 640x480 mode, whether it passes NULL or DISPLAY1 by name.
+                // No pass-through is needed for a game-scoped mode guard.
                 installed+=1;
                 break;
             }
@@ -144,44 +138,23 @@ pub unsafe extern "system" fn DllMain(
     1 // never block loading the original game
 }
 #[inline]
-fn permit_primary_change(device_is_primary:bool)->i32{
-    if device_is_primary {
-        BLOCKED.fetch_add(1,Ordering::Relaxed);
-        0 // DISP_CHANGE_SUCCESSFUL: no physical/virtual mode switch
-    }else{-1}
+fn suppress_mode_request()->i32{
+    BLOCKED.fetch_add(1,Ordering::Relaxed);
+    0 // DISP_CHANGE_SUCCESSFUL, no physical or Wine virtual mode switch
 }
-unsafe extern "system" fn guard_a(mode:*const c_void,flags:u32)->i32{
-    if permit_primary_change(true)==0{return 0;}
-    let addr=ORIGINAL_A.load(Ordering::Acquire);
-    if addr==0{return -1;}
-    let original:unsafe extern "system" fn(*const c_void,u32)->i32=std::mem::transmute(addr);
-    original(mode,flags)
+unsafe extern "system" fn guard_a(_mode:*const c_void,_flags:u32)->i32{
+    suppress_mode_request()
 }
-unsafe extern "system" fn guard_w(mode:*const c_void,flags:u32)->i32{
-    if permit_primary_change(true)==0{return 0;}
-    let addr=ORIGINAL_W.load(Ordering::Acquire);
-    if addr==0{return -1;}
-    let original:unsafe extern "system" fn(*const c_void,u32)->i32=std::mem::transmute(addr);
-    original(mode,flags)
+unsafe extern "system" fn guard_w(_mode:*const c_void,_flags:u32)->i32{
+    suppress_mode_request()
 }
 unsafe extern "system" fn guard_ex_a(
-    name:*const c_char,mode:*const c_void,hwnd:*mut c_void,flags:u32,lparam:*mut c_void
-)->i32{
-    if (name.is_null()||name.read()==0) && permit_primary_change(true)==0{return 0;}
-    let addr=ORIGINAL_EX_A.load(Ordering::Acquire);
-    if addr==0{return -1;}
-    let original:unsafe extern "system" fn(*const c_char,*const c_void,*mut c_void,u32,*mut c_void)->i32=std::mem::transmute(addr);
-    original(name,mode,hwnd,flags,lparam)
-}
+    _name:*const c_char,_mode:*const c_void,_hwnd:*mut c_void,_flags:u32,_lparam:*mut c_void
+)->i32{suppress_mode_request()}
 unsafe extern "system" fn guard_ex_w(
-    name:*const u16,mode:*const c_void,hwnd:*mut c_void,flags:u32,lparam:*mut c_void
-)->i32{
-    if (name.is_null()||name.read()==0) && permit_primary_change(true)==0{return 0;}
-    let addr=ORIGINAL_EX_W.load(Ordering::Acquire);
-    if addr==0{return -1;}
-    let original:unsafe extern "system" fn(*const u16,*const c_void,*mut c_void,u32,*mut c_void)->i32=std::mem::transmute(addr);
-    original(name,mode,hwnd,flags,lparam)
-}
+    _name:*const u16,_mode:*const c_void,_hwnd:*mut c_void,_flags:u32,_lparam:*mut c_void
+)->i32{suppress_mode_request()}
+
 pub fn report_once(){
     if std::env::var("CYBER_WINE_DESKTOP_MODE_GUARD").as_deref()!=Ok("1")
         || REPORTED.swap(true,Ordering::AcqRel){return;}
