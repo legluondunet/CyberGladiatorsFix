@@ -84,6 +84,10 @@ const WS_VISIBLE:u32=0x1000_0000;
 const WS_CLIPCHILDREN:u32=0x0200_0000;
 const SS_BLACKRECT:u32=0x0000_0004;
 const WS_EX_TOOLWINDOW:u32=0x0000_0080;
+const WS_EX_APPWINDOW:u32=0x0004_0000;
+const SWP_NOACTIVATE:u32=0x0010;
+const SWP_FRAMECHANGED:u32=0x0020;
+const SWP_SHOWWINDOW:u32=0x0040;
 const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
 const WM_TIMER:u32=0x0113;
@@ -197,6 +201,9 @@ extern "system" {
     fn KillTimer(hwnd:*mut c_void,id:usize)->i32;
     fn ShowWindow(hwnd:*mut c_void,mode:i32)->i32;
     fn IsWindow(hwnd:*mut c_void)->i32;
+    fn SetWindowPos(hwnd:*mut c_void,insert_after:*mut c_void,
+        x:i32,y:i32,width:i32,height:i32,flags:u32)->i32;
+    fn GetWindowRect(hwnd:*mut c_void,rect:*mut WinRect)->i32;
     fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
@@ -409,6 +416,18 @@ fn destination_command(text:&str)->bool {
             .all(|(a,b)|a.eq_ignore_ascii_case(b))
         && parts[5..]==["0","640","480"]
 }
+// Wine's X11 bridge is more likely to publish _NET_WM_STATE_FULLSCREEN
+// for an independent, managed application window than for an owned utility
+// popup. Using the NORMAL window type (not a transient DIALOG) lets the
+// Linux WM hide its panel for this monitor-filling temporary host.
+// The validated normal launch keeps the original topmost tool-window style.
+fn host_exstyle(smooth:bool)->u32 {
+    WS_EX_NOACTIVATE|WS_EX_TOPMOST|
+        if smooth{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
+}
+fn video_surface_style(smooth:bool)->u32 {
+    WS_CHILD|SS_BLACKRECT|if smooth{0}else{WS_VISIBLE}
+}
 unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     let base=GetModuleHandleA(std::ptr::null()) as usize;
     if base!=EXPECTED_GAME_BASE {
@@ -440,17 +459,26 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // Keep the custom class separate from the game's known subclass chain.
     // The explicitly black-painted background covers both pillarboxes.
     if !register_black_host_class(base as *mut c_void){return None;}
-    let host=CreateWindowExA(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,
+    let smooth=smooth_enabled();
+    // The smooth experiment requests an independent managed NORMAL fullscreen
+    // popup (rather than an owned tool-window/dialog). This prevents the
+    // Linux desktop panel from staying above the video on WMs which honor
+    // EWMH fullscreen. WS_EX_NOACTIVATE preserves keyboard focus on the game.
+    let owner=if smooth{std::ptr::null_mut()}else{hwnd};
+    let host=CreateWindowExA(host_exstyle(smooth),
         HOST_CLASS.as_ptr(),b"\0".as_ptr(),
         WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN,
         info.monitor.left,info.monitor.top,screen_w,screen_h,
-        hwnd,std::ptr::null_mut(),base as *mut c_void,std::ptr::null_mut());
+        owner,std::ptr::null_mut(),base as *mut c_void,std::ptr::null_mut());
     if host.is_null() {
         video_log(&format!("SKIP fullscreen_host_create_failed={}",GetLastError()));
         return None;
     }
+    // Hidden from its very first Win32 creation in the smooth path: MCI can
+    // initialize the child video window without ever showing an unpainted
+    // gray STATIC background during the one-second black pre-roll.
     let surface=CreateWindowExA(0,b"STATIC\0".as_ptr(),b"\0".as_ptr(),
-        WS_CHILD|WS_VISIBLE|SS_BLACKRECT,x,y,w,h,host,
+        video_surface_style(smooth),x,y,w,h,host,
         std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
     if surface.is_null(){
         let err=GetLastError();
@@ -465,13 +493,28 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log("SKIP unexpected_video_surface_client_size");
         return None;
     }
+    // The EWMH fullscreen hint is applied by Wine to managed full-monitor
+    // windows. Reaffirm the exact monitor geometry and TOPMOST z-order only
+    // in the opt-in mode. No ChangeDisplaySettings / refresh switch occurs.
+    if smooth {
+        let positioned=SetWindowPos(host,(-1isize) as *mut c_void,
+            info.monitor.left,info.monitor.top,screen_w,screen_h,
+            SWP_NOACTIVATE|SWP_FRAMECHANGED|SWP_SHOWWINDOW);
+        let mut rect=WinRect::default();
+        let geometry_ok=GetWindowRect(host,&mut rect);
+        video_log(&format!(
+            "WM_FULLSCREEN_REQUEST managed_app_window=1 independent_owner=1 no_activate=1 setpos={positioned} rect_valid={geometry_ok} rect=({},{} {}x{}) monitor=({},{} {}x{}) source_surface_initially_hidden=1",
+            rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,
+            info.monitor.left,info.monitor.top,screen_w,screen_h
+        ));
+    }
     // Force a fresh black paint before Wine's MCI window becomes visible.
     let _=InvalidateRect(host,std::ptr::null(),1);
     let _=UpdateWindow(host);
     video_log(&format!(
-        "HOST_CREATED game={game:#x} host={:#x} surface={:#x} monitor=({},{} {}x{}) video_4_3=({x},{y} {w}x{h}) fullscreen_black=painted no_activate=1",
+        "HOST_CREATED game={game:#x} host={:#x} surface={:#x} monitor=({},{} {}x{}) video_4_3=({x},{y} {w}x{h}) fullscreen_black=painted no_activate=1 smooth_managed={}",
         host as usize,surface as usize,
-        info.monitor.left,info.monitor.top,screen_w,screen_h));
+        info.monitor.left,info.monitor.top,screen_w,screen_h,u8::from(smooth)));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
@@ -571,9 +614,18 @@ fn early_black_host() {
             video_log("SMOOTH_EARLY_SKIP game_window_not_ready; fallback=normal_MCI_open");
             return;
         };
-        video_log("SMOOTH_EARLY_BLACK_READY before_splash_open=1");
+        video_log("SMOOTH_EARLY_BLACK_READY before_open_avivideo=1 video_surface_hidden_from_create=1");
         timing("EARLY_BLACK_HOST_READY");
         *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
+    }
+}
+/// Called before the native 'open avivideo': the earliest verified moment
+/// in the game's video sequence, before the WinMM backend can display an
+/// initial gray surface. This is only enabled for --smooth-video-test.
+pub fn before_mci_open(command:&str){
+    if smooth_enabled() && command.trim().eq_ignore_ascii_case("open avivideo"){
+        timing("PRE_MCI_AVIVIDEO_BLACK_REQUEST");
+        early_black_host();
     }
 }
 // Once the original MCI movie device has been opened, hide its entire
@@ -694,9 +746,17 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
 pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     if !video_enabled(){return;}
     let command=text.trim();
-    if command.eq_ignore_ascii_case("open avivideo") && result==0 {
-        timing("MCI_AVIVIDEO_OPENED");
-        early_black_host();
+    if command.eq_ignore_ascii_case("open avivideo") {
+        if result==0{
+            timing("MCI_AVIVIDEO_OPENED");
+        }else if smooth_enabled(){
+            close_host("native_avivideo_open_failed");
+        }
+    }
+    if command.eq_ignore_ascii_case("window movie state show") && result==0{
+        // Wine's MCIAVI state-show can re-show its parent. Re-hide it until
+        // the one-second black pre-roll ends and actual playback succeeds.
+        cover_pre_video_surface();
     }
     if rewritten && movie_open_game_hwnd(text).is_some() {
         if result!=0 {
@@ -724,6 +784,17 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
+    #[test]
+    fn smooth_window_is_managed_and_video_surface_initially_hidden(){
+        assert_ne!(host_exstyle(true)&WS_EX_APPWINDOW,0);
+        assert_eq!(host_exstyle(true)&WS_EX_TOOLWINDOW,0);
+        assert_ne!(host_exstyle(true)&WS_EX_NOACTIVATE,0);
+        assert_ne!(host_exstyle(true)&WS_EX_TOPMOST,0);
+        assert_eq!(video_surface_style(true)&WS_VISIBLE,0);
+        assert_eq!(host_exstyle(false)&WS_EX_APPWINDOW,0);
+        assert_ne!(host_exstyle(false)&WS_EX_TOOLWINDOW,0);
+        assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
+    }
     #[test]
     fn transition_curtain_is_opt_in_and_requires_successful_mci_close(){
         assert!(!should_arm_curtain(false,0),"normal launch must close the host immediately");
