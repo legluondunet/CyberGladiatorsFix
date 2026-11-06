@@ -38,6 +38,49 @@ immediately after successful MCI close, BEFORE the GameFrame OpenGL
 renderer starts. The nGlide-specific WineD3D WndProc replacement is OFF.
 Other launch commands and the validated nGlide Direct3D9 path are unchanged.
 
+GAMEFRAME FULLSCREEN GDI VIDEO + FIRST OPENGL PRESENT HANDOFF (NEW EXPERIMENT)
+The user's #30 no-upscale probe shows an entirely BLACK movie. The native
+WinMM driver reports source 0,0 640x480 and requested destination
+640,300 640x480 correctly; the decisive GDI device-context result is:
+  GAMEFRAME_GDI_DC clip=(0,0,640,480)
+The destination begins at x=640, OUTSIDE that clip. The AVI continues
+playing; its decoded frames are invisible. In previous 1440x1080 attempts
+the same 640x480 clip likely caused the partial picture.
+
+A Wine MCI/GDI child window inside the OpenGL game HWND cannot be
+assumed to retain a desktop-size GDI clip, even when GetClientRect is
+1920x1080. Instead of additional MCI child-window geometry changes,
+this NEW, separate option keeps the already proven FULL native AVI on
+an independent, temporary GDI-hosting HWND, then hands over cleanly:
+
+  CyberGladiatorsFix.exe --launch --gameframe-test --avi-first-present-handoff
+
+At successful native MCI close, the video is hidden, the fullscreen GDI
+host is painted black and marked ready. The actual GameFrame OpenGL
+render thread reports successful SwapBuffers via a Win32 message to
+that host's ORIGINAL owner UI thread, which then closes the host.
+This avoids exposing CYBER.EXE's interim 648x513 window between phases.
+The frame notification is sent AFTER real SwapBuffers, not on the
+call to grBufferSwap or a timer that merely guesses frame readiness.
+A bounded 3500 ms owner-thread fallback prevents a permanent black host
+if a GL presentation notification cannot be delivered.
+
+This option is scoped to the matched experimental EXE and GameFrame
+glide.dll. Its normal in-window GDI AVI mode, unscaled crop diagnostic,
+nGlide launch paths, CD music, 60 FPS, unmodified game assets and one log
+remain untouched. This is NOT decoding video in GameFrame's OpenGL
+texture; it is a temporary compatible GDI window, with renderer-driven
+handoff. The temporary host is a single extra top-level window during
+MCI playback, and is not represented as a true one-window implementation.
+Native Windows 10/11 and Wine rendering must be validated in-game.
+
+New markers:
+  GAMEFRAME_FIRST_GL_HANDOFF armed=1 ...
+  glide: GAMEFRAME_FIRST_GL_PRESENT posted=1 ...
+  GAMEFRAME_FIRST_GL_HANDOFF notified=1 ...
+  HOST_CLOSED reason=gameframe_first_GL_presented ...
+  fallback marker GAMEFRAME_FIRST_GL_HANDOFF timed_out=1
+
 GAMEFRAME MCI GDI CLIPPING DIAGNOSTIC (BUILD #25)
 The #24 test confirms the user still sees a clipped movie, despite source
 640x480 and measured Win32 game/host/MCI child dimensions remaining full
