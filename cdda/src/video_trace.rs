@@ -288,6 +288,16 @@ fn video_enabled()->bool {
 fn smooth_enabled()->bool{
     video_enabled() && std::env::var("CYBER_AVI_SMOOTH_TEST").as_deref()==Ok("1")
 }
+/// The in-window MCI experiment is only for GameFrame, never nGlide.
+/// It uses a CHILD video surface of the original OpenGL game HWND, NOT a
+/// second top-level popup; Wine MCI still decodes the original AVI.
+fn gameframe_video_in_window()->bool{
+    smooth_enabled()
+        && std::env::var("CYBER_GAMEFRAME_TEST").as_deref()==Ok("1")
+        && std::env::var("CYBER_GAMEFRAME_AVI_IN_WINDOW").as_deref()==Ok("1")
+}
+fn embedded_movie_host_style()->u32{WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN}
+fn embedded_movie_host_exstyle()->u32{0}
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
 
 // A top-level STATIC SS_BLACKRECT window can leave its uncovered client area
@@ -514,6 +524,22 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log(&format!("SKIP GetMonitorInfoA_failed={}",GetLastError()));
         return None;
     }
+    let embedded=gameframe_video_in_window();
+    // This experiment intentionally targets the PRIMARY desktop only:
+    // do not let Wine's transient 640x480 Glide display mode shrink the AVI.
+    if embedded {
+        if info.monitor.left!=0||info.monitor.top!=0 {
+            video_log("GAMEFRAME_IN_WINDOW SKIP non_primary_monitor");
+            return None;
+        }
+        let size=std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").ok();
+        let Some((dw,dh))=gameframe_prelaunch_desktop(size.as_deref()) else{
+            video_log("GAMEFRAME_IN_WINDOW SKIP invalid_prelaunch_desktop_geometry");
+            return None;
+        };
+        info.monitor.right=dw;
+        info.monitor.bottom=dh;
+    }
     let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
     let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
     let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
@@ -525,12 +551,15 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // popup (rather than an owned tool-window/dialog). This prevents the
     // Linux desktop panel from staying above the video on WMs which honor
     // EWMH fullscreen. WS_EX_NOACTIVATE preserves keyboard focus on the game.
-    let owner=if smooth{std::ptr::null_mut()}else{hwnd};
-    let host=CreateWindowExA(host_exstyle(smooth),
+    let owner=if embedded||!smooth{hwnd}else{std::ptr::null_mut()};
+    let host=CreateWindowExA(
+        if embedded{embedded_movie_host_exstyle()}else{host_exstyle(smooth)},
         HOST_CLASS.as_ptr(),b"\0".as_ptr(),
-        WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN,
-        info.monitor.left,info.monitor.top,screen_w,screen_h,
-        owner,std::ptr::null_mut(),base as *mut c_void,std::ptr::null_mut());
+        if embedded{embedded_movie_host_style()}else{WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN},
+        if embedded{0}else{info.monitor.left},
+        if embedded{0}else{info.monitor.top},
+        screen_w,screen_h,owner,
+        std::ptr::null_mut(),base as *mut c_void,std::ptr::null_mut());
     if host.is_null() {
         video_log(&format!("SKIP fullscreen_host_create_failed={}",GetLastError()));
         return None;
@@ -578,7 +607,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // The EWMH fullscreen hint is applied by Wine to managed full-monitor
     // windows. Reaffirm the exact monitor geometry and TOPMOST z-order only
     // in the opt-in mode. No ChangeDisplaySettings / refresh switch occurs.
-    if smooth {
+    if smooth && !embedded {
         let positioned=SetWindowPos(host,(-1isize) as *mut c_void,
             info.monitor.left,info.monitor.top,screen_w,screen_h,
             SWP_NOACTIVATE|SWP_FRAMECHANGED|SWP_SHOWWINDOW);
@@ -588,6 +617,17 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
             "WM_FULLSCREEN_REQUEST managed_app_window=1 independent_owner=1 no_activate=1 setpos={positioned} rect_valid={geometry_ok} rect=({},{} {}x{}) monitor=({},{} {}x{}) source_surface_initially_hidden=1",
             rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,
             info.monitor.left,info.monitor.top,screen_w,screen_h
+        ));
+    }
+    if embedded {
+        // The MCI video is now an internal child of the already created
+        // Glide HWND. No independent managed fullscreen window, no Wine
+        // compositor focus handoff and no HWND_TOPMOST from the overlay.
+        let mut rect=WinRect::default();
+        let read=GetWindowRect(host,&mut rect);
+        video_log(&format!(
+            "GAMEFRAME_IN_WINDOW_CREATED game={game:#x} child_host={:#x} owner=original_GameFrame_OpenGL_HWND child_class=BLACK_BRUSH parent_is_game=1 independent_top_level=0 embedded_rect=({},{},{},{}) get_rect={read} original_MCI_decoder=1",
+            host as usize,rect.left,rect.top,rect.right,rect.bottom
         ));
     }
     // Force a fresh black paint before Wine's MCI window becomes visible.
@@ -761,7 +801,7 @@ fn gameframe_popup_style(style:u32)->u32{
     // bits, input ownership, clipping and WndProc.
     (style & !0x00c4_0000u32)|WS_POPUP|WS_VISIBLE
 }
-fn gameframe_restore_before_video_host_release(){
+fn gameframe_prepare_window(phase:&str){
     if std::env::var("CYBER_GAMEFRAME_TEST").as_deref()!=Ok("1"){return;}
     let raw=std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").ok();
     let Some((desktop_w,desktop_h))=gameframe_prelaunch_desktop(raw.as_deref()) else{
@@ -826,7 +866,7 @@ fn gameframe_restore_before_video_host_release(){
         let mut after=WinRect::default();
         let readback=GetWindowRect(hwnd,&mut after);
         video_log(&format!(
-            "GAMEFRAME_HANDOFF_PREPARE stage=after_MCI_close_before_host_destroy hwnd={:#x} old_rect=({},{},{},{}) new_rect=({},{},{},{}) desktop={}x{} old_style={style:#010x} new_style={desired:#010x} SetWindowPos={ok} GetWindowRect={readback} display_mode_change=0 no_activate=1",
+            "GAMEFRAME_HANDOFF_PREPARE stage={phase} hwnd={:#x} old_rect=({},{},{},{}) new_rect=({},{},{},{}) desktop={}x{} old_style={style:#010x} new_style={desired:#010x} SetWindowPos={ok} GetWindowRect={readback} display_mode_change=0 no_activate=1",
             hwnd as usize,before.left,before.top,before.right,before.bottom,
             after.left,after.top,after.right,after.bottom,desktop_w,desktop_h
         ));
@@ -1156,6 +1196,11 @@ fn early_black_host() {
 pub fn before_mci_open(command:&str){
     if smooth_enabled() && command.trim().eq_ignore_ascii_case("open avivideo"){
         timing("PRE_MCI_AVIVIDEO_BLACK_REQUEST");
+        if gameframe_video_in_window(){
+            // GrSstOpen has already created the OpenGL HWND; correct only
+            // that same HWND before attaching the native MCI child.
+            gameframe_prepare_window("before_MCI_AVIVIDEO_open");
+        }
         early_black_host();
     }
 }
@@ -1354,8 +1399,8 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
             // grSstOpen. In this experiment, GameFrame itself owns the
             // original game HWND and its desktop-sized presentation.
             video_log("GAMEFRAME_VIDEO_HANDOFF original_MCI_close=1 host_release=early OpenGL_game_window=original no_black_postroll=1");
-            gameframe_restore_before_video_host_release();
-            close_host("gameframe_early_release");
+            gameframe_prepare_window("after_MCI_close_before_host_destroy");
+            close_host(if gameframe_video_in_window(){"gameframe_in_window_movie_closed"}else{"gameframe_early_release"});
         }else if early_release {
             video_log("VULKAN_EARLY_RELEASE after_native_MCI_close=1 no_black_postroll=1 no_handoff_timer=1 renderer_can_initialize_without_host=1");
             close_host("vulkan_early_release_ab");
@@ -1368,6 +1413,14 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
+    #[test]
+    fn glide_embedded_mci_surface_is_child_not_popup_or_topmost(){
+        assert_ne!(embedded_movie_host_style()&WS_CHILD,0);
+        assert_ne!(embedded_movie_host_style()&WS_CLIPCHILDREN,0);
+        assert_eq!(embedded_movie_host_style()&WS_POPUP,0);
+        assert_eq!(embedded_movie_host_exstyle()&WS_EX_TOPMOST,0);
+        assert_eq!(embedded_movie_host_exstyle()&WS_EX_APPWINDOW,0);
+    }
     #[test]
     fn gameframe_early_fullscreen_geometry_and_style_are_strict(){
         assert_eq!(gameframe_prelaunch_desktop(Some("1920x1080")),Some((1920,1080)));
