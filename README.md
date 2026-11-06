@@ -6,7 +6,7 @@
 
 CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wine/Proton. It bundles two Windows x86 DLLs: **CyberGladiatorsFix.dll** (our WinMM/Cinepak video and FLAC audio bridge) and **GameFrame glide.dll** (an open-source Apache-2.0 Glide-to-OpenGL wrapper). It does not distribute Cyber Gladiators, its copyrighted assets or proprietary nGlide.
 
-**Status:** The renderer, complete AVI, music, original controls, fullscreen 4:3 display, 60 FPS and first-real-OpenGL-frame video handoff were validated under Wine. The newer automatic install, DLL rename and music layout are experimental pending end-to-end testing. Native Windows 10/11 gameplay remains to be validated; CI does not run the game.
+**Status (build 85, 2026-11-06):** Fullscreen 4:3 intro and the first-real-OpenGL-frame handoff were validated under **Wine-staging 11.17** (with and without a virtual desktop) and **Proton reporting Wine 11.0** (full uninterrupted AVI playback). Both runs exited cleanly and restored the prior Glide DLL. The intended frame limit is **60 FPS**, not a guarantee of sustained performance. Native Windows 10/11 gameplay and first-time CUE/BIN installation still require end-to-end validation; CI cannot play the game.
 
 ## Quick start
 
@@ -49,6 +49,8 @@ The CD audio is extracted without resampling to **FLAC, 44.1 kHz, stereo, 16-bit
 
 GameFrame renders the original **640×480** Glide game at the current display resolution, preserving the **4:3** aspect ratio with black side bars and a **60 FPS** frame limit. The original Cinepak AVI plays via the native WinMM/MCI player in a temporary fullscreen window. The handoff to the game is synchronized with the **first successful OpenGL SwapBuffers**, eliminating desktop flashes and the temporary 640×480 game window. A bounded timeout prevents a permanent black screen.
 
+**Wine/Proton DirectDraw compatibility:** The 1996 game requests exclusive DirectDraw **640×480×16** twice before the AVI. On Wine only, the verified x86 bridge forwards these calls to the **real DirectDraw implementation**, substituting the captured desktop width and height while retaining the requested 16-bit color depth. This prevents Wine's desktop **dimensions** from collapsing to 640×480 and allows fullscreen 4:3 video without changing the game's internal rendering resolution. This is **not** a simulated successful DirectDraw call and is not enabled on native Windows. The observed display geometry remained 1920×1080 in the validated sessions; native depth or physical display-mode transitions have **not** been independently ruled out.
+
 The one EXE embeds and validates both x86 DLLs before writing them. The GameFrame DLL remains installed after a fresh first run. If the player had a different valid glide.dll, it is backed up byte-for-byte and restored at the end of gameplay.
 
 ## Commands
@@ -81,7 +83,7 @@ A single **CyberGladiatorsFix.log**, next to the EXE, records the system and dis
 
 Only the SHA-256-identified **US retail** game is supported. The renamed WinMM import name is checked by reversing just that name to the previously pinned executable hashes. Unknown executable revisions, unknown DLLs, unsafe symlinks, unexpected manifest entries and incomplete installs fail closed. CUE/BIN input is read-only, and the game installation uses a staging folder. A per-installation Windows mutex prevents concurrent launch or install.
 
-Native Windows game rendering has **not yet been verified in the field**. GitHub Actions runs Rust tests, validates the x86 DLLs and all Glide exports and smoke-tests the native Windows loader, but does not play the game.
+Native Windows game rendering has **not yet been verified in the field**. GitHub Actions runs Rust tests (including DirectDraw mode-selection and backup-integrity checks), validates the x86 DLLs and Glide exports, and smoke-tests the native Windows loader, but does not play the game. The detailed build-85 audit and its remaining risks are recorded in [BUILD85_AUDIT.md](docs/BUILD85_AUDIT.md).
 
 ## Licenses
 

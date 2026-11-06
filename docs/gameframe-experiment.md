@@ -67,8 +67,16 @@ the desktop resolution and limited to 60 FPS. The original Cinepak AVI
 plays in native Wine/Windows MCI. Its temporary GDI video host stays
 black after AVI close until the FIRST REAL successful GameFrame OpenGL
 SwapBuffers, which releases the host on the original game UI thread.
-A bounded timeout prevents indefinite black. This handoff was
-successfully validated under Wine on the earlier build #37.
+A bounded timeout prevents indefinite black. The native-size
+DirectDraw forwarding fix was validated on build #85 (2026-11-06)
+under Wine-staging 11.17 with and without a Wine virtual desktop
+and under Proton reporting Wine 11.0 with uninterrupted full AVI.
+The real IDirectDraw::SetDisplayMode method is called at the
+prelaunch width and height with the game's original 16-bit depth.
+The game continues to render internally at 640x480. The reported
+desktop dimensions did not change; a physical monitor mode/color
+depth transition has not been independently ruled out.
+Native Windows never enables this Wine-only interception.
 
 TEST THIS BUILD
 ---------------
@@ -88,8 +96,10 @@ Useful commands:
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-This is an experimental CI test build on draft PR #2, not a public
-release. No GitHub PR merge has been performed.
+This artifact is a testing build, not a public release. Build 85
+is the validated Wine-staging/Proton functional baseline. The audit
+branch must pass CI and be tested again before integration into
+draft PR #2. No GitHub PR merge has been performed.
 
 PROVEN HISTORICAL BASELINE
 --------------------------
