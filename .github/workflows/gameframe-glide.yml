@@ -7,6 +7,8 @@ on:
       - '.github/workflows/gameframe-glide.yml'
       - 'tools/gameframe/**'
       - 'docs/gameframe-experiment.md'
+      - 'cdda/**'
+      - 'src/**'
   workflow_dispatch:
 
 permissions:
