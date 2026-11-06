@@ -134,7 +134,7 @@ pub fn verify_exe(path:&Path)->Result<(),String>{
     let data=fs::read(path).map_err(|e|e.to_string())?;
     let hash=canonical_digest(&data);
     if [SPEED_ONLY,NO_CD_ONLY].contains(&hash.as_str()) {
-        return Err("Existing CYBER.EXE requires CDDA upgrade. Place CyberGladiatorsCDDA.dll beside CyberGladiatorsFix.exe and rerun patcher without arguments".into());
+        return Err("Existing CYBER.EXE has an old partial patch; a verified retail CYBER.EXE.bak is required before automatically upgrading the embedded WinMM bridge".into());
     }
     if ![PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA,PATCHED_NO_CDDA_SKIP].contains(&hash.as_str()) {
         return Err(format!("Unsupported CYBER.EXE: SHA-256 {hash}; expected the recognized CDDA patch with intro enabled/disabled"));
