@@ -180,7 +180,7 @@ fn user_launch(root:&Path,trace:bool,logo:bool)->Result<(),String>{
     if !skip {
         // Native AVI always stays in the original game process, regardless
         // of whether FLAC CDDA music was enabled in the existing user INI.
-        let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,!trace)?;
+        let (child,dxvk_logs)=verify::launch_native_avi_repaired(root,trace,logo,true)?;
         show(&format!(
             "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-D3D9 guarded_wndproc_repair=1 trace={trace} external_helper=0 music_flac={}",
             child.id(),u8::from(enable_cdda)
