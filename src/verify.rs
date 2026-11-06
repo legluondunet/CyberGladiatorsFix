@@ -211,7 +211,7 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
     // The native Windows loader always leaves this interception inactive.
     cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","1");
-    crate::show("WINE_DDRAW_NATIVE_FORWARD requested=1 activation=wine_only original_DirectDraw_called=1 game_only=1",root);
+    crate::show("WINE_DDRAW_NATIVE_FORWARD requested=1 activation=wine_only forwarding=real_DirectDraw_when_intercepted game_only=1",root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
