@@ -232,10 +232,14 @@ mod tests{
         fs::create_dir_all(&root).unwrap();
         ensure(&root).unwrap();
         assert!(!read(&root).unwrap());
-        let value="[Video]\nSkipIntro=1\n";
+        assert!(read_cdda(&root).unwrap(),"new installation should prefer native AVI + CDDA");
+        // An existing user choice of system WinMM must never be rewritten
+        // when the newer launcher introduces its different default.
+        let value="[Video]\nSkipIntro=1\n[Audio]\nEnableCDDA=0\n";
         fs::write(root.join(NAME),value).unwrap();
         ensure(&root).unwrap();
         assert!(read(&root).unwrap());
+        assert!(!read_cdda(&root).unwrap(),"existing CDDA opt-out must be preserved");
         assert_eq!(fs::read_to_string(root.join(NAME)).unwrap(),value);
         fs::remove_dir_all(root).unwrap();
     }
