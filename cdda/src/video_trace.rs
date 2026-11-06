@@ -5,7 +5,7 @@
 //! Wine can hang either in the polling loop or during the display transition.
 //! Log the exact boundary without altering any return value or MCI command.
 use std::sync::{Mutex,OnceLock};
-use std::time::Instant;
+use std::time::{Duration,Instant};
 
 #[derive(Default)]
 struct MovieState {
@@ -88,8 +88,10 @@ const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
 const WM_TIMER:u32=0x0113;
 const SW_HIDE:i32=0;
+const SW_SHOW:i32=5;
+const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
 const TRANSITION_TIMER_ID:usize=0x4359;
-const TRANSITION_DELAY_MS:u32=350; // only used by --smooth-video-test
+const TRANSITION_DELAY_MS:u32=1000; // only used by --smooth-video-test
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
@@ -195,6 +197,7 @@ extern "system" {
     fn KillTimer(hwnd:*mut c_void,id:usize)->i32;
     fn ShowWindow(hwnd:*mut c_void,mode:i32)->i32;
     fn IsWindow(hwnd:*mut c_void)->i32;
+    fn IsWindowVisible(hwnd:*mut c_void)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
     fn MonitorFromWindow(hwnd:*mut c_void,flags:u32)->*mut c_void;
@@ -573,6 +576,71 @@ fn early_black_host() {
         *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
     }
 }
+// Once the original MCI movie device has been opened, hide its entire
+// video parent surface. The separate fullscreen host remains painted black.
+// MCI's subsequent "window movie state show" is allowed to operate normally;
+// the parent surface is revealed only after successful MCI "play" below.
+fn cover_pre_video_surface() {
+    if !smooth_enabled(){return;}
+    let h=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=h else{return;};
+    unsafe {
+        if GetCurrentThreadId()!=h.owner_thread || IsWindow(h.surface as *mut c_void)==0 {
+            video_log("PRE_VIDEO_SKIP invalid_surface_or_thread");
+            return;
+        }
+        let _=ShowWindow(h.surface as *mut c_void,SW_HIDE);
+        let _=InvalidateRect(h.host as *mut c_void,std::ptr::null(),1);
+        let _=UpdateWindow(h.host as *mut c_void);
+        timing("PRE_VIDEO_SURFACE_HIDDEN");
+    }
+}
+/// Runs before forwarding the one original play command to system WinMM.
+/// Sleeping the game UI thread here is intentional: the AVI has not started,
+/// the black host is already painted, and no D3D or window-procedure hook is
+/// introduced. Never keep the host mutex locked while sleeping.
+pub fn before_mci_play(command:&str) {
+    if !smooth_enabled() || !command.trim().eq_ignore_ascii_case("play movie window"){
+        return;
+    }
+    let h=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=h else{return;};
+    unsafe {
+        if GetCurrentThreadId()!=h.owner_thread
+            || IsWindow(h.host as *mut c_void)==0
+            || IsWindow(h.surface as *mut c_void)==0 {
+            video_log("PRE_VIDEO_SKIP invalid_host_or_thread");
+            return;
+        }
+        // Keep the parent surface hidden even if the MCI state-show command
+        // exposed its own child after the initial cover request.
+        let _=ShowWindow(h.surface as *mut c_void,SW_HIDE);
+        let _=InvalidateRect(h.host as *mut c_void,std::ptr::null(),1);
+        let _=UpdateWindow(h.host as *mut c_void);
+    }
+    timing("PRE_VIDEO_BLACK_BEGIN");
+    video_log(&format!("PRE_VIDEO_BLACK_HOLD duration_ms={VIDEO_LEAD_IN_MS}"));
+    std::thread::sleep(Duration::from_millis(VIDEO_LEAD_IN_MS));
+    timing("PRE_VIDEO_BLACK_END");
+}
+fn reveal_playing_video() {
+    if !smooth_enabled(){return;}
+    let h=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=h else{return;};
+    unsafe {
+        if GetCurrentThreadId()!=h.owner_thread||IsWindow(h.surface as *mut c_void)==0 {
+            video_log("VIDEO_REVEAL_SKIP invalid_surface_or_thread");
+            return;
+        }
+        let _=ShowWindow(h.surface as *mut c_void,SW_SHOW);
+        let _=UpdateWindow(h.surface as *mut c_void);
+        video_log(&format!(
+            "VIDEO_SURFACE_REVEALED visible={} after_successful_MCI_play=1",
+            IsWindowVisible(h.surface as *mut c_void)
+        ));
+        timing("VIDEO_REVEALED_AFTER_PRE_ROLL");
+    }
+}
 /// Called before the real system WinMM entry point. Returns an alternative
 /// MCI string only for the precise original splash-video command sequence.
 pub fn rewrite_for_4_3(text:&str)->Option<CString>{
@@ -630,12 +698,17 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
         timing("MCI_AVIVIDEO_OPENED");
         early_black_host();
     }
-    if rewritten && movie_open_game_hwnd(text).is_some() && result!=0{
-        video_log(&format!("MCI_OPEN_REWRITTEN_FAILED code={result}; original_command_retry"));
-        close_host("rewritten_MCI_open_failed");
+    if rewritten && movie_open_game_hwnd(text).is_some() {
+        if result!=0 {
+            video_log(&format!("MCI_OPEN_REWRITTEN_FAILED code={result}; original_command_retry"));
+            close_host("rewritten_MCI_open_failed");
+        }else {
+            cover_pre_video_surface();
+        }
     }
     if command.eq_ignore_ascii_case("play movie window") && result==0{
         timing("MCI_PLAY_RETURNED");
+        reveal_playing_video();
         enable_movie_keys();
     }
     if command.eq_ignore_ascii_case("close movie"){
@@ -656,7 +729,8 @@ mod fullscreen_tests {
         assert!(!should_arm_curtain(false,0),"normal launch must close the host immediately");
         assert!(!should_arm_curtain(true,1),"failed MCI close must release the host");
         assert!(should_arm_curtain(true,0));
-        assert!(TRANSITION_DELAY_MS<=500,"avoid long transitions in the normal UI loop");
+        assert_eq!(TRANSITION_DELAY_MS,1000);
+        assert_eq!(VIDEO_LEAD_IN_MS,1000);
     }
     #[test]
     fn movie_mouse_filter_blocks_buttons_but_not_motion(){
