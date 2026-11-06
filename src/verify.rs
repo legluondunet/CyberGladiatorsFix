@@ -136,24 +136,21 @@ fn validate_proton_dxvk_preflight(backend:&str,proton_wined3d:Option<&str>)->Res
 /// music, never the original Cinepak player or its full-screen presentation.
 pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_proton_dxvk_preflight("1",std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
-    if avi_4x3 && trace {
-        return Err("Fullscreen native AVI host is not supported in diagnostic graphics-trace mode".into());
-    }
     if trace {
         // Reuse the established per-run DXVK capture lifecycle, which must
         // be finalized by the caller after the game exits.
         if logo {
             return Err("Native AVI repair tracing with --3dfx-logo is not supported".into());
         }
-        return launch_renderer_experiment(root,"1",false,false,true);
+        return launch_renderer_experiment(root,"1",false,false,true,avi_4x3);
     }
     launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3)
         .map(|child|(child,None))
 }
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
-    launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,wndproc_repair)
+    launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,wndproc_repair,false)
 }
-fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
+fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool,avi_4x3:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     validate_renderer_test(Some(backend),dxvk_defer_surface,true,true,false,false,0)?;
     if desktop_refresh && backend!="1" {return Err("Desktop-refresh experiment requires the nGlide DirectX9 backend".into());}
     validate_proton_dxvk_preflight(backend,std::env::var("PROTON_USE_WINED3D").ok().as_deref())?;
@@ -166,7 +163,7 @@ fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,de
         fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
         Some(dir)
     }else{None};
-    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),wndproc_repair,false)?;
+    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),wndproc_repair,avi_4x3)?;
     Ok((child,log_dir))
 }
 fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
@@ -191,8 +188,13 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             ||desktop_refresh) {
         return Err("WndProc repair requires native AVI, nGlide D3D9 and a hook-free launch".into());
     }
-    if avi_4x3 && !normal_repair {
-        return Err("Fullscreen native AVI host requires non-tracing video and guarded DXVK repair".into());
+    let diagnostic_fullscreen=avi_4x3 && trace && wndproc_repair
+        && no_glide_hook && backend_override==Some("1")
+        && !logo && !passthru_noop && video_delay_ms==0
+        && !dxvk_defer_surface && !desktop_refresh
+        && dxvk_log_dir.is_some();
+    if avi_4x3 && !normal_repair && !diagnostic_fullscreen {
+        return Err("Fullscreen native AVI host requires a guarded native-video launch with nGlide Direct3D9".into());
     }
     if !normal_repair {
         validate_renderer_test(backend_override,dxvk_defer_surface,trace,no_glide_hook,logo,passthru_noop,video_delay_ms)?;
