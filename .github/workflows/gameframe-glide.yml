@@ -19,6 +19,9 @@ jobs:
     steps:
       - name: Check out CyberGladiatorsFix
         uses: actions/checkout@v4
+        with:
+          # Use the reviewed source commit, not GitHub's temporary PR merge.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Check out pinned upstream GameFrame
         uses: actions/checkout@v4
@@ -156,6 +159,12 @@ jobs:
           Copy-Item 'LICENSE' 'dist/CyberGladiatorsFix-PreRelease/LICENSE-GPL-3.0'
           Copy-Item 'docs/DISTRIBUTION.md' 'dist/CyberGladiatorsFix-PreRelease/README.txt'
           $release = 'dist/CyberGladiatorsFix-PreRelease'
+          # Publish a reproducible byte-level receipt for the exact artifact.
+          $checksums = foreach ($name in @('CyberGladiatorsFix.exe', 'LICENSE-APACHE', 'LICENSE-GPL-3.0', 'README.txt')) {
+            $digest = (Get-FileHash (Join-Path $release $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$digest  $name"
+          }
+          $checksums | Set-Content (Join-Path $release 'SHA256SUMS.txt') -Encoding ascii
           $executables = @(Get-ChildItem $release -File | Where-Object { $_.Extension -eq '.exe' -or $_.Extension -eq '.dll' })
           if ($executables.Count -ne 1 -or $executables[0].Name -ne 'CyberGladiatorsFix.exe') {
             throw "One-file distribution must contain exactly one executable and no external DLL"
