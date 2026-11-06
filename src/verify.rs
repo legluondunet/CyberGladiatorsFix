@@ -288,7 +288,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     for key in ["CYBER_VIDEO_CLOSE_DELAY_MS","CYBER_GLIDE_HOOK_DISABLED",
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
         "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
-        "CYBER_AVI_FULLSCREEN","CYBER_CDDA_MUSIC","CYBER_AVI_SMOOTH_TEST"]{
+        "CYBER_AVI_FULLSCREEN","CYBER_CDDA_MUSIC","CYBER_AVI_SMOOTH_TEST",
+        "CYBER_VULKAN_PASSIVE_FAULT_PROBE"]{
         cmd.env_remove(key);
     }
     if avi_4x3 {
@@ -298,6 +299,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     if passive_vulkan_fault_probe(backend_override,smooth_test,trace){
         cmd.env("CYBER_GLIDE_TRACE","1");
         cmd.env("CYBER_GLIDE_HOOK_DISABLED","1");
+        cmd.env("CYBER_VULKAN_PASSIVE_FAULT_PROBE","1");
         crate::show("VULKAN_FAULT_PROBE enabled=1 exception_observer=deferred first_chance=1 window_sampler=read_only glide_iat_hook=disabled wine_debug_channels=unchanged",root);
     }
     if smooth_test {
