@@ -38,6 +38,41 @@ immediately after successful MCI close, BEFORE the GameFrame OpenGL
 renderer starts. The nGlide-specific WineD3D WndProc replacement is OFF.
 Other launch commands and the validated nGlide Direct3D9 path are unchanged.
 
+GAMEFRAME MCI GDI CLIPPING DIAGNOSTIC (BUILD #25)
+The #24 test confirms the user still sees a clipped movie, despite source
+640x480 and measured Win32 game/host/MCI child dimensions remaining full
+1920x1080 during playback. Moving the paint HWND to (0,0) and centering
+the MCI destination did not solve it. Do not keep changing arbitrary
+window offsets.
+
+This build adds an opt-in control to isolate native GDI scaling:
+  CyberGladiatorsFix.exe --launch --gameframe-test --avi-in-game-window --avi-unscaled-probe
+
+This intentionally displays the original 640x480 Cinepak frame at native
+size, centered on the 1920x1080 monitor at (640,300), WITHOUT the usual
+1440x1080 destination StretchBlt scaling. It is a *diagnostic*, not the
+desired user-facing resolution or final correction. The standard
+--avi-in-game-window mode continues using 4:3 centered 1440x1080.
+
+In BOTH in-window modes the WinMM bridge now reads the native MCI
+driver's actual source/destination/destination_max/window rectangles
+using read-only "where movie" queries after destination setup, after
+MCI play, and at the first native status poll. It also samples the GDI
+device context clip rectangle and logical/window viewport origins.
+Look for GAMEFRAME_MCI_DRIVER_RECT and GAMEFRAME_GDI_DC markers in the
+single CyberGladiatorsFix.log.
+
+If the original 640x480 AVI is entirely visible in this diagnostic,
+Wine's GDI StretchBlt inside a GameFrame OpenGL child is the likely
+problem. We should then investigate converting decoded video frames to
+a GameFrame OpenGL texture, rather than further window repositioning.
+If it remains cropped unscaled, inspect native MCI source rectangle,
+paint HDC clip and overlapping GL/GDI surface composition first.
+
+This test does not change other GameFrame modes, the intact nGlide
+launcher, game IQ data, audio playback, or the already validated
+pre-first-present fullscreen recovery.
+
 GAMEFRAME AVI-IN-WINDOW COMPARISON (NEW EXPERIMENT)
 GameFrame does not decode splash4.avi: the game's original Cinepak AVI
 continues to be decoded by the Windows/Wine WinMM/MCI video driver.
