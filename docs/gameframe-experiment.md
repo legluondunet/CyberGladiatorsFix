@@ -1,51 +1,63 @@
-# GameFrame Glide — isolated experimental proof of concept
-#
-# Only for Cyber Gladiators on Windows 10/11 or Linux Wine/Proton.
-# NOT a release and NOT a replacement for the validated nGlide path.
+# GameFrame Glide / CyberGladiatorsFix — isolated experimental build
 
+Only for Cyber Gladiators on Windows 10/11 and Wine/Proton.
+Not a release. Does not replace the original stable nGlide code or PR #1.
+
+UPSTREAM AND LICENSE
 Source: https://github.com/tanepiper/game-frame
-Pinned upstream revision: f195a074a63cc150673c38becdec696163b0b3d1
-GameFrame licensing: Apache-2.0 (LICENSE-APACHE enclosed).
-Prototype build: Windows x86 PE32 glide2x.dll from upstream Rust source, renamed
-to glide.dll. This directory contains NO original game binaries or assets.
+Pinned revision: f195a074a63cc150673c38becdec696163b0b3d1
+GameFrame is Apache-2.0; the upstream LICENSE-APACHE is bundled.
+The GPLv3 CyberGladiatorsFix launcher remains GPLv3.
+No original CD-ROM game files or proprietary Glide binaries are distributed.
 
-This is a deliberately standalone Glide experiment, not yet an embedded
-CyberGladiatorsFix component. The original game imports glide.dll.
+WHAT WE OBSERVED IN THE FIRST GAME TEST
+The unmodified upstream GameFrame wrapper loads under Wine 11.0, renders
+3D characters and textures, plays the game's music and exits normally.
+However, it could create a separate drawing window while the original
+CYBER.EXE input window stayed smaller, the picture was not fullscreen,
+the keyboard focus was inconsistent, and the game ran too fast.
 
-WHAT WAS CHECKED
-- Source revision and original decorated stdcall export table
-- 32-bit Windows DLL format
-- 156 upstream exported functions (see build logs)
-- Presence of Glide 2.11 functions such as grSstOpen
+WHAT THIS EXPERIMENT CHANGES
+The paired modified x86 glide.dll:
+- Uses the original game-owned Win32 HWND (checked for the verified game
+  image address and process owner) instead of the first visible window.
+- Uses a desktop-sized borderless window on the selected monitor, WITHOUT
+  changing the monitor's display mode or refresh rate.
+- Fits original Glide pixels at their correct 4:3 aspect ratio, with black
+  pillarboxes on a 16:9 display. The original game's framebuffer is unedited.
+- Paces the game's grBufferSwap calls to 60 FPS instead of allowing the
+  simulation to run too fast at the desktop's 120 Hz refresh.
+- Logs to the existing single CyberGladiatorsFix.log beside the launcher.
 
-WHAT IS NOT YET VERIFIED
-- Every CYBER.EXE import (its PE import table is not bundled in this repo)
-- Actual menu/gameplay rendering, texture correctness, video handoff
-- Windows 10/11 gameplay or Wine/Proton gameplay
-- Dependency license attribution beyond upstream Apache-2.0
-- Frame pacing, input and CD music with this wrapper
+The paired CyberGladiatorsFix.exe exposes an EXPLICIT new command:
+  CyberGladiatorsFix.exe --launch --gameframe-test
+It verifies the matching Glide DLL by SHA-256 and refuses another build,
+keeps the original native MCI intro 4:3 on the full monitor with the
+smooth-mode pre-video cover, and destroys that temporary video window
+immediately after successful MCI close, BEFORE the GameFrame OpenGL
+renderer starts. The nGlide-specific WineD3D WndProc replacement is OFF.
+Other launch commands and the validated nGlide Direct3D9 path are unchanged.
 
-SAFE FIRST TEST PROCEDURE (opt-in only)
-1. Stop Cyber Gladiators, CyberGladiatorsFix and related Wine processes.
-2. Find the installed game directory containing CYBER.EXE, normally
-   <CyberGladiatorsFix.exe folder>/CyberGladiatorsFix/.
-3. COPY the currently installed glide.dll (nGlide) to a safe external
-   backup named glide.dll.nglide-backup; do not modify CYBER.EXE or IQ data.
-4. Copy this experimental glide.dll into that game directory.
-5. Launch CyberGladiatorsFix.exe using your existing installation. For a
-   direct baseline start with the normal --launch; if it works, compare the
-   normal --launch --smooth-video-test experiment with SkipIntro=0. The
-   validated smooth-video path was built for nGlide and may require new
-   GameFrame-specific handoff logic. Do not assume it works unchanged.
-6. Note whether the game reaches its menu and whether the picture is correct.
-   Log files from this experimental wrapper may be separate from the
-   CyberGladiatorsFix log: the full one-log integration is a later step.
-7. Stop the game. Restore the ORIGINAL glide.dll from the backup. Keep this
-   experimental DLL only for A/B testing.
+HOW TO TEST (SAFE, REVERSIBLE)
+1. Fully exit Cyber Gladiators and Wine processes for this game.
+2. Back up the currently installed CyberGladiatorsFix.exe (the launcher).
+3. Back up the installed glide.dll beside CYBER.EXE as glide.dll.nglide-backup.
+   Do not change CYBER.EXE, the original IQ files or any CD image.
+4. Put the CyberGladiatorsFix.exe supplied IN THIS SAME ARCHIVE beside the
+   existing launcher (replacing the previous executable only).
+5. Put the glide.dll from THIS SAME ARCHIVE in the CyberGladiatorsFix game
+   directory beside CYBER.EXE. Never mix an old GameFrame glide.dll with
+   the new launcher: SHA-256 validation intentionally rejects it.
+6. Retain SkipIntro=0 in the existing CyberGladiatorsFix.ini.
+7. From your working directory with the launcher, run:
+     wine CyberGladiatorsFix.exe --launch --gameframe-test
+   (In Lutris, use those two arguments; do not add --nglide-vulkan.)
+8. Observe: intro fullscreen, menu fullscreen/centered, input and MangoHud,
+   gameplay speed, music and Alt+Tab, and whether the game exits normally.
+   The unified CyberGladiatorsFix.log contains the new GameFrame records.
+9. If anything goes wrong, restore the original glide.dll from
+   glide.dll.nglide-backup and the original CyberGladiatorsFix.exe.
 
-If you see missing exports, visual defects, a black screen, a crash or a
-nonresponsive game, restore nGlide. The prototype DLL does not need nGlide
-configuration values (NGLIDE_BACKEND etc.) and ignores them.
-
-NO GAME DATA ALTERATIONS ARE PART OF THIS EXPERIMENT.
-Neither the CI build nor the export audit needs a copy of Cyber Gladiators.
+The new branch is a prototype, not a final fix. Actual Windows 10/11
+gameplay and all edge cases still need user testing. If either new DLL
+or EXE cannot be verified, the game is NOT launched in this mode.
