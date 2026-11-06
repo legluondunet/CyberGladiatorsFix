@@ -181,7 +181,7 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     let meta=fs::symlink_metadata(path).map_err(|e|e.to_string())?;
     if !meta.is_file()||meta.file_type().is_symlink(){return Err("CYBER.EXE must be a regular file".into());}
     let data=fs::read(path).map_err(|e|e.to_string())?;
-    let hash=digest(&data);
+    let hash=canonical_digest(&data);
     if [PATCHED,PATCHED_SKIP_INTRO,PATCHED_NO_CDDA,PATCHED_NO_CDDA_SKIP].contains(&hash.as_str()) {
         verify_exe(path)?;
         if &data[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24]==LEGACY_CDDA_NAME{
