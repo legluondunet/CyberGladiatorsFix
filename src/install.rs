@@ -179,8 +179,9 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
             if path!="cyber.exe" {manifest.push_str(&format!("{path}\t{}\t{hash}\n",asset.size));}
             if (i+1)%50==0 {println!("Extracted {}/{} files",i+1,files.len());}
         }
-        // Generate settings before patching; fresh installs use original
-        // system WinMM until experimental CDDA is explicitly enabled.
+        // Generate settings before patching. Fresh installs use the
+        // in-process WinMM/CDDA bridge and native fullscreen AVI by default;
+        // existing INIs are never modified by the launcher/update path.
         settings::ensure(&staged)?;
         let enable_cdda=settings::read_cdda(&staged)?;
         if enable_cdda {cdda::try_install(root,&staged)?;}
@@ -198,7 +199,7 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
         let audio_note=format!("{} lossless FLAC tracks saved as TrackNN.flac; {} tracks omitted (missing BIN files)",
             audio_report.extracted,audio_report.missing.len());
-        Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0, EnableCDDA=0), native WinMM selected, nGlide {}. Audio: {}. Installed to {}.",
+        Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0, EnableCDDA=1), native 4:3 AVI + FLAC bridge selected, nGlide {}. Audio: {}. Installed to {}.",
             files.len(),outcome,if has_glide{"installed"}else{"missing (install separately)"},audio_note,destination.display()))
     })();
     if operation.is_err(){let _=fs::remove_dir_all(&staged);}
