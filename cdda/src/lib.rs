@@ -403,10 +403,13 @@ pub unsafe extern "system" fn mciSendStringA(
             // at the exact same MCI close boundary as the validated build.
             glide_trace::after_video_close();
             glide_trace::maybe_repair_windowproc_after_video_close();
-            // During the 2-second experimental curtain nGlide may promote
-            // its game window as D3D9 starts. Keep the already-painted black
-            // host above it without changing focus or the guarded repair.
-            video_trace::reinforce_post_video_curtain();
+            // Preserve the known-good guarded repair point, then hold the
+            // already-painted black host for two real seconds while CYBER.EXE
+            // is still inside native MCI close. Only after that hold returns
+            // may the original game resume its Glide/D3D9 initialization.
+            // Unlike post-close window timers, this cannot be visually
+            // bypassed by the game raising its fullscreen renderer early.
+            video_trace::hold_post_video_black_before_3d();
             glide_trace::maybe_delay_after_video_close();
         }
     }
