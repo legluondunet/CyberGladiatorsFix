@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! 32-bit, game-specific WinMM import proxy. Only MCI commands addressed to a
-//! virtual CD-audio device are intercepted. MCIAVI commands normally forward
-//! unchanged to real WinMM; an explicit fullscreen 4:3 trial may substitute
-//! only the known original splash-video window handle and destination.
+//! virtual CD-audio device are intercepted, controlled by the launcher's
+//! CYBER_CDDA_MUSIC setting. When disabled, CDDA commands also forward to
+//! native WinMM: the same DLL still handles native fullscreen MCIAVI and
+//! the validated WineD3D/DXVK WndProc transition. This avoids a separate AVI
+//! player and preserves the caller's music preference independently of video.
 //! This DLL is loaded by an exact SHA-256-gated import-name patch to CYBER.EXE;
 //! it is never installed as a system-wide winmm.dll.
 #![cfg(windows)]
@@ -87,6 +89,12 @@ static TRACE_SESSION:OnceLock<()>=OnceLock::new();
 
 fn controller()->&'static Mutex<Option<Controller>> {
     CONTROLLER.get_or_init(||Mutex::new(None))
+}
+/// Only the launcher's explicit "0" disables FLAC music; a direct legacy
+/// CYBER.EXE invocation without the variable keeps existing CDDA behavior.
+fn music_enabled_for(value:Option<&str>)->bool{value!=Some("0")}
+fn music_enabled()->bool{
+    music_enabled_for(std::env::var("CYBER_CDDA_MUSIC").ok().as_deref())
 }
 fn game_dir()->PathBuf {
     std::env::current_exe().ok().and_then(|p|p.parent().map(|x|x.to_path_buf()))
@@ -405,12 +413,15 @@ forward_winmm!(mmioClose(h:Handle,flags:u32)->u32, 1);
 #[no_mangle]
 pub unsafe extern "system" fn mciSendCommandA(id:u32,message:u32,flags:usize,param:usize)->u32 {
     mark_trace_session_once();
-    // Never change non-CD MCI commands, especially video-related devices.
-    if message==MCI_OPEN && cd_type_matches(flags as u32,param) {
-        return open_virtual(param);
-    }
-    if id==DEVICE_ID {
-        return virtual_command(message,flags as u32,param);
+    // Keep video services active even with music disabled: only the CD-audio
+    // device uses the optional virtual FLAC implementation.
+    if music_enabled() {
+        if message==MCI_OPEN && cd_type_matches(flags as u32,param) {
+            return open_virtual(param);
+        }
+        if id==DEVICE_ID {
+            return virtual_command(message,flags as u32,param);
+        }
     }
     let Some(address)=system_proc(b"mciSendCommandA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
@@ -423,6 +434,13 @@ pub unsafe extern "system" fn mciSendCommandA(id:u32,message:u32,flags:usize,par
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn disabled_music_forwards_native_cd_audio_but_keeps_video_proxy(){
+        assert!(!music_enabled_for(Some("0")));
+        assert!(music_enabled_for(Some("1")));
+        assert!(music_enabled_for(None),"direct legacy invocation remains compatible");
+        assert!(music_enabled_for(Some("unknown")),"only an explicit zero disables FLAC");
+    }
     #[test]
     fn mci_tmsf_track_is_low_byte(){
         assert_eq!(tmsf_track(0x0000_0002),2);
