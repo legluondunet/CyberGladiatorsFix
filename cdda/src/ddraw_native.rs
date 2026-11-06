@@ -27,6 +27,11 @@ const IMAGE_BASE:usize=0x0040_0000;
 const PAGE_READWRITE:u32=4;
 const SET_DISPLAY_MODE_INDEX:usize=21; // IDirectDraw v1, 23 methods.
 const VTABLE_ENTRIES:usize=23;
+// Preserve the validated single-object behavior. If a different executable
+// or broken COM provider repeatedly returns new objects, do not allocate
+// unbounded shadow tables. Excess objects keep their original DirectDraw vtable.
+const MAX_VTABLE_SHADOWS:u32=8;
+static SHADOW_LIMIT_REACHED:AtomicU32=AtomicU32::new(0);
 static INSTALLED:AtomicBool=AtomicBool::new(false);
 static INITIALIZED:AtomicBool=AtomicBool::new(false);
 static IMPORT_FOUND:AtomicBool=AtomicBool::new(false);
@@ -77,6 +82,17 @@ fn parse_native_desktop(input:&str)->Option<(u32,u32)>{
     let (w,h)=input.split_once('x')?;
     let (w,h)=(w.parse::<u32>().ok()?,h.parse::<u32>().ok()?);
     ((640..=16384).contains(&w)&&(480..=16384).contains(&h)).then_some((w,h))
+}
+#[inline]
+fn requested_mode_to_native(
+    width:u32,height:u32,bpp:u32,native_w:u32,native_h:u32
+)->(u32,u32,bool){
+    // Never alter color depth, refresh rate, or any unsupported mode.
+    // Preserve the exact validated 640x480x16 -> native-size behavior.
+    let replace=width==640&&height==480&&bpp==16
+        &&native_w>=640&&native_h>=480;
+    if replace{(native_w,native_h,true)}
+    else{(width,height,false)}
 }
 unsafe fn captured_desktop()->Option<(u32,u32)>{
     let mut buf=[0i8;48];
@@ -170,7 +186,8 @@ unsafe extern "system" fn forward_ddraw_create(
             let old_vtable=vtable_slot.read();
             if !old_vtable.is_null(){
                 let original_setmode=old_vtable.add(SET_DISPLAY_MODE_INDEX).read();
-                if original_setmode!=0{
+                if original_setmode!=0
+                    && original_setmode!=forward_ddraw_setmode as usize{
                     let stored=SETMODE_FN.load(Ordering::Acquire);
                     if stored==0{
                         let _=SETMODE_FN.compare_exchange(
@@ -178,23 +195,32 @@ unsafe extern "system" fn forward_ddraw_create(
                         );
                     }
                     // Fail open if another COM class uses a distinct method.
+                    // Shadow tables are kept alive until process exit because
+                    // the COM object may retain its vtable past this function.
                     if SETMODE_FN.load(Ordering::Acquire)==original_setmode{
-                        let mut clone=Box::new([0usize;VTABLE_ENTRIES]);
-                        std::ptr::copy_nonoverlapping(
-                            old_vtable,clone.as_mut_ptr(),VTABLE_ENTRIES
-                        );
-                        clone[SET_DISPLAY_MODE_INDEX]=forward_ddraw_setmode as usize;
-                        let replacement=Box::into_raw(clone) as *mut usize;
-                        vtable_slot.write(replacement);
-                        VTABLE_SHADOWS.fetch_add(1,Ordering::Relaxed);
-                        shadowed=true;
+                        let reserved=VTABLE_SHADOWS.fetch_update(
+                            Ordering::AcqRel,Ordering::Acquire,
+                            |n|(n<MAX_VTABLE_SHADOWS).then_some(n+1)
+                        ).is_ok();
+                        if reserved{
+                            let mut clone=Box::new([0usize;VTABLE_ENTRIES]);
+                            std::ptr::copy_nonoverlapping(
+                                old_vtable,clone.as_mut_ptr(),VTABLE_ENTRIES
+                            );
+                            clone[SET_DISPLAY_MODE_INDEX]=forward_ddraw_setmode as usize;
+                            let replacement=Box::into_raw(clone) as *mut usize;
+                            vtable_slot.write(replacement);
+                            shadowed=true;
+                        }else{
+                            SHADOW_LIMIT_REACHED.fetch_add(1,Ordering::Relaxed);
+                        }
                     }
                 }
             }
         }
     }
     super::log(&format!(
-        "DDRAW_NATIVE_CREATE hr={hr:#010x} game_ddraw_create=1 vtable_shadowed={} native_desktop={}x{}",
+        "DDRAW_NATIVE_CREATE hr={hr:#010x} game_ddraw_create=1 vtable_shadowed={} native_desktop={}x{} vtable_shadow_limit={MAX_VTABLE_SHADOWS}",
         u8::from(shadowed),NATIVE_W.load(Ordering::Acquire),NATIVE_H.load(Ordering::Acquire)
     ));
     hr
@@ -205,11 +231,8 @@ unsafe extern "system" fn forward_ddraw_setmode(
     MODE_CALLS.fetch_add(1,Ordering::Relaxed);
     let native_w=NATIVE_W.load(Ordering::Acquire);
     let native_h=NATIVE_H.load(Ordering::Acquire);
-    let intercept=width==640&&height==480&&bpp==16
-        &&native_w>=640&&native_h>=480;
-    let (target_w,target_h)=if intercept{
-        (native_w,native_h)
-    }else{(width,height)};
+    let (target_w,target_h,intercept)=
+        requested_mode_to_native(width,height,bpp,native_w,native_h);
     let original_ptr=SETMODE_FN.load(Ordering::Acquire);
     if original_ptr==0{return 0x88760000u32 as i32;}
     let original:unsafe extern "system" fn(*mut c_void,u32,u32,u32)->i32=
@@ -231,7 +254,7 @@ unsafe extern "system" fn forward_ddraw_setmode(
 pub fn report_once(){
     if REPORTED.swap(true,Ordering::AcqRel){return;}
     super::log(&format!(
-        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{}",
+        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
         u8::from(INITIALIZED.load(Ordering::Acquire)),
         u8::from(ENABLED.load(Ordering::Acquire)),
         u8::from(IMPORT_FOUND.load(Ordering::Acquire)),
@@ -241,7 +264,8 @@ pub fn report_once(){
         MODE_CALLS.load(Ordering::Acquire),
         MODES_FORWARDED.load(Ordering::Acquire),
         NATIVE_W.load(Ordering::Acquire),
-        NATIVE_H.load(Ordering::Acquire)
+        NATIVE_H.load(Ordering::Acquire),
+        SHADOW_LIMIT_REACHED.load(Ordering::Acquire)
     ));
 }
 #[cfg(test)]
@@ -254,6 +278,26 @@ mod tests{
         assert_eq!(parse_native_desktop("640x480"),Some((640,480)));
         assert_eq!(parse_native_desktop("640x0"),None);
         assert_eq!(parse_native_desktop("garbage"),None);
+    }
+    #[test]
+    fn only_rewrites_exact_legacy_640x480x16_to_captured_desktop(){
+        assert_eq!(requested_mode_to_native(640,480,16,1920,1080),(1920,1080,true));
+        assert_eq!(requested_mode_to_native(640,480,16,2560,1600),(2560,1600,true));
+        assert_eq!(requested_mode_to_native(640,480,16,3840,2160),(3840,2160,true));
+        assert_eq!(requested_mode_to_native(640,480,16,640,480),(640,480,true));
+    }
+    #[test]
+    fn forwards_other_directdraw_requests_unchanged(){
+        assert_eq!(requested_mode_to_native(640,480,32,1920,1080),(640,480,false));
+        assert_eq!(requested_mode_to_native(800,600,16,1920,1080),(800,600,false));
+        assert_eq!(requested_mode_to_native(640,480,8,1920,1080),(640,480,false));
+        assert_eq!(requested_mode_to_native(640,480,16,0,0),(640,480,false));
+        assert_eq!(requested_mode_to_native(640,480,16,320,240),(640,480,false));
+    }
+    #[test]
+    fn shadow_allocation_is_bounded(){
+        assert_eq!(MAX_VTABLE_SHADOWS,8);
+        assert_eq!(VTABLE_ENTRIES,23);
     }
     #[test]
     fn first_directdraw_vtable_has_23_entries_and_set_mode_at_21(){
