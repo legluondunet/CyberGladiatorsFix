@@ -96,6 +96,12 @@ fn gpu_name()->String{
     }
     fallback.unwrap_or_else(||"unavailable".into())
 }
+/// Primary desktop geometry captured before CYBER.EXE can request its old
+/// 640x480 fullscreen mode. Only used for the opt-in GameFrame experiment.
+pub fn primary_desktop_size()->Option<(u32,u32)>{
+    let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
+    (w>=640 && h>=480 && w<=16384 && h<=16384).then_some((w as u32,h as u32))
+}
 fn display_info()->String{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     let mut mode:DevModeW=unsafe{std::mem::zeroed()};
