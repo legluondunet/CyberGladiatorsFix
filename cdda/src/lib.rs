@@ -12,7 +12,6 @@ mod player;
 mod video_trace;
 mod glide_trace;
 mod exception_trace;
-mod display_guard;
 mod ddraw_native;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
@@ -351,8 +350,8 @@ pub unsafe extern "system" fn mciSendStringA(
 )->u32 {
     let entry=std::time::Instant::now();
     mark_trace_session_once();
-    // Passive diagnostic only: report at first native movie command.
-    display_guard::report_once();
+    // Report the verified Wine-only DirectDraw interception at the first
+    // native MCI video command. This is the single unified session log.
     ddraw_native::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
