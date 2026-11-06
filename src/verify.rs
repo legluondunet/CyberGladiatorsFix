@@ -111,7 +111,7 @@ pub fn launch_with_video_delay(root:&Path,logo:bool,trace:bool,passthru_noop:boo
     launch_with_options(root,logo,trace,passthru_noop,video_delay_ms,false)
 }
 pub fn launch_with_options(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,false,false,false,false)
+    launch_with_renderer_test(root,logo,trace,passthru_noop,video_delay_ms,no_glide_hook,None,false,false,None,false,false,false,false,false)
 }
 /// Proton selects WineD3D before the patcher itself starts; an inline
 /// Windows child environment flag cannot reverse that runtime choice.
@@ -141,14 +141,14 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
         }
         return launch_renderer_experiment(root,"1",false,false,true,avi_4x3);
     }
-    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3,smooth_test,false)
+    launch_with_renderer_test(root,logo,false,false,0,true,Some("1"),false,false,None,true,avi_4x3,smooth_test,false,false)
         .map(|child|(child,None))
 }
 /// Experimental nGlide Vulkan backend using the same smooth 4:3 native AVI
 /// and bounded curtain as the validated D3D9 launch. This is opt-in only;
 /// ordinary --launch and --launch --smooth-video-test remain D3D9.
-pub fn launch_smooth_vulkan(root:&Path,early_release:bool)->Result<Child,String>{
-    launch_with_renderer_test(root,false,false,false,0,true,Some("2"),false,false,None,true,true,true,early_release)
+pub fn launch_smooth_vulkan(root:&Path,early_release:bool,auto_fullscreen:bool)->Result<Child,String>{
+    launch_with_renderer_test(root,false,false,false,0,true,Some("2"),false,false,None,true,true,true,early_release,auto_fullscreen)
 }
 pub fn launch_renderer_ab(root:&Path,backend:&str,dxvk_defer_surface:bool,desktop_refresh:bool,wndproc_repair:bool)->Result<(Child,Option<std::path::PathBuf>),String>{
     launch_renderer_experiment(root,backend,dxvk_defer_surface,desktop_refresh,wndproc_repair,false)
@@ -166,7 +166,7 @@ fn launch_renderer_experiment(root:&Path,backend:&str,dxvk_defer_surface:bool,de
         fs::create_dir(&dir).map_err(|e|format!("Cannot create isolated DXVK trace directory: {e}"))?;
         Some(dir)
     }else{None};
-    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),wndproc_repair,avi_4x3,false,false)?;
+    let child=launch_with_renderer_test(root,false,true,false,0,true,Some(backend),dxvk_defer_surface,desktop_refresh,log_dir.as_deref(),wndproc_repair,avi_4x3,false,false,false)?;
     Ok((child,log_dir))
 }
 fn validate_renderer_test(backend:Option<&str>,dxvk_defer_surface:bool,trace:bool,no_glide_hook:bool,logo:bool,passthru_noop:bool,video_delay_ms:u64)->Result<(),String>{
@@ -194,7 +194,7 @@ fn selected_refresh(backend:Option<&str>,desktop_refresh:bool)->&'static str{
 fn passive_vulkan_fault_probe(backend:Option<&str>,smooth_test:bool,trace:bool)->bool{
     !trace && smooth_test && backend==Some("2")
 }
-fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool,smooth_test:bool,early_release:bool)->Result<Child,String>{
+fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,video_delay_ms:u64,no_glide_hook:bool,backend_override:Option<&str>,dxvk_defer_surface:bool,desktop_refresh:bool,dxvk_log_dir:Option<&Path>,wndproc_repair:bool,avi_4x3:bool,smooth_test:bool,early_release:bool,auto_fullscreen:bool)->Result<Child,String>{
     // The normal game path uses one x86 WinMM bridge with a guarded native
     // AVI handoff. Trace-only backend tests follow a separate validated path.
     let normal_repair=wndproc_repair && !trace
@@ -217,6 +217,9 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     }
     if early_release && !(smooth_test && backend_override==Some("2") && !trace && normal_repair){
         return Err("Early AVI host release is restricted to the explicit native Vulkan smooth-video A/B experiment".into());
+    }
+    if auto_fullscreen && !early_release {
+        return Err("Automatic fullscreen recovery requires the explicit Vulkan early-release experiment".into());
     }
     if avi_4x3 && !normal_repair && !diagnostic_fullscreen {
         return Err("Fullscreen native AVI host requires a guarded native-video launch".into());
@@ -292,7 +295,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_PASSTHRU_NOOP",
         "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
         "CYBER_AVI_FULLSCREEN","CYBER_CDDA_MUSIC","CYBER_AVI_SMOOTH_TEST",
-        "CYBER_VULKAN_PASSIVE_FAULT_PROBE","CYBER_VULKAN_EARLY_HOST_RELEASE"]{
+        "CYBER_VULKAN_PASSIVE_FAULT_PROBE","CYBER_VULKAN_EARLY_HOST_RELEASE",
+        "CYBER_VULKAN_AUTO_FULLSCREEN"]{
         cmd.env_remove(key);
     }
     if avi_4x3 {
@@ -309,9 +313,14 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         cmd.env("CYBER_VULKAN_EARLY_HOST_RELEASE","1");
         crate::show("VULKAN_EARLY_RELEASE enabled=1 hypothesis=retained_fullscreen_video_host_interferes_with_native_Vulkan close_host=immediately_after_MCI_AVIVIDEO_CLOSED black_postroll=disabled; VIDEO_NOT_SKIPPED; D3D9_UNCHANGED",root);
     }
+    if auto_fullscreen {
+        cmd.env("CYBER_VULKAN_AUTO_FULLSCREEN","1");
+        crate::show("VULKAN_AUTO_FULLSCREEN enabled=1 experimental=1 check_nGlide_window=1 keyboard_recovery=Alt+Enter at_most_twice gated=foreground_and_small_window no_focus_stealing=1 bounded=1 D3D9_UNCHANGED",root);
+    }
     if smooth_test {
         cmd.env("CYBER_AVI_SMOOTH_TEST","1");
-        crate::show(&format!("VIDEO_SMOOTH_TEST enabled=1 pre_mci_black_host=1 initially_hidden_avi_surface=1 wm_fullscreen_managed_request=1 pre_video_black_ms=1000 post_video_black_sync_hold_ms=1000 true_black_video_surface=1 true_black_avi_cover=1 prevent_3d_resume_during_hold=1 NGLIDE_REFRESH={} no_D3D9_hook=1",if selected_refresh(backend_override,desktop_refresh)=="1"{"1 (desktop; Vulkan-only experiment)"}else{"2 (60Hz, validated D3D9)"}),root);
+        crate::show(&format!("VIDEO_SMOOTH_TEST enabled=1 pre_mci_black_host=1 initially_hidden_avi_surface=1 wm_fullscreen_managed_request=1 pre_video_black_ms=1000 post_video_black_sync_hold_ms={} true_black_video_surface=1 true_black_avi_cover=1 prevent_3d_resume_during_hold={} NGLIDE_REFRESH={} no_D3D9_hook=1",
+            if early_release{0}else{1000}, if early_release{0}else{1},if selected_refresh(backend_override,desktop_refresh)=="1"{"1 (desktop; Vulkan-only experiment)"}else{"2 (60Hz, validated D3D9)"}),root);
     }
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
     // This is a one-shot, guard-checked in-process fix. No long-running
