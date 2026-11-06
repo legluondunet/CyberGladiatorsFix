@@ -97,6 +97,10 @@ const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
 const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
 const TRANSITION_TIMER_ID:usize=0x4359;
+const CURTAIN_RAISE_TIMER_ID:usize=0x435b;
+const CURTAIN_RAISE_INTERVAL_MS:u32=50;
+// This is a temporary topmost hold, not a focus change or a renderer hook.
+// Game/nGlide may become topmost while D3D9 starts after a skipped AVI.
 const INITIAL_FRAME_COVER_MS:u32=300; // trial: let Cinepak decode behind black
 const TRANSITION_DELAY_MS:u32=2000; // only used by --smooth-video-test
 const WM_PAINT:u32=0x000f;
@@ -231,6 +235,9 @@ struct NativeHost {
     keyboard_hook:usize,
     mouse_hook:usize,
     holding_for_transition:bool,
+    curtain_raise_timer:bool,
+    curtain_raise_attempts:u32,
+    curtain_raise_failures:u32,
 }
 static VIDEO_HOST:OnceLock<Mutex<Option<NativeHost>>>=OnceLock::new();
 fn video_host()->&'static Mutex<Option<NativeHost>> {
@@ -255,6 +262,10 @@ unsafe extern "system" fn black_host_proc(
         WM_TIMER if wparam==TRANSITION_TIMER_ID=>{
             timing("CURTAIN_TIMER_FIRED");
             close_host("transition_timer");
+            0
+        }
+        WM_TIMER if wparam==CURTAIN_RAISE_TIMER_ID=>{
+            keep_transition_curtain_on_top();
             0
         }
         WM_ERASEBKGND=>{
@@ -546,7 +557,10 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         first_frame_cover,first_frame_cover_started:None,
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
-        holding_for_transition:false
+        holding_for_transition:false,
+        curtain_raise_timer:false,
+        curtain_raise_attempts:0,
+        curtain_raise_failures:0
     })
 }
 // The game must regain its keyboard and mouse immediately after MCI closes,
@@ -584,6 +598,16 @@ fn close_host(reason:&str){
             stop_movie_input(&mut h);
             if h.holding_for_transition {
                 let _=KillTimer(h.host as *mut c_void,TRANSITION_TIMER_ID);
+            }
+            if h.curtain_raise_timer {
+                let _=KillTimer(h.host as *mut c_void,CURTAIN_RAISE_TIMER_ID);
+            }
+            if h.holding_for_transition {
+                video_log(&format!(
+                    "CURTAIN_TOPMOST_SUMMARY attempts={} failures={} keepalive_active={}",
+                    h.curtain_raise_attempts,h.curtain_raise_failures,
+                    u8::from(h.curtain_raise_timer)
+                ));
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
             video_log(&format!("HOST_CLOSED reason={reason} destroy_result={destroyed}"));
@@ -635,6 +659,53 @@ fn maybe_release_first_frame_cover(command:&str){
 fn should_arm_curtain(smooth:bool,mci_close_result:u32)->bool{
     smooth && mci_close_result==0
 }
+// Game/Glide can promote its 3D window above the no-activate video host
+// when entering the menu. A 2000 ms timer only proves the host exists;
+// it does NOT prove that it is visibly above the game during those seconds.
+// Reassert a *temporary* topmost position while the curtain is active.
+// No SetForegroundWindow, focus stealing, D3D9 hook or WndProc subclassing.
+unsafe fn promote_curtain(h:&mut NativeHost)->i32 {
+    if IsWindow(h.host as *mut c_void)==0{return 0;}
+    let promoted=SetWindowPos(h.host as *mut c_void,(-1isize) as *mut c_void,
+        0,0,0,0,
+        SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);
+    h.curtain_raise_attempts=h.curtain_raise_attempts.saturating_add(1);
+    if promoted==0{
+        h.curtain_raise_failures=h.curtain_raise_failures.saturating_add(1);
+    }
+    promoted
+}
+fn keep_transition_curtain_on_top(){
+    if !smooth_enabled(){return;}
+    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=guard.as_mut() else{return;};
+    if !h.holding_for_transition || h.owner_thread!=unsafe{GetCurrentThreadId()}{
+        return;
+    }
+    unsafe {
+        // Make the post-AVI image *actually* black, not merely a hidden MCI
+        // surface whose background might not have repainted after closing.
+        let _=promote_curtain(h);
+    }
+}
+/// Run right after the existing guarded WineD3D/DXVK WndProc repair.
+/// Reasserting topmost at this exact boundary protects the first instant
+/// when the game resumes 3D; the 50 ms timer handles later window raises.
+pub fn reinforce_post_video_curtain(){
+    if !smooth_enabled(){return;}
+    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=guard.as_mut() else{return;};
+    if !h.holding_for_transition || h.owner_thread!=unsafe{GetCurrentThreadId()}{
+        return;
+    }
+    unsafe {
+        let promoted=promote_curtain(h);
+        video_log(&format!(
+            "CURTAIN_POST_WNDPROC_REASSERT topmost_result={promoted} active=1"
+        ));
+        timing("CURTAIN_POST_WNDPROC_REASSERT");
+    }
+}
 fn start_transition_curtain()->bool {
     let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
     let Some(h)=guard.as_mut() else{return false;};
@@ -645,12 +716,22 @@ fn start_transition_curtain()->bool {
         }
         stop_movie_input(h);
         // Playback can end before the 300 ms initial cover has elapsed.
-        // Since it is released by MCI status polling rather than WM_TIMER,
-        // simply cancel its deadline and continue the validated exit curtain.
         if h.first_frame_cover_started.take().is_some(){
             video_log("FIRST_FRAME_COVER_CANCELLED reason=movie_closed before_status_poll_release");
         }
-        let _=ShowWindow(h.surface as *mut c_void,SW_HIDE);
+        let hidden=ShowWindow(h.surface as *mut c_void,SW_HIDE);
+        // Restore the opaque child cover over the central video region, and
+        // explicitly repaint both pillarboxes before nGlide initializes D3D.
+        let covered=if h.first_frame_cover!=0 &&
+            IsWindow(h.first_frame_cover as *mut c_void)!=0{
+            ShowWindow(h.first_frame_cover as *mut c_void,SW_SHOW);
+            SetWindowPos(h.first_frame_cover as *mut c_void,std::ptr::null_mut(),
+                0,0,0,0,
+                SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW)
+        }else{0};
+        let _=InvalidateRect(h.host as *mut c_void,std::ptr::null(),1);
+        let _=UpdateWindow(h.host as *mut c_void);
+        let promoted=promote_curtain(h);
         let timer=SetTimer(h.host as *mut c_void,TRANSITION_TIMER_ID,
             TRANSITION_DELAY_MS,std::ptr::null());
         if timer==0 {
@@ -658,10 +739,16 @@ fn start_transition_curtain()->bool {
             return false;
         }
         h.holding_for_transition=true;
+        let raise_timer=SetTimer(h.host as *mut c_void,CURTAIN_RAISE_TIMER_ID,
+            CURTAIN_RAISE_INTERVAL_MS,std::ptr::null());
+        h.curtain_raise_timer=raise_timer!=0;
         video_log(&format!(
-            "SMOOTH_CURTAIN_ACTIVE timer_ms={} max_wait=message_pump no_D3D9_hook=1 first_present_not_detected=1",
-            TRANSITION_DELAY_MS
+            "SMOOTH_CURTAIN_ACTIVE timer_ms={TRANSITION_DELAY_MS} keep_topmost_ms={CURTAIN_RAISE_INTERVAL_MS} topmost_initial={promoted} mci_hide_previous_visible={hidden} black_child_restack={covered} keepalive_timer={} no_activate=1 no_D3D9_hook=1",
+            u8::from(h.curtain_raise_timer)
         ));
+        if !h.curtain_raise_timer{
+            video_log("SMOOTH_CURTAIN_WARNING topmost_keepalive_timer_unavailable; initial_topmost_request_only");
+        }
         timing("CURTAIN_ARMED_AFTER_AVI_CLOSE");
         true
     }
@@ -908,6 +995,12 @@ mod fullscreen_tests {
         assert_eq!(host_exstyle(false)&WS_EX_APPWINDOW,0);
         assert_ne!(host_exstyle(false)&WS_EX_TOOLWINDOW,0);
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
+    }
+    #[test]
+    fn transition_curtain_uses_distinct_keepalive_and_release_timers(){
+        assert_ne!(CURTAIN_RAISE_TIMER_ID,TRANSITION_TIMER_ID);
+        assert!(CURTAIN_RAISE_INTERVAL_MS>=25 && CURTAIN_RAISE_INTERVAL_MS<=100);
+        assert_eq!(TRANSITION_DELAY_MS,2000);
     }
     #[test]
     fn transition_curtain_is_opt_in_and_requires_successful_mci_close(){
