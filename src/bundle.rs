@@ -51,7 +51,7 @@ mod tests{
         assert!(!pe32_dll_valid(&vec![0;4096]));
         let mut copy=CDDA_DLL.to_vec();
         let offset=u32::from_le_bytes(copy[0x3c..0x40].try_into().unwrap()) as usize;
-        copy[offset+22]&=!0x20; // clear the IMAGE_FILE_DLL flag
+        copy[offset+23]&=!0x20; // clear the IMAGE_FILE_DLL flag (0x2000)
         assert!(!pe32_dll_valid(&copy));
     }
 }
