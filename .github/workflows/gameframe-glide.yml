@@ -107,7 +107,12 @@ jobs:
           if (Test-Path 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll') { throw "One-file distribution must not ship a separate GameFrame glide.dll" }
           Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
           Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
-          Get-FileHash 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll' -Algorithm SHA256 | Format-List | Out-String | Write-Host
+          $release = 'dist/GameFrame-Glide-EXPERIMENTAL'
+          $executables = @(Get-ChildItem $release -File | Where-Object { $_.Extension -eq '.exe' -or $_.Extension -eq '.dll' })
+          if ($executables.Count -ne 1 -or $executables[0].Name -ne 'CyberGladiatorsFix.exe') {
+            throw "One-file distribution must contain exactly one executable and no external DLL"
+          }
+          Get-FileHash (Join-Path $release 'CyberGladiatorsFix.exe') -Algorithm SHA256 | Format-List | Out-String | Write-Host
 
       - name: Smoke test native Windows x86 loader (no rendering)
         shell: pwsh
