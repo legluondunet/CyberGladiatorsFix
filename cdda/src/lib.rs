@@ -403,6 +403,10 @@ pub unsafe extern "system" fn mciSendStringA(
             // at the exact same MCI close boundary as the validated build.
             glide_trace::after_video_close();
             glide_trace::maybe_repair_windowproc_after_video_close();
+            // During the 2-second experimental curtain nGlide may promote
+            // its game window as D3D9 starts. Keep the already-painted black
+            // host above it without changing focus or the guarded repair.
+            video_trace::reinforce_post_video_curtain();
             glide_trace::maybe_delay_after_video_close();
         }
     }
