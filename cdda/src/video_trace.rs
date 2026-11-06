@@ -831,18 +831,6 @@ fn gameframe_prelaunch_desktop(raw:Option<&str>)->Option<(i32,i32)>{
     let (w,h)=(w.parse::<i32>().ok()?,h.parse::<i32>().ok()?);
     ((640..=16384).contains(&w)&&(480..=16384).contains(&h)).then_some((w,h))
 }
-/// A momentary Wine monitor renumbering or video-mode transition must
-/// not prevent the first-GL-present handoff while our own verified native
-/// fullscreen AVI host remains on the primary desktop. Only exact primary
-/// bounds and the original game HWND qualify; a different/secondary monitor
-/// must never be force-resized from this fallback.
-fn gameframe_primary_host_anchor(game_rect:WinRect,video_rect:WinRect,
-    owner_matches:bool,desktop_w:i32,desktop_h:i32)->bool{
-    owner_matches&&desktop_w>0&&desktop_h>0
-        &&game_rect.left==0&&game_rect.top==0
-        &&video_rect.left==0&&video_rect.top==0
-        &&video_rect.right==desktop_w&&video_rect.bottom==desktop_h
-}
 fn gameframe_popup_style(style:u32)->u32{
     // Remove only window caption and sizable frame. Preserve game-specific
     // bits, input ownership, clipping and WndProc.
@@ -880,49 +868,16 @@ fn gameframe_prepare_window(phase:&str){
             cb_size:std::mem::size_of::<MonitorInfo>() as u32,
             monitor:WinRect::default(),work:WinRect::default(),flags:0
         };
-        let monitor_ok=!monitor.is_null()&&GetMonitorInfoA(monitor,&mut info)!=0;
-        let monitor_is_primary=monitor_ok&&info.monitor.left==0&&info.monitor.top==0;
+        if monitor.is_null()||GetMonitorInfoA(monitor,&mut info)==0
+            ||info.monitor.left!=0||info.monitor.top!=0{
+            // Prelaunch desktop dimensions describe the primary screen only.
+            video_log("GAMEFRAME_HANDOFF_PREPARE SKIP unsupported_non_primary_monitor");
+            return;
+        }
         let mut before=WinRect::default();
         if GetWindowRect(hwnd,&mut before)==0{
             video_log("GAMEFRAME_HANDOFF_PREPARE SKIP GetWindowRect_failed");
             return;
-        }
-        // Wine can temporarily choose another monitor for the 640x480 game
-        // HWND while our independent 1920x1080 AVI host still covers the
-        // original primary desktop. The first GL swap would otherwise
-        // release the host before the game window is corrected. Trust only
-        // that exact host while it remains alive, and verify both owners.
-        let anchored_primary=if monitor_is_primary{false}else{
-            let video=*video_host().lock().unwrap_or_else(|e|e.into_inner());
-            video.is_some_and(|h|{
-                let host=h.host as *mut c_void;
-                let mut rect=WinRect::default();
-                let mut host_pid=0u32;
-                let host_owner_ok=h.game==hwnd as usize
-                    &&h.owner_thread==GetCurrentThreadId()
-                    &&IsWindow(host)!=0
-                    &&GetWindowThreadProcessId(host,&mut host_pid)!=0
-                    &&host_pid==GetCurrentProcessId()
-                    &&GetWindowRect(host,&mut rect)!=0;
-                gameframe_primary_host_anchor(before,rect,host_owner_ok,desktop_w,desktop_h)
-            })
-        };
-        if !monitor_is_primary&&!anchored_primary{
-            video_log(&format!(
-                "GAMEFRAME_HANDOFF_PREPARE SKIP unsupported_monitor monitor_ok={} monitor_rect=({},{},{},{}) game_rect=({},{},{},{}) primary_host_anchor=0",
-                u8::from(monitor_ok),info.monitor.left,info.monitor.top,
-                info.monitor.right,info.monitor.bottom,
-                before.left,before.top,before.right,before.bottom
-            ));
-            return;
-        }
-        if anchored_primary{
-            video_log(&format!(
-                "GAMEFRAME_HANDOFF_PRIMARY_HOST_FALLBACK monitor_ok={} monitor_rect=({},{},{},{}) game_rect=({},{},{},{}) verified_AVI_host=0,0 {}x{} no_display_mode_change=1",
-                u8::from(monitor_ok),info.monitor.left,info.monitor.top,
-                info.monitor.right,info.monitor.bottom,
-                before.left,before.top,before.right,before.bottom,desktop_w,desktop_h
-            ));
         }
         let style=GetWindowLongA(hwnd,GWL_STYLE) as u32;
         let desired=gameframe_popup_style(style);
@@ -1544,19 +1499,6 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 #[cfg(test)]
 mod fullscreen_tests {
     use super::*;
-    #[test]
-    fn primary_video_host_can_anchor_gameframe_handoff_on_transient_wine_monitor(){
-        let game=WinRect{left:0,top:0,right:640,bottom:480};
-        let host=WinRect{left:0,top:0,right:1920,bottom:1080};
-        assert!(gameframe_primary_host_anchor(game,host,true,1920,1080));
-        assert!(!gameframe_primary_host_anchor(game,host,false,1920,1080));
-        assert!(!gameframe_primary_host_anchor(
-            WinRect{left:1920,top:0,right:2560,bottom:480},host,true,1920,1080));
-        assert!(!gameframe_primary_host_anchor(game,
-            WinRect{left:0,top:0,right:640,bottom:480},true,1920,1080));
-        assert!(!gameframe_primary_host_anchor(game,
-            WinRect{left:1,top:0,right:1921,bottom:1080},true,1920,1080));
-    }
     #[test]
     fn gameframe_early_fullscreen_geometry_and_style_are_strict(){
         assert_eq!(gameframe_prelaunch_desktop(Some("1920x1080")),Some((1920,1080)));

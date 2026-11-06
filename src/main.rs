@@ -207,16 +207,12 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let mut previous_glide=gameframe::Session::begin(root,&game)?;
-    // Observe the actual Win32/Wine mode before CYBER.EXE starts. This is
-    // passive and leaves all verified GameFrame/MCI/3dfx code untouched.
-    let display_watch=diagnostics::watch_gameframe_display(root);
     let child=verify::launch_gameframe_test(root)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
     ),root);
     let result=wait_game(child,root);
-    drop(display_watch);
     let restored=previous_glide.restore();
     match (result,restored){
         (Err(game),Err(dll))=>Err(format!("{game}; original Glide restoration failed: {dll}")),
