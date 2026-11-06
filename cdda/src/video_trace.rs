@@ -65,9 +65,8 @@ fn after_in(state:&mut MovieState,command:&str,code:u32,reply:&str)->Option<Stri
 }
 
 
-// Native 4:3 AVI host for the normal CDDA-enabled game launcher. These Win32
-// operations happen inside
-// CYBER.EXE on the original MCI calling thread. The game's own AVI playback
+// Native 4:3 AVI host and opt-in smooth handoff. These Win32 operations
+// happen inside CYBER.EXE on the original MCI calling thread. The game's own AVI playback
 // and the field-validated after-video WineD3D/DXVK WndProc repair are preserved.
 // A fullscreen host is used only when the launcher verified the game,
 // SkipIntro=0 and the in-process WinMM/CDDA bridge.
@@ -87,6 +86,10 @@ const SS_BLACKRECT:u32=0x0000_0004;
 const WS_EX_TOOLWINDOW:u32=0x0000_0080;
 const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
+const WM_TIMER:u32=0x0113;
+const SW_HIDE:i32=0;
+const TRANSITION_TIMER_ID:usize=0x4359;
+const TRANSITION_DELAY_MS:u32=350; // only used by --smooth-video-test
 const WM_PAINT:u32=0x000f;
 const WM_ERASEBKGND:u32=0x0014;
 const BLACK_BRUSH:i32=4;
@@ -116,6 +119,29 @@ static KEY_FILTER_ACTIVE:AtomicBool=AtomicBool::new(false);
 static KEY_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 static KEY_FILTER_ALLOWED:AtomicU32=AtomicU32::new(0);
 static MOUSE_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
+#[derive(Default)]
+struct Timing {
+    origin:Option<Instant>,
+    previous:Option<Instant>,
+}
+static TIMING:OnceLock<Mutex<Timing>>=OnceLock::new();
+/// In-process monotonic milestone clock. This distinguishes the AVI close,
+/// guarded WndProc repair and curtain release without assuming a 3D frame
+/// was actually presented. Initial milestones are also logged during normal
+/// launch, enabling exact A/B comparisons from a single session log.
+pub fn timing(event:&str){
+    if !video_enabled(){return;}
+    let now=Instant::now();
+    let (total,delta)={
+        let mut t=TIMING.get_or_init(||Mutex::new(Timing::default()))
+            .lock().unwrap_or_else(|e|e.into_inner());
+        let origin=*t.origin.get_or_insert(now);
+        let delta=t.previous.map(|prev|now.duration_since(prev).as_millis()).unwrap_or(0);
+        t.previous=Some(now);
+        (now.duration_since(origin).as_millis(),delta)
+    };
+    video_log(&format!("TIMING event={event} from_first_mci_ms={total} since_previous_ms={delta}"));
+}
 
 #[repr(C)]
 #[derive(Default,Copy,Clone)]
@@ -165,6 +191,9 @@ extern "system" {
         module:*mut c_void,thread_id:u32)->*mut c_void;
     fn CallNextHookEx(hook:*mut c_void,code:i32,wparam:usize,lparam:isize)->isize;
     fn UnhookWindowsHookEx(hook:*mut c_void)->i32;
+    fn SetTimer(hwnd:*mut c_void,id:usize,timeout_ms:u32,callback:*const c_void)->usize;
+    fn KillTimer(hwnd:*mut c_void,id:usize)->i32;
+    fn ShowWindow(hwnd:*mut c_void,mode:i32)->i32;
     fn IsWindow(hwnd:*mut c_void)->i32;
     fn GetWindowThreadProcessId(hwnd:*mut c_void,pid:*mut u32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
@@ -186,6 +215,7 @@ struct NativeHost {
     video_height:i32,
     keyboard_hook:usize,
     mouse_hook:usize,
+    holding_for_transition:bool,
 }
 static VIDEO_HOST:OnceLock<Mutex<Option<NativeHost>>>=OnceLock::new();
 fn video_host()->&'static Mutex<Option<NativeHost>> {
@@ -193,6 +223,9 @@ fn video_host()->&'static Mutex<Option<NativeHost>> {
 }
 fn video_enabled()->bool {
     std::env::var("CYBER_AVI_FULLSCREEN").as_deref()==Ok("1")
+}
+fn smooth_enabled()->bool{
+    video_enabled() && std::env::var("CYBER_AVI_SMOOTH_TEST").as_deref()==Ok("1")
 }
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
 
@@ -204,6 +237,11 @@ unsafe extern "system" fn black_host_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg{
+        WM_TIMER if wparam==TRANSITION_TIMER_ID=>{
+            timing("CURTAIN_TIMER_FIRED");
+            close_host("transition_timer");
+            0
+        }
         WM_ERASEBKGND=>{
             let mut rect=WinRect::default();
             if GetClientRect(hwnd,&mut rect)!=0 {
@@ -433,7 +471,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         info.monitor.left,info.monitor.top,screen_w,screen_h));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,game,owner_thread:GetCurrentThreadId(),
-        video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0
+        video_width:w,video_height:h,keyboard_hook:0,mouse_hook:0,
+        holding_for_transition:false
     })
 }
 fn close_host(reason:&str){
