@@ -168,6 +168,9 @@ mod tests{
         assert!(target.exists());
         session.restore().unwrap();
         assert!(!target.exists());
-        fs::remove_dir(&d).unwrap();
+        // The one-log contract intentionally creates a session journal
+        // beside the fixture. This directory was freshly generated only
+        // for this test; clean it without touching external user files.
+        fs::remove_dir_all(&d).unwrap();
     }
 }

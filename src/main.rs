@@ -447,7 +447,7 @@ mod diagnostics_tests {
         for expected in ["--launch","--trace","--verify","--max-graphics",
             "--upgrade-cdda","--check-bundle","--dxvk-rootcause",
             "--dxvk-wndproc-repair-test","--smooth-video-test","--nglide-vulkan","--3dfx-logo","--version","--help",
-            "CyberGladiatorsFix.log","one verified x86 WinMM"]{
+            "CyberGladiatorsFix.log","verified x86 WinMM"]{
             assert!(HELP.contains(expected),"{expected}");
         }
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
@@ -455,9 +455,11 @@ mod diagnostics_tests {
         assert!(HELP.contains("--vulkan-early-release"));
         assert!(HELP.contains("--vulkan-auto-fullscreen-test"));
         assert!(HELP.contains("--launch --gameframe"));
-        assert!(HELP.contains("--launch --gameframe-test --avi-in-game-window"));
-        assert!(HELP.contains("--avi-unscaled-probe"));
-        assert!(HELP.contains("--avi-first-present-handoff"));
+        // Hidden forensic A/B modes remain callable for reproducible
+        // investigations, but are not advertised as supported launch paths.
+        assert!(!HELP.contains("--launch --gameframe-test --avi-in-game-window"));
+        assert!(!HELP.contains("--avi-unscaled-probe"));
+        assert!(!HELP.contains("--avi-first-present-handoff"));
         assert!(!HELP.contains("--avi-4x3-test"));
         assert!(!HELP.contains("CyberGladiatorsFix-WineTrace.log"));
         assert!(!HELP.contains("--video-delay="));
