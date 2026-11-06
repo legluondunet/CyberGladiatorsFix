@@ -35,7 +35,7 @@ Usage:
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-No --launch argument is required. On first use, keep the original .cue
+No launch argument is required. On first use, keep the original .cue
 and its .bin track files next to this EXE. CYBER.EXE and retail data are
 extracted only from a SHA-256-verified supported US CD image. Subsequent
 launches check the installation and start automatically.
