@@ -253,8 +253,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         return Err("--video-delay requires [Video] SkipIntro=0 and [Audio] EnableCDDA=1".into());
     }
     // The diagnostic Glide hook lives exclusively inside the x86 CDDA bridge.
-    // A fresh extraction defaults EnableCDDA=0, so running the NO-OP A/B
-    // experiment then silently skips the hook and gives a misleading result.
+    // A legacy INI may still select EnableCDDA=0, so running the NO-OP A/B
+    // experiment would silently skip the hook and give a misleading result.
     // Fail before any change to the game EXE if the bridge is not requested.
     require_cd_audio_for_passthru(passthru_noop,enable_cdda)?;
     let exe=game.join("cyber.exe");
