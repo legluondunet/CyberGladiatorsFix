@@ -81,7 +81,7 @@ impl Session{
             return Err(format!("Cannot write GameFrame DLL: {e}"));
         }
         drop(out);
-        if safe_file(&stage).is_err_or(|b|digest(&b)!=expected){
+        if !matches!(safe_file(&stage),Ok(ref bytes) if digest(bytes)==expected){
             let _=fs::remove_file(&stage);
             return Err("Embedded GameFrame DLL failed staged PE32/SHA-256 validation".into());
         }
