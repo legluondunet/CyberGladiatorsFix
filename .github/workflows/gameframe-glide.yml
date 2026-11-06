@@ -33,85 +33,24 @@ jobs:
         with:
           targets: i686-pc-windows-msvc
 
-      - name: Compile upstream Glide wrapper using MSVC and its original export table
+      - name: Compile upstream Glide wrapper using MSVC and decorated Win32 exports
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $manifest = (Resolve-Path 'third_party/game-frame/wrappers/Cargo.toml').Path
           $upstreamDef = (Resolve-Path 'third_party/game-frame/wrappers/glide/glide2x.def').Path
-          # GameFrame's original .def uses GNU/MinGW internal symbol names
-          # (grGlideInit@0). Rust targeting 32-bit MSVC emits _grGlideInit@0.
-          # Keep each ORIGINAL exported name on the left, changing ONLY the
-          # linker-internal name to MSVC stdcall decoration on the right.
+          # GNU/MinGW uses an internal grGlideInit@0 COFF symbol while the
+          # 32-bit MSVC target uses _grGlideInit@0. Preserve the original
+          # exported names, changing ONLY the internal alias on the right.
           $def = Join-Path $env:RUNNER_TEMP 'gameframe-glide-msvc.def'
           $original = Get-Content -Raw $upstreamDef
-          $converted = [regex]::Replace($original, '(?m)^(_[A-Za-z0-9_]+@\d+)=(\w+@\d+)\s*
-          cargo build -p glide --release --target i686-pc-windows-msvc --manifest-path $manifest
-          if ($LASTEXITCODE -ne 0) { throw "Failed to build GameFrame Glide with Windows MSVC" }
-
-      - name: Check PE32 machine, DLL exports and Glide 2.11 compatibility
-        shell: pwsh
-        run: |
-          python -m pip install --disable-pip-version-check pefile
-          if ($LASTEXITCODE -ne 0) { throw "PE analysis setup failed" }
-          $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
-          python tools/gameframe/audit_exports.py $dll third_party/game-frame/wrappers/glide/glide2x.def
-          if ($LASTEXITCODE -ne 0) { throw "GameFrame DLL export check failed" }
-
-      - name: Package experimental Glide DLL and upstream notices
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path dist/GameFrame-Glide-EXPERIMENTAL -Force | Out-Null
-          Copy-Item 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll' 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll'
-          Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
-          Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
-          Get-FileHash 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll' -Algorithm SHA256 | Format-List | Out-String | Write-Host
-
-      - name: Upload GameFrame Windows x86 Glide proof of concept
-        uses: actions/upload-artifact@v4
-        with:
-          name: GameFrame-Glide-Windows-x86-EXPERIMENTAL
-          path: dist/GameFrame-Glide-EXPERIMENTAL/
-          if-no-files-found: error
-          retention-days: 14
-, '$1=_$2')
-          $n = ([regex]::Matches($converted, '(?m)^_[A-Za-z0-9_]+@\d+=_[A-Za-z0-9_]+@\d+\s*
-          cargo build -p glide --release --target i686-pc-windows-msvc --manifest-path $manifest
-          if ($LASTEXITCODE -ne 0) { throw "Failed to build GameFrame Glide with Windows MSVC" }
-
-      - name: Check PE32 machine, DLL exports and Glide 2.11 compatibility
-        shell: pwsh
-        run: |
-          python -m pip install --disable-pip-version-check pefile
-          if ($LASTEXITCODE -ne 0) { throw "PE analysis setup failed" }
-          $dll = 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll'
-          python tools/gameframe/audit_exports.py $dll third_party/game-frame/wrappers/glide/glide2x.def
-          if ($LASTEXITCODE -ne 0) { throw "GameFrame DLL export check failed" }
-
-      - name: Package experimental Glide DLL and upstream notices
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Path dist/GameFrame-Glide-EXPERIMENTAL -Force | Out-Null
-          Copy-Item 'third_party/game-frame/wrappers/target/i686-pc-windows-msvc/release/glide2x.dll' 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll'
-          Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/GameFrame-Glide-EXPERIMENTAL/LICENSE-APACHE'
-          Copy-Item 'docs/gameframe-experiment.md' 'dist/GameFrame-Glide-EXPERIMENTAL/README.txt'
-          Get-FileHash 'dist/GameFrame-Glide-EXPERIMENTAL/glide.dll' -Algorithm SHA256 | Format-List | Out-String | Write-Host
-
-      - name: Upload GameFrame Windows x86 Glide proof of concept
-        uses: actions/upload-artifact@v4
-        with:
-          name: GameFrame-Glide-Windows-x86-EXPERIMENTAL
-          path: dist/GameFrame-Glide-EXPERIMENTAL/
-          if-no-files-found: error
-          retention-days: 14
-)).Count
-          if ($n -ne 156) { throw "Expected to adapt 156 original Glide symbols; got $n" }
+          $converted = [regex]::Replace($original, '(?m)^(_[A-Za-z0-9_]+@\d+)=(\w+@\d+)\r?$', '$1=_$2')
+          $n = ([regex]::Matches($converted, '(?m)^_[A-Za-z0-9_]+@\d+=_[A-Za-z0-9_]+@\d+\r?$')).Count
+          if ($n -ne 156) { throw "Expected 156 adapted Glide symbols; got $n" }
           Set-Content -Path $def -Value $converted -Encoding ascii
           $env:RUSTFLAGS = "-C link-arg=/DEF:$def"
           cargo build -p glide --release --target i686-pc-windows-msvc --manifest-path $manifest
-          if ($LASTEXITCODE -ne 0) { throw "Failed to build GameFrame Glide with Windows MSVC" }
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame Glide Windows x86 MSVC compilation failed" }
 
       - name: Check PE32 machine, DLL exports and Glide 2.11 compatibility
         shell: pwsh
