@@ -469,6 +469,31 @@ fn fit_4_3(width:i32,height:i32)->Option<(i32,i32,i32,i32)>{
     let w=w as i32;
     Some(((width-w)/2,(height-h)/2,w,h))
 }
+/// Reuse the desktop geometry captured in the 64-bit launcher before
+/// this old 3dfx game transiently selects its original 640x480 mode.
+/// IMPORTANT: the game's Win32 current monitor can report 640x480 during
+/// MCI AVI playback even though the original desktop was 1920x1080.
+/// Only the verified GameFrame first-real-OpenGL-present route uses this;
+/// no display mode switch, no HWND re-parenting, no nGlide modification.
+/// Prefer the actual monitor when no trustworthy desktop size is supplied.
+fn gameframe_avi_host_bounds(monitor:WinRect,prior:Option<&str>,enabled:bool)->(WinRect,bool){
+    if !enabled||monitor.left!=0||monitor.top!=0{return (monitor,false);}
+    let Some((w,h))=gameframe_prelaunch_desktop(prior) else{
+        return (monitor,false);
+    };
+    let old_w=monitor.right-monitor.left;
+    let old_h=monitor.bottom-monitor.top;
+    if old_w<=0||old_h<=0||old_w>16384||old_h>16384{
+        return (monitor,false);
+    }
+    // Never expand a real, already-correct monitor; this targets only
+    // a smaller transient game mode with the original desktop captured.
+    if w<=old_w&&h<=old_h{return (monitor,false);}
+    let mut desktop=monitor;
+    desktop.right=w;
+    desktop.bottom=h;
+    (desktop,true)
+}
 fn movie_open_game_hwnd(text:&str)->Option<usize>{
     // Restrict to the exact known sequence: never rewrite CD audio, other
     // AVI files, aliases, or a window handle unrelated to the verified game.
@@ -545,6 +570,22 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log(&format!("SKIP GetMonitorInfoA_failed={}",GetLastError()));
         return None;
     }
+    let transient_monitor=info.monitor;
+    let desktop_capture=std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").ok();
+    let (target,from_prelaunch)=gameframe_avi_host_bounds(
+        transient_monitor,desktop_capture.as_deref(),gameframe_first_present_handoff());
+    if gameframe_first_present_handoff(){
+        video_log(&format!(
+            "GAMEFRAME_AVI_DESKTOP_GEOMETRY transient_monitor=({},{} {}x{}) prelaunch_desktop={} selected_host=({},{} {}x{}) used_prelaunch={} change_display_settings=0",
+            transient_monitor.left,transient_monitor.top,
+            transient_monitor.right-transient_monitor.left,
+            transient_monitor.bottom-transient_monitor.top,
+            desktop_capture.as_deref().unwrap_or("unavailable"),
+            target.left,target.top,target.right-target.left,target.bottom-target.top,
+            u8::from(from_prelaunch)
+        ));
+    }
+    info.monitor=target;
     let screen_w=info.monitor.right.checked_sub(info.monitor.left)?;
     let screen_h=info.monitor.bottom.checked_sub(info.monitor.top)?;
     let (x,y,w,h)=fit_4_3(screen_w,screen_h)?;
@@ -1569,6 +1610,31 @@ mod fullscreen_tests {
         }
         for key in [0x41,0x5a,0x09,0x08,0x25,0x26,0x70,0x12,0x10,0]{
             assert!(!allowed_movie_skip_key(key),"{key:#x}");
+        }
+    }
+    #[test]
+    fn gameframe_avi_reuses_prelaunch_desktop_when_game_transiently_reports_640(){
+        let transient=WinRect{left:0,top:0,right:640,bottom:480};
+        let (desktop,adjusted)=gameframe_avi_host_bounds(transient,Some("1920x1080"),true);
+        assert!(adjusted);
+        assert_eq!((desktop.left,desktop.top,desktop.right,desktop.bottom),(0,0,1920,1080));
+        assert_eq!(fit_4_3(desktop.right,desktop.bottom),Some((240,0,1440,1080)));
+    }
+    #[test]
+    fn gameframe_avi_never_overrides_other_monitor_or_normal_video(){
+        let primary=WinRect{left:0,top:0,right:640,bottom:480};
+        let secondary=WinRect{left:1920,top:0,right:2560,bottom:480};
+        for (rect,raw,enabled) in [
+            (primary,Some("1920x1080"),false),
+            (primary,Some("invalid"),true),
+            (primary,None,true),
+            (secondary,Some("1920x1080"),true),
+            (WinRect{left:0,top:0,right:1920,bottom:1080},Some("1920x1080"),true),
+        ]{
+            let (selected,overridden)=gameframe_avi_host_bounds(rect,raw,enabled);
+            assert!(!overridden);
+            assert_eq!((selected.left,selected.top,selected.right,selected.bottom),
+                (rect.left,rect.top,rect.right,rect.bottom));
         }
     }
     #[test]
