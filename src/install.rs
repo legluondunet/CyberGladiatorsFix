@@ -307,10 +307,26 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
     collect(folder,Path::new(""),&mut assets,&mut seen)?;
     let files:BTreeMap<String,Asset>=assets.into_iter().map(|a|(disc_key(&a.path),a)).collect();
     let exe=files.get("cyber.exe").ok_or("Disc not recognized: CYBER/CYBER.EXE missing")?;
-    if exe.size != patch::LEN as u64 {return Err(format!("Unsupported CYBER.EXE size: {}",exe.size));}
+    // Recognize the supplied FR executable exactly, but never treat its
+    // identity alone as authorization to patch an unverified retail CD.
+    // Every other US/unknown preimage still follows the strict original gate.
+    if exe.size!=patch::LEN as u64 && exe.size!=crate::edition::FRENCH_CANDIDATE_BYTES{
+        return Err(format!("Unsupported CYBER.EXE size: {}",exe.size));
+    }
     let hash=hash_on_disc(&mut iso,exe)?;
-    if hash!=patch::ORIGINAL {
-        return Err(format!("Unsupported CD edition: CYBER.EXE SHA-256 {hash}; expected {}",patch::ORIGINAL));
+    match crate::edition::from_original_exe(exe.size,&hash){
+        crate::edition::OriginalEdition::UsaRetail=>{},
+        crate::edition::OriginalEdition::FrenchCandidate=>{
+            return Err(format!(
+                "French CYBER.EXE candidate recognized (SHA-256 {hash}), but French installation/patching is not yet authorized. Run --inspect-disc CYBERG.CUE and share CyberGladiatorsFix.log; original game data unchanged."
+            ));
+        },
+        crate::edition::OriginalEdition::Unknown=>{
+            return Err(format!(
+                "Unsupported CD edition: CYBER.EXE SHA-256 {hash}; expected the verified original US executable {}",
+                patch::ORIGINAL
+            ));
+        }
     }
     for (name,expected) in [
         ("graphics/shell.fnt",USA_SHELL_FNT_SHA256),
