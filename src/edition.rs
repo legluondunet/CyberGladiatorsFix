@@ -41,6 +41,12 @@ pub fn from_original_exe(size:u64,sha256:&str)->OriginalEdition{
 mod tests{
     use super::*;
     #[test]
+    fn french_disc_authentication_agrees_with_patcher_profile(){
+        assert_eq!(FRENCH_ORIGINAL_SHA256,crate::fr_patch::ORIGINAL);
+        assert_eq!(FRENCH_ORIGINAL_BYTES as usize,crate::fr_patch::LEN);
+        assert_ne!(FRENCH_ORIGINAL_SHA256,crate::patch::ORIGINAL);
+    }
+    #[test]
     fn exact_sha_and_size_are_required_for_both_editions(){
         assert_eq!(from_original_exe(crate::patch::LEN as u64,crate::patch::ORIGINAL),
             OriginalEdition::UsaRetail);
