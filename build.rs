@@ -12,10 +12,15 @@ fn main(){
         assert_eq!(sha.len(),64,"Invalid GameFrame SHA-256 pin");
         println!("cargo:rustc-cfg=gameframe_embedded");
     }
-    let sha=std::env::var("GITHUB_SHA").ok().filter(|v|!v.is_empty()).or_else(||{
-        let o=Command::new("git").args(["rev-parse","--short=8","HEAD"]).output().ok()?;
-        o.status.success().then(||String::from_utf8_lossy(&o.stdout).trim().to_string())
-    }).unwrap_or_else(||"unknown".into());
+    // GitHub's GITHUB_SHA points to an ephemeral merge commit for pull_request
+    // workflows. Prefer the commit physically checked out and compiled, so
+    // --version and the user log identify the actual source revision.
+    let sha=Command::new("git").args(["rev-parse","--short=8","HEAD"])
+        .output().ok().and_then(|o|
+            o.status.success().then(||String::from_utf8_lossy(&o.stdout).trim().to_string())
+        ).filter(|s|!s.is_empty())
+        .or_else(||std::env::var("GITHUB_SHA").ok().filter(|v|!v.is_empty()))
+        .unwrap_or_else(||"unknown".into());
     let short:String=sha.chars().filter(|c|c.is_ascii_hexdigit()).take(8).collect();
     println!("cargo:rustc-env=CYBER_COMMIT={}",if short.is_empty(){"unknown"}else{&short});
 }

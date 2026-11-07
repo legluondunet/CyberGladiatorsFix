@@ -1,16 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Self-contained x64 launcher with one privately built x86 WinMM bridge DLL.
-//! The DLL handles the original fullscreen Cinepak AVI, optional CDDA music,
-//! and WineD3D/DXVK WndProc repair. No separate intro process is distributed.
-//! The Windows CI must build cdda/ x86 before the root x64 crate.
+//! Self-contained Windows x64 launcher with two embedded x86 DLLs:
+//! the project's WinMM/MCI and FLAC bridge, and the pinned GameFrame
+//! Glide/OpenGL wrapper. No external intro process or proprietary nGlide
+//! is distributed. The Windows release CI assembles both DLLs before
+//! building the launcher.
 use sha2::{Digest,Sha256};
 
 pub const CDDA_DLL:&[u8]=include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/cdda/target/i686-pc-windows-msvc/release/CyberGladiatorsFix.dll"
 ));
-/// The Apache-2.0 GameFrame wrapper is bundled ONLY in the corresponding
-/// Windows build. Proprietary nGlide is never included in any build.
+/// The Apache-2.0 GameFrame wrapper is bundled in the supported one-file
+/// Windows build. Proprietary nGlide is never included.
 #[cfg(gameframe_embedded)]
 pub const GAMEFRAME_GLIDE_DLL:&[u8]=include_bytes!(env!("CYBER_GAMEFRAME_GLIDE_DLL_PATH"));
 #[cfg(not(gameframe_embedded))]

@@ -6,11 +6,11 @@
 
 CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wine/Proton. It bundles two Windows x86 DLLs: **CyberGladiatorsFix.dll** (our WinMM/Cinepak video and FLAC audio bridge) and **GameFrame glide.dll** (an open-source Apache-2.0 Glide-to-OpenGL wrapper). It does not distribute Cyber Gladiators, its copyrighted assets or proprietary nGlide.
 
-**Status (build 85, 2026-11-06):** Fullscreen 4:3 intro and the first-real-OpenGL-frame handoff were validated under **Wine-staging 11.17** (with and without a virtual desktop) and **Proton reporting Wine 11.0** (full uninterrupted AVI playback). Both runs exited cleanly and restored the prior Glide DLL. The intended frame limit is **60 FPS**, not a guarantee of sustained performance. Native Windows 10/11 gameplay and first-time CUE/BIN installation still require end-to-end validation; CI cannot play the game.
+**Pre-release status (2026-11-06):** The audited implementation is merged into `main`. Fullscreen 4:3 AVI, FLAC music, the first-real-OpenGL-frame handoff, and normal Glide restoration were verified under **Wine-staging 11.17** (with and without a virtual desktop) and **Proton reporting Wine 11.0** (builds 85 and 90). A complete uninterrupted ~40-second AVI was verified on build 85; build 90's Wine/Proton checks used the skip control and confirmed the transition. The frame limiter targets **60 FPS**, with ~59.5 FPS observed after stabilization. **This is not yet a public release:** native Windows gameplay and a first-time CUE/BIN install still require end-to-end field testing. See [Release readiness](docs/RELEASE_READINESS.md).
 
 ## Quick start
 
-1. Download the latest successful [GameFrame Windows x64 artifact](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml).
+1. For testing, download a successful [Windows x64 pre-release artifact](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml). The artifact includes `CyberGladiatorsFix.exe`, both open-source license notices, `README.txt`, and `SHA256SUMS.txt` to verify the downloaded files. This is **not** a published release.
 2. Put **CyberGladiatorsFix.exe** next to your own US retail CD **CUE** file and the **BIN** tracks it references in a writable directory.
 3. **Double-click CyberGladiatorsFix.exe**. Under Wine, run **wine CyberGladiatorsFix.exe**.
 
@@ -83,10 +83,10 @@ A single **CyberGladiatorsFix.log**, next to the EXE, records the system and dis
 
 Only the SHA-256-identified **US retail** game is supported. The renamed WinMM import name is checked by reversing just that name to the previously pinned executable hashes. Unknown executable revisions, unknown DLLs, unsafe symlinks, unexpected manifest entries and incomplete installs fail closed. CUE/BIN input is read-only, and the game installation uses a staging folder. A per-installation Windows mutex prevents concurrent launch or install.
 
-Native Windows game rendering has **not yet been verified in the field**. GitHub Actions runs Rust tests (including DirectDraw mode-selection and backup-integrity checks), validates the x86 DLLs and Glide exports, and smoke-tests the native Windows loader, but does not play the game. The detailed build-85 audit and its remaining risks are recorded in [BUILD85_AUDIT.md](docs/BUILD85_AUDIT.md).
+Native Windows game rendering has **not yet been verified in the field**. The sole distribution workflow runs Rust tests (including DirectDraw mode-selection and backup-integrity checks), verifies the x86 DLLs and Glide exports, checks the CLI, and smoke-tests the native Windows loader, but it does not play the game. Historical experimental branches and diagnostics remain available for regression research, not as supported user entrypoints. Read the [build-85 technical audit](docs/BUILD85_AUDIT.md) and the [pre-release checklist](docs/RELEASE_READINESS.md) for outstanding risks.
 
 ## Licenses
 
-CyberGladiatorsFix code is **GPL-3.0-or-later** (LICENSE). The pinned [GameFrame](https://github.com/tanepiper/game-frame) component is **Apache-2.0** (LICENSE-APACHE in the downloadable artifact). Neither the game nor its copyright-protected disc tracks are bundled. For prior experiments see docs/DEVELOPMENT_HISTORY.md and [PR #2](https://github.com/legluondunet/CyberGladiatorsFix/pull/2).
+CyberGladiatorsFix code is **GPL-3.0-or-later** (LICENSE). The pinned [GameFrame](https://github.com/tanepiper/game-frame) component is **Apache-2.0** (LICENSE-APACHE in the downloadable artifact). Neither the game nor its copyright-protected disc tracks are bundled. For prior experiments see [development history](docs/DEVELOPMENT_HISTORY.md) and the merged [GameFrame PR #2](https://github.com/legluondunet/CyberGladiatorsFix/pull/2). The test-artifact instructions are in [docs/DISTRIBUTION.md](docs/DISTRIBUTION.md).
 
 *legluondunet assisted by ChatGPT (OpenAI)*

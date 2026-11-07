@@ -200,14 +200,14 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
     show(&format!("GAME_STARTED pid={} intro_skipped=1 trace={trace}",child.id()),root);
     if trace{wait_diagnostic(child,root)}else{wait_game(child,root)}
 }
-/// Only the opt-in GameFrame experiment uses this dedicated launcher.
-/// It preserves the old native-video and nGlide paths completely.
+/// The standard one-click path uses the embedded, SHA-256-verified GameFrame
+/// renderer. Legacy nGlide diagnostics are kept separately for developers.
 fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let mut previous_glide=gameframe::Session::begin(root,&game)?;
-    let child=verify::launch_gameframe_test(root)?;
+    let child=verify::launch_gameframe(root)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)

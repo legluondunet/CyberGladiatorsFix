@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Explicit GameFrame selection from a one-file launcher.
+//! Default GameFrame renderer managed by the one-file launcher.
 //! Preserve the user's installed Glide DLL exactly while the game runs;
 //! never ship, modify, or silently overwrite proprietary nGlide.
 use sha2::{Digest,Sha256};
@@ -27,9 +27,10 @@ fn vacant(path:&Path)->Result<(),String>{
 fn old_backup(target:&Path,hash:&str)->PathBuf{
     target.with_file_name(format!("glide.dll.pre-gameframe-{}.bak",&hash[..16]))
 }
-// Hash-qualified GameFrame builds that were actually shipped in our Windows
-// CI artifacts. Only an exact SHA-256 match authorizes reclaiming an
-// interrupted experiment. Unknown/proprietary Glide DLLs remain untouched.
+// Hash-qualified GameFrame builds from published GitHub Actions artifacts.
+// This exact allowlist is intentionally fail-closed: each new CI artifact
+// must be recorded before it is recognized for interrupted-run recovery.
+// Unknown/proprietary Glide DLLs remain untouched.
 fn known_project_gameframe(hash:&str)->bool{
     matches!(hash,
         "7f2e99707e23954e194537d0133c9a48cdd4a8fbb41f55254dc6daa01d2747fe" | // build 69
@@ -39,7 +40,12 @@ fn known_project_gameframe(hash:&str)->bool{
         "63f030a23c61a8f6e691d4fe4c654f4e2e812217d62267e1bf104a67099d9697" | // build 81
         "70a6c54624ca818143e75736828ce2c2a3241919d77d611d436aefca39858966" | // build 83
         "65ecc8df4147306a78f88a248b16d91386f379b3c32d93166b6b2dea534f5338" | // build 84
-        "f846570c4e7076204c74bc45fa74c54d6dd7381fc2ace92737907d74ca98d8ea"   // build 85, validated under Wine/Proton
+        "f846570c4e7076204c74bc45fa74c54d6dd7381fc2ace92737907d74ca98d8ea" | // build 85, Wine/Proton validated
+        "320ae0bf580b39ba127fcf4deab6fefb8f87a60b0354fd7dcad107e1d35d1bc5" | // build 90, Wine/Proton validated
+        "9431a729d2abfde1c590a07c5e23577b26a0bfd5702c3623fa2e7bb6abaf02fa" | // CI build 91
+        "a227828483799bfe44cf5adaa8f228fe943c99b73eb62642ceddeac489baac73" | // CI build 92
+        "33fe423a14533379cb88d835d38ddd7f2c17a1f030ee38b5b10621f7caca6f92" | // CI build 93
+        "9a702f7c5f8e501fbc9e336d70e1fd96265e0e6e35740e2e00460cab07eeaa21"   // main CI build 94
     )
 }
 fn retired_experiment(target:&Path,hash:&str)->PathBuf{
@@ -209,6 +215,15 @@ mod tests{
         assert!(known_project_gameframe("25f97548c42d2344794a738d22dd108dede43294215a14ba7a285afca11fab19"));
         assert!(known_project_gameframe("7f2e99707e23954e194537d0133c9a48cdd4a8fbb41f55254dc6daa01d2747fe"));
         assert!(known_project_gameframe("f846570c4e7076204c74bc45fa74c54d6dd7381fc2ace92737907d74ca98d8ea"));
+        for hash in [
+            "320ae0bf580b39ba127fcf4deab6fefb8f87a60b0354fd7dcad107e1d35d1bc5",
+            "9431a729d2abfde1c590a07c5e23577b26a0bfd5702c3623fa2e7bb6abaf02fa",
+            "a227828483799bfe44cf5adaa8f228fe943c99b73eb62642ceddeac489baac73",
+            "33fe423a14533379cb88d835d38ddd7f2c17a1f030ee38b5b10621f7caca6f92",
+            "9a702f7c5f8e501fbc9e336d70e1fd96265e0e6e35740e2e00460cab07eeaa21",
+        ]{
+            assert!(known_project_gameframe(hash),"Published CI GameFrame digest missing: {hash}");
+        }
         assert!(!known_project_gameframe(&"a".repeat(64)));
         let hash="7f2e99707e23954e194537d0133c9a48cdd4a8fbb41f55254dc6daa01d2747fe";
         let target=Path::new(r"C:\Games\CyberGladiatorsFix\glide.dll");

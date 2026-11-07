@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! GameFrame/Wine-specific DirectDraw 1 display-size compatibility experiment.
+//! Wine-only DirectDraw v1 display-size compatibility for the verified game.
 //!
 //! The verified Cyber Gladiators retail game requests fullscreen exclusive
 //! DirectDraw 640x480x16 twice before opening its native MCI AVI. Wine changes
-//! its virtual desktop from the launcher's native 1920x1080, clipping the
+//! its desktop from the launcher's captured native dimensions, clipping the
 //! deliberately fullscreen 4:3 native video host.
 //!
 //! Do NOT return DD_OK without calling DirectDraw: that produced a black
@@ -13,7 +13,7 @@
 //! initialize DirectDraw state while keeping the native desktop dimensions.
 //! This does NOT promise no internal color-depth transition; it only prevents
 //! a 640x480 desktop-size request. Never used on native Windows or without
-//! the verified GameFrame experiment.
+//! the validated GameFrame launch path.
 //!
 //! The only PE patch is to the exact CYBER.EXE ddraw.dll DirectDrawCreate IAT
 //! thunk, in memory, before game startup. The returned single COM object's

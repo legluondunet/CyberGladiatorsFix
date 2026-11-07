@@ -1,7 +1,7 @@
-CyberGladiatorsFix — one-click Windows x64 GameFrame build
-=======================================================
+CyberGladiatorsFix — Windows x64 pre-release testing guide
+==========================================================
 
-This artifact contains the Windows x64 launcher, LICENSE-GPL-3.0,
+The testing artifact contains the Windows x64 launcher, LICENSE-GPL-3.0,
 LICENSE-APACHE and this README. The EXE embeds BOTH 32-bit Windows DLLs:
   1. CyberGladiatorsFix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
   2. glide.dll — Apache-2.0 GameFrame Glide-to-OpenGL wrapper
@@ -78,8 +78,8 @@ desktop dimensions did not change; a physical monitor mode/color
 depth transition has not been independently ruled out.
 Native Windows never enables this Wine-only interception.
 
-TEST THIS BUILD
----------------
+VALIDATION BEFORE PUBLIC RELEASE
+--------------------------------
 Start from your own CUE/BIN next to the EXE, not from an installed game.
 Let the full intro AVI play, verify music, input, focus and 4:3 scene;
 then exit normally. Start the EXE a second time without the CD files
@@ -96,12 +96,17 @@ Useful commands:
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-This artifact is a testing build, not a public release. Build 85
-is the validated Wine-staging/Proton functional baseline. The audit
-branch must pass CI and be tested again before integration into
-draft PR #2. No GitHub PR merge has been performed.
+This is a pre-release testing artifact, NOT a public release.
+The implementation and audit are merged into main (2026-11-06).
+Builds 85 and 90 were validated under Wine-staging and Proton,
+including complete fullscreen introduction on build 85 and normal
+skip/transition on build 90. A new clean CUE/BIN installation,
+native Windows 10/11 gameplay and display-mode/depth behavior still
+require validation before publishing the first release.
+A green CI workflow checks compilation, PE exports and loading,
+but DOES NOT verify actual video or gameplay on a player's machine.
 
-PROVEN HISTORICAL BASELINE
+HISTORICAL TEST REFERENCES
 --------------------------
 Build #37, 2026-11-06, commit 63e0d7dd7490162bd2701f847a333f9f06d6d2f2:
 The user verified a complete fullscreen 4:3 AVI, a seamless transition

@@ -7,7 +7,7 @@ use std::path::Path;
 
 pub const NAME:&str="CyberGladiatorsFix.ini";
 const MAX_SIZE:u64=4096;
-const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n; CD audio bridge enabled for native video + lossless music by default.\r\n; 0 = system WinMM + legacy isolated AVI fallback; 1 = FLAC CDDA bridge.\r\n[Audio]\r\nEnableCDDA=1\r\n\r\n; Disabled by default. Opt-in for games which update IQ data while running.\r\n; --verify remains strict even when this option is enabled.\r\n[Integrity]\r\nAllowModifiedIQ=0\r\n";
+const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n; This option controls only CD music; the original native AVI remains enabled.\r\n; 0 = forward CD audio commands to system WinMM; 1 = virtual FLAC CD audio.\r\n[Audio]\r\nEnableCDDA=1\r\n\r\n; Disabled by default. Opt-in for games which update IQ data while running.\r\n; --verify remains strict even when this option is enabled.\r\n[Integrity]\r\nAllowModifiedIQ=0\r\n";
 
 fn parse(text:&str)->Result<bool,String>{
     let mut video=false;
