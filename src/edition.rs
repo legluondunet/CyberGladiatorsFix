@@ -18,7 +18,7 @@ pub enum OriginalEdition{
 impl OriginalEdition{
     pub fn label(self)->&'static str{
         match self{
-            Self::UsaRetail=>"US_RETAIL_VERIFIED",
+            Self::UsaRetail=>"US_KNOWN_ORIGINAL_EXE",
             Self::FrenchCandidate=>"FR_CANDIDATE_NOT_AUTHENTICATED",
             Self::Unknown=>"UNKNOWN_REFUSE_PATCH",
         }
