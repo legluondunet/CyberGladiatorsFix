@@ -6,6 +6,7 @@ mod cue;
 mod cdda;
 mod audio;
 mod install;
+mod edition;
 mod nglide;
 mod gameframe;
 mod graphics;
@@ -29,6 +30,7 @@ Usage:
   CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
   CyberGladiatorsFix.exe --verify      Strict original retail manifest and patches
+  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only CD fingerprint and FR discovery (no installation)
   CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
   CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
   CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
@@ -51,6 +53,8 @@ No original game data is distributed. IQ data is never silently changed.
 A fresh, single CyberGladiatorsFix.log appears beside the launcher.
 --verify always applies strict SHA-256 checks. The optional INI setting
 AllowModifiedIQ=1 permits only same-size IQ modifications during launch.
+The FR executable is recognized for read-only disc inspection only;
+FR patching and launching remain disabled until its disc is authenticated.
 Existing nGlide/developer commands are retained internally for forensic
 regression tests but are not needed for normal use.
 ";
@@ -286,6 +290,13 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             autostart::prepare(root,Some(&source))?;
             return user_gameframe_launch(root);
         },
+        [one] if one.to_str()==Some("--inspect-disc")=>{
+            let cue=install::find_cue(root)?;
+            return install::inspect_disc(&cue,root);
+        },
+        [one,two] if one.to_str()==Some("--inspect-disc")=>{
+            return install::inspect_disc(&PathBuf::from(two),root);
+        },
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
         [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
@@ -450,7 +461,7 @@ mod diagnostics_tests {
     #[test]
     fn help_lists_only_one_click_controls(){
         for expected in ["CyberGladiatorsFix.exe               Auto-detect",
-            "--install-only","--verify","--max-graphics",
+            "--install-only","--verify","--inspect-disc","--max-graphics",
             "--check-bundle","--version","--help",
             "music/TrackNN.flac","CyberGladiatorsFix.dll",
             "CyberGladiatorsFix.log","GameFrame"]{
