@@ -181,6 +181,82 @@ pub fn normalize(cue:&Path, temp_dir:&Path)->Result<TempIso,String>{
 #[cfg(test)]
 mod tests{use super::*;
     #[test] fn timestamp(){assert_eq!(msf("00:02:00").unwrap(),150);assert!(msf("00:60:00").is_err());}
+    /// Representative metadata from the supplied French 15-track CUE.
+    /// The raw BIN/game files are not included in the repository.
+    #[test]
+    fn french_single_bin_15_track_layout_preserves_audio_boundaries(){
+        let dir=std::env::temp_dir().join(format!(
+            "cyber-fr-cue-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let cue=dir.join("CYBERG.CUE");
+        let layout=r#"FILE "CYBERG.BIN" BINARY
+  TRACK 01 MODE1/2352
+    INDEX 01 00:00:00
+  TRACK 02 AUDIO
+    PREGAP 00:02:00
+    INDEX 01 07:09:65
+  TRACK 03 AUDIO
+    INDEX 00 08:29:68
+    INDEX 01 08:31:68
+  TRACK 04 AUDIO
+    INDEX 00 09:51:71
+    INDEX 01 09:53:71
+  TRACK 05 AUDIO
+    INDEX 00 11:13:74
+    INDEX 01 11:15:74
+  TRACK 06 AUDIO
+    INDEX 00 12:35:00
+    INDEX 01 12:37:00
+  TRACK 07 AUDIO
+    INDEX 00 14:06:44
+    INDEX 01 14:08:44
+  TRACK 08 AUDIO
+    INDEX 00 15:28:47
+    INDEX 01 15:30:47
+  TRACK 09 AUDIO
+    INDEX 00 16:50:51
+    INDEX 01 16:52:50
+  TRACK 10 AUDIO
+    INDEX 00 18:12:53
+    INDEX 01 18:14:53
+  TRACK 11 AUDIO
+    INDEX 00 19:34:58
+    INDEX 01 19:36:58
+  TRACK 12 AUDIO
+    INDEX 00 20:56:61
+    INDEX 01 20:58:61
+  TRACK 13 AUDIO
+    INDEX 00 23:50:67
+    INDEX 01 23:52:67
+  TRACK 14 AUDIO
+    INDEX 00 26:53:38
+    INDEX 01 26:55:38
+  TRACK 15 AUDIO
+    INDEX 00 28:15:42
+    INDEX 01 28:17:42
+"#;
+        fs::write(&cue,layout).unwrap();
+        let tracks=tracks(&cue).unwrap();
+        assert_eq!(tracks.len(),15);
+        assert_eq!(tracks[0].number,1);
+        assert_eq!(tracks[0].mode,"MODE1/2352");
+        assert!(tracks.iter().all(|track|track.file=="CYBERG.BIN"));
+        assert!(tracks[1..].iter().all(|track|track.mode=="AUDIO"));
+        assert_eq!(tracks[1].index00,None); // virtual PREGAP is not part of BIN
+        assert_eq!(track_end(&tracks,0,130_000).unwrap(),32_240);
+        assert_eq!(tracks[2].index00,Some(38_243));
+        assert_eq!(track_end(&tracks,1,130_000).unwrap(),38_243);
+        assert_eq!(tracks[14].index01,127_317);
+        assert_eq!(track_end(&tracks,14,130_000).unwrap(),130_000);
+        // Parsing a cue sheet never needs to open or alter the proprietary BIN.
+        assert!(bin_path(&cue,"CYBERG.BIN").unwrap().is_none());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test] fn cue_file(){assert_eq!(file_record("\"Disc 1.bin\" BINARY").unwrap(),"Disc 1.bin");}
     #[test]
     fn omitted_audio_tracks_do_not_block_first_data_track(){
