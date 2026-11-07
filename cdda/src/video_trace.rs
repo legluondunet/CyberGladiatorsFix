@@ -1505,6 +1505,17 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
 mod fullscreen_tests {
     use super::*;
     #[test]
+    fn american_and_french_game_window_profiles_are_distinct(){
+        assert_eq!(hwnd_rva_for(Some("US")),0x0012_8018);
+        assert_eq!(class_proc_rva_for(Some("US")),0x0000_5f82);
+        assert_eq!(hwnd_rva_for(Some("FR")),0x0012_8118);
+        assert_eq!(class_proc_rva_for(Some("FR")),0x0000_604e);
+        // Legacy US diagnostic entry points have no edition variable.
+        assert_eq!(hwnd_rva_for(None),0x0012_8018);
+        assert_eq!(class_proc_rva_for(None),0x0000_5f82);
+    }
+
+    #[test]
     fn gameframe_early_fullscreen_geometry_and_style_are_strict(){
         assert_eq!(gameframe_prelaunch_desktop(Some("1920x1080")),Some((1920,1080)));
         assert_eq!(gameframe_prelaunch_desktop(Some("640x480")),Some((640,480)));
