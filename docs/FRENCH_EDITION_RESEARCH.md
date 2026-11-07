@@ -1,12 +1,12 @@
 # Cyber Gladiators — French edition identification (static research only)
 
-**Status: research / NOT SUPPORTED OR PATCHED YET.** No French game asset or proprietary executable is checked into this repository. All findings below were obtained from a user-provided `cyber.exe` and must be verified against the complete original French CUE/BIN before enabling any edits or downloads.
+**Status: EXPERIMENTAL FR IMPLEMENTATION ON PR #5, NO FRENCH GAMEPLAY VALIDATION YET.** No French game asset or proprietary executable is checked into this repository. Findings are from the supplied original `CYBERG.BIN` and identical `cyber.exe`, with only metadata and isolated source patches committed.
 
 Audit date: 2026-11-07. Branch: `feature/french-edition`. Preserve the verified US path, retail backup, and original IQ bytes.
 
 ## Original file identification
 
-| Property | French candidate |
+| Property | French retail image verified against CYBERG.BIN |
 | --- | --- |
 | File name | `cyber.exe` |
 | SHA-256 | `12db5e29120832ebc304695ecfa38f6c0d825afe2640433714d27f624da53cdb` |
@@ -14,7 +14,7 @@ Audit date: 2026-11-07. Branch: `feature/french-edition`. Preserve the verified 
 | Format | PE32, Intel 80386, GUI, 6 sections, image base `0x00400000` |
 | Section alignment | `0x1000`; raw alignment `0x200` |
 | Language evidence | Embedded CP1252 text `VERSION FRANÇAISE`, `Veuillez insérer le CD-Rom de CyberGladiators dans le lecteur.` |
-| Modification evidence | Original-looking calls, video gates, WINMM import and 24-byte vacant slot at every listed patch site; **not proof that the entire EXE is unmodified retail** |
+| Modification evidence | Original-looking calls, video gates, WINMM import and 24-byte vacant slot at every listed patch site. The submitted EXE matches CYBER/CYBER.EXE from the CD exactly; third-party provenance beyond this image is not independently established. |
 
 The PE/COFF timestamp is unusual (interprets as 2037) and **cannot establish the file's provenance**. Check the complete French disc and independent retail reference before claiming a final supported edition.
 
@@ -67,14 +67,21 @@ This table is a research trace only and does not authorize production patching.
 
 The user supplied `CYBERG.CUE`, a 966-byte ASCII/CRLF cue sheet with SHA-256 `5bfd895c9dc3b4d4d24ea2b42abee4f086e95b2c2d9bd415315fedea1fc285f0`.
 
-- **One** `FILE "CYBERG.BIN" BINARY` declaration for all tracks. **No actual BIN supplied or verified yet.**
-- **15 tracks**: `TRACK 01 MODE1/2352` at `INDEX 01 00:00:00`, then **14** `AUDIO` tracks numbered 02 through 15. The data-to-audio boundary is at sector **32,240** (`07:09:65`). The 2048-byte/sector normalized data ISO would therefore be **66,027,520 bytes**, assuming the BIN sectors validate.
-- Track 02 has `PREGAP 00:02:00` and `INDEX 01 07:09:65`. Later audio tracks use separate `INDEX 00` (pregap) and `INDEX 01` (actual audio) offsets. The last track starts at sector **127,317** (`28:17:42`), and its duration cannot be determined without the BIN size.
-- With sufficient valid BIN data, the current `cue::tracks`, `cue::normalize`, `cue::track_end` and `audio::extract` should be able to handle the layout and generate `music/Track02.flac` through `music/Track15.flac`. **This is parser compatibility, not proof of successful extraction.**
+- **One** `FILE "CYBERG.BIN" BINARY` declaration for all tracks. The complete **304,729,824-byte BIN** was subsequently supplied and verified, SHA-256 `1394928ad730529028353ca03483c834c46039eee318ce2a6fb1a34d7ff5bc58` (129,562 × 2352-byte sectors).
+- **15 tracks**: `TRACK 01 MODE1/2352` at `INDEX 01 00:00:00`, then **14** `AUDIO` tracks numbered 02 through 15. All **32,240 data sectors passed sync/mode validation**; the normalized 2048-byte/sector ISO is **66,027,520 bytes**.
+- Track 02 has `PREGAP 00:02:00` and `INDEX 01 07:09:65`. Later audio tracks use separate `INDEX 00` (pregap) and `INDEX 01` (actual audio) offsets. Track 15 begins at sector **127,317** and the BIN ends at sector **129,562**; its audio range has 2,245 sectors (29.93 seconds).
+- The current `cue::tracks`, `cue::normalize`, `cue::track_end` and `audio::extract` are structurally compatible with this layout, producing expected `music/Track02.flac` through `music/Track15.flac`. **Runtime extraction remains to be exercised by the actual launcher.**
 - The special `PREGAP` directive is accepted but ignored by our parser because it represents a virtual pregap not stored as data in `CYBERG.BIN`; for subsequent tracks the stored `INDEX 00` pregaps are intentionally excluded from FLAC audio by the `track_end` boundary calculation.
-- The supplied `cyber.exe` cannot yet be cryptographically associated with `CYBERG.BIN`. Confirm its SHA-256 against `CYBER/CYBER.EXE` **extracted from the original data track**.
+- The uploaded original `cyber.exe` was compared byte for byte with `CYBER/CYBER.EXE` extracted from this BIN: **exact match**, SHA-256 `12db5e29120832ebc304695ecfa38f6c0d825afe2640433714d27f624da53cdb`.
 
-**Minimum needed to authenticate the FR edition:** the raw `CYBERG.BIN` in a controlled workspace, or a trustworthy extracted file manifest with SHA-256 digests for `CYBER/CYBER.EXE`, `CYBER/GRAPHICS/SHELL.FNT`, `CYBER/SPLASH.AVI` / `SPLASH4.AVI` if present. A simple CUE alone cannot prove the retail image or its media assets.
+**Authenticated FR identity (local image only):** ISO filesystem volume `CYBER`; 708 files in the data image, of which 343 reside under `CYBER/`. Immutable asset checks:
+- `CYBER/CYBER.EXE` — 352,288 bytes; SHA-256 `12db5e29120832ebc304695ecfa38f6c0d825afe2640433714d27f624da53cdb`.
+- `CYBER/GRAPHICS/SHELL.FNT` — 1,189,882 bytes; SHA-256 `45d2241819d32332d736f01f06b4cff694677edf1fba27588ffa8a9ff0a5d177`.
+- `CYBER/SPLASH.AVI` — 7,445,306 bytes; SHA-256 `41773e2525a2b7e959e1bcb44ad3cd640df780551a13b110c26ce53b5fdbc936` (**same as US**).
+- `CYBER/SPLASH4.AVI` — 13,283,480 bytes; SHA-256 `55bec4abb94c1a0a309eb566b8120ff0460ba69a9125f1c9c3e28c101ef05ff0`.
+- `CYBER/IQ/IQ41.DAT` — 3,696 bytes; SHA-256 `1b9760fe48e28845cc13cd284761335892ab40a23d8f9ba6f8ddef2254a24a1a` (**observed only, must never be patched by the installer**).
+
+The FR installer branch now requires the full original EXE hash and the font/two AVI hashes before extracting and patching the image. The original US hash/profile stays untouched. Authenticated source identity does **not** constitute successful game launch, music decoding or Windows/Wine compatibility.
 
 ## New diagnostic available in feature branch
 
@@ -103,6 +110,6 @@ The command is intentionally **read-only for all retail game files**. It parses 
 5. Build a Windows pre-release candidate in GitHub Actions; test on an **isolated** French installation under Wine/Proton for full intro, 4:3 video, seamless OpenGL handoff, sound, speed, controls, no-CD, Alt+Tab, exit and backup restoration. Run US regression before merging.
 6. Native Windows full-game and clean CUE/BIN acceptance tests still gate a public release.
 
-**At this stage no FR runtime support has been enabled**, and `main` has not been changed.
+**At this stage the FR source code is wired only in the draft PR #5; field validation is not complete and `main` remains unchanged.** The build under CI is for Wine/Proton testing and must not be distributed as a stable release.
 
 legluondunet assisted by ChatGPT (OpenAI).
