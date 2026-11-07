@@ -124,6 +124,44 @@ jobs:
           Write-Host 'Strict verify + one log + read-only help: PASS'
           exit 0
 
+      - name: Check FR CUE inspection does not install or patch anything
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          $dir = Split-Path -Parent $exe
+          $cue = Join-Path $env:RUNNER_TEMP 'cyber-fr-cue-fixture.cue'
+          @'
+          FILE "CYBERG.BIN" BINARY
+            TRACK 01 MODE1/2352
+              INDEX 01 00:00:00
+            TRACK 02 AUDIO
+              PREGAP 00:02:00
+              INDEX 01 07:09:65
+            TRACK 03 AUDIO
+              INDEX 00 08:29:68
+              INDEX 01 08:31:68
+          '@ | Set-Content $cue -Encoding ascii
+          $output = (& $exe --inspect-disc $cue 2>&1 | Out-String)
+          if ($LASTEXITCODE -eq 0) {
+            throw 'Inspection succeeded without CYBERG.BIN; missing image must be reported'
+          }
+          $log = Join-Path $dir 'CyberGladiatorsFix.log'
+          if (!(Test-Path $log)) { throw 'Inspection failed without unified session log' }
+          $body = Get-Content -Raw $log
+          foreach ($part in @('DISC_INSPECT', 'tracks=3 audio_tracks=2', 'DISC_TRACK number=03', '[SESSION] END failure')) {
+            if (!$body.Contains($part)) { throw "Inspection log missing: $part" }
+          }
+          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+            throw 'Read-only inspection unexpectedly installed a game directory'
+          }
+          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix-disc.tmp.iso')) {
+            throw 'Read-only inspection unexpectedly left a temporary ISO'
+          }
+          Remove-Item $cue -Force
+          Write-Host 'Read-only FR CUE inspect without BIN: PASS'
+          exit 0
+
       - name: Verify one-click auto-discovery fails safely without a retail CD
         shell: pwsh
         run: |

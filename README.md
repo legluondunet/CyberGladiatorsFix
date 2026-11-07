@@ -11,12 +11,12 @@ CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wi
 ## Quick start
 
 1. For testing, download a successful [Windows x64 pre-release artifact](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml). The artifact includes `CyberGladiatorsFix.exe`, both open-source license notices, `README.txt`, and `SHA256SUMS.txt` to verify the downloaded files. This is **not** a published release.
-2. Put **CyberGladiatorsFix.exe** next to your own US retail CD **CUE** file and the **BIN** tracks it references in a writable directory.
+2. Put **CyberGladiatorsFix.exe** beside a supported **CUE/BIN** image in a fresh writable folder. The validated US edition is supported; the French **CYBERG.CUE/CYBERG.BIN** path is experimental in PR #5 until field testing is complete.
 3. **Double-click CyberGladiatorsFix.exe**. Under Wine, run **wine CyberGladiatorsFix.exe**.
 
 **There is no need for --launch or an additional player.**
 
-On first run the launcher searches for the supported CD image, validates the US game edition, extracts the game into a temporary staging folder, verifies the files, installs the compatibility patch and both embedded DLLs, then launches. On later runs it checks the existing installation first and launches directly; the CUE/BIN need not be present.
+On first run the launcher searches for the supported CD image, identifies the original US or French executable by SHA-256, verifies edition-specific media fingerprints, extracts into a temporary staging folder, verifies the files, installs the edition-specific compatibility patch and both embedded DLLs, then launches. On later runs it checks the existing installation first and launches directly; the CUE/BIN need not be present.
 
 If an installation exists but does not pass its checks, the launcher refuses to run rather than deleting or silently replacing user files. Only one CUE image in the launcher's directory is accepted without an explicit path. **Standalone ISO input is not supported yet.** Data-only dumps cannot provide the original CD music.
 
@@ -81,9 +81,17 @@ A single **CyberGladiatorsFix.log**, next to the EXE, records the system and dis
 
 ### Compatibility and safety
 
-Only the SHA-256-identified **US retail** game is supported. The renamed WinMM import name is checked by reversing just that name to the previously pinned executable hashes. Unknown executable revisions, unknown DLLs, unsafe symlinks, unexpected manifest entries and incomplete installs fail closed. CUE/BIN input is read-only, and the game installation uses a staging folder. A per-installation Windows mutex prevents concurrent launch or install.
+The validated **US retail** edition and an **experimental French CYBERG retail** edition are identified by distinct SHA-256 profiles. The French profile is awaiting real Wine/Proton gameplay tests and is **not yet a stable supported release**. The US WinMM import-name migration is checked against previously pinned executable hashes; the FR implementation has its own checked preimages, import slot and known full-binary hashes. Unknown executable revisions, unknown DLLs, unsafe symlinks, unexpected manifest entries and incomplete installs fail closed. CUE/BIN input is read-only, and the game installation uses a staging folder. A per-installation Windows mutex prevents concurrent launch or install.
 
 Native Windows game rendering has **not yet been verified in the field**. The sole distribution workflow runs Rust tests (including DirectDraw mode-selection and backup-integrity checks), verifies the x86 DLLs and Glide exports, checks the CLI, and smoke-tests the native Windows loader, but it does not play the game. Historical experimental branches and diagnostics remain available for regression research, not as supported user entrypoints. Read the [build-85 technical audit](docs/BUILD85_AUDIT.md) and the [pre-release checklist](docs/RELEASE_READINESS.md) for outstanding risks.
+
+## French retail edition (experimental PR #5)
+
+The original French `CYBERG.BIN` data track and `cyber.exe` have been authenticated byte-for-byte. The 15-track `CYBERG.CUE` layout contains one MODE1/2352 data track and 14 CDDA tracks. French-specific `CYBER.EXE` patch offsets, backed-up executable SHA-256 hashes, and the game HWND / WndProc addresses are separate from the US ones.
+
+For a first test, use **a separate, empty folder** containing the experimental `CyberGladiatorsFix.exe`, `CYBERG.CUE` and `CYBERG.BIN`. Do not put two CUEs beside the launcher. Test the native 4:3 introduction without skipping, menu, gameplay speed and input, FLAC tracks, Alt+Tab, clean exit, and a second boot without the CUE/BIN. Check `--verify` and share the single `CyberGladiatorsFix.log`. The original IQ data must not be edited by the launcher.
+
+See [FR test procedure](docs/FR_TEST_PLAN.md) and [original-disc/patch research](docs/FRENCH_EDITION_RESEARCH.md). The French edition must pass Wine/Proton and a separate US non-regression test before this draft PR can merge.
 
 ## Licenses
 

@@ -57,7 +57,17 @@ fn cyber_game_window() -> Option<HWND> {
             log!("CyberGladiators HWND: unexpected game image base {base:#x}");
             return None;
         }
-        let handle = std::ptr::read_volatile((base + 0x0012_8018) as *const u32) as usize as HWND;
+        // Exact per-edition EXE and original backup are validated by the
+        // parent launcher before it sets this child-only environment value.
+        let hwnd_rva = match std::env::var("CYBER_GAME_EDITION").as_deref() {
+            Ok("US") => 0x0012_8018usize,
+            Ok("FR") => 0x0012_8118usize,
+            _ => {
+                log!("CyberGladiators HWND: unknown game edition, refusing raw address");
+                return None;
+            }
+        };
+        let handle = std::ptr::read_volatile((base + hwnd_rva) as *const u32) as usize as HWND;
         let mut pid = 0;
         if handle.is_null()
             || IsWindow(handle) == 0

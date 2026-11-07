@@ -127,6 +127,7 @@ pub fn backup_path(path:&Path)->std::path::PathBuf {
 }
 /// Refuse unknown editions, missing/invalid original backups, and unexpected bytes.
 pub fn verify_exe(path:&Path)->Result<(),String>{
+    if crate::fr_patch::owns(path)?{return crate::fr_patch::verify_exe(path);}
     let meta=fs::symlink_metadata(path).map_err(|e|e.to_string())?;
     if !meta.is_file()||meta.file_type().is_symlink(){
         return Err(format!("CYBER.EXE must be a regular file: {}",path.display()));
@@ -175,6 +176,7 @@ fn replace_exe(path:&Path,patched:&[u8])->Result<(),String>{
 }
 
 pub fn apply(path:&Path)->Result<&'static str,String>{
+    if crate::fr_patch::owns(path)?{return crate::fr_patch::apply(path);}
     if path.file_name().is_none_or(|n|!n.to_string_lossy().eq_ignore_ascii_case("CYBER.EXE")){
         return Err("The executable must be named CYBER.EXE".into());
     }
@@ -246,6 +248,7 @@ const INTRO_SKIP_BYTES:[u8;2]=[0xeb,0x2f];
 /// Whether the exact verified x86 WinMM bridge import is installed, regardless
 /// of the user's independent EnableCDDA music preference.
 pub fn cdda_active(path:&Path)->Result<bool,String>{
+    if crate::fr_patch::owns(path)?{return crate::fr_patch::cdda_active(path);}
     verify_exe(path)?;
     let hash=canonical_digest(&fs::read(path).map_err(|e|e.to_string())?);
     Ok(hash==PATCHED || hash==PATCHED_SKIP_INTRO)
@@ -269,6 +272,7 @@ fn is_intro_skipped(hash:&str)->bool{
 /// FLAC music selection is a separate per-process option, not an EXE patch.
 /// The retail backup and original CD resources are never changed.
 pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
+    if crate::fr_patch::owns(path)?{return crate::fr_patch::set_cdda(path,enabled);}
     verify_exe(path)?;
     let original=fs::read(path).map_err(|e|e.to_string())?;
     let hash=canonical_digest(&original);
@@ -305,6 +309,7 @@ pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
 /// Applies the [Video] SkipIntro setting before game start, independently of
 /// CDDA mode, without modifying cyber.ini, other videos or any IQ files.
 pub fn set_skip_intro(path:&Path,skip:bool)->Result<&'static str,String>{
+    if crate::fr_patch::owns(path)?{return crate::fr_patch::set_skip_intro(path,skip);}
     verify_exe(path)?;
     let original=fs::read(path).map_err(|e|e.to_string())?;
     let hash=canonical_digest(&original);

@@ -165,6 +165,8 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     let enable_cdda=settings::read_cdda(&game)?;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
+    let edition=if crate::fr_patch::owns(&exe)?{"FR"}else{"US"};
+    crate::show(&format!("GAME_EDITION selected={edition} original_backup_sha256_verified=1 runtime_address_profile={edition}"),root);
     cdda::try_install(root,&game)?;
     // Never attribute results to a new DLL if an old bridge stayed installed.
     let actual_bridge=patch::file_hash(&game.join(cdda::DLL_NAME))?;
@@ -189,6 +191,9 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     }
     let mut cmd=Command::new(&exe);
     cmd.current_dir(&game);
+    // Child profile is derived from a verified original EXE backup, never
+    // from an inherited caller variable or a filename alone.
+    cmd.env("CYBER_GAME_EDITION",edition);
     cmd.env("DXVK_LOG_PATH","none");
     for key in [
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_HOOK_DISABLED","CYBER_GLIDE_PASSTHRU_NOOP",
