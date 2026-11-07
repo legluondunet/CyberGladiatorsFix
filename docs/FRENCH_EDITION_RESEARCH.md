@@ -76,6 +76,24 @@ The user supplied `CYBERG.CUE`, a 966-byte ASCII/CRLF cue sheet with SHA-256 `5b
 
 **Minimum needed to authenticate the FR edition:** the raw `CYBERG.BIN` in a controlled workspace, or a trustworthy extracted file manifest with SHA-256 digests for `CYBER/CYBER.EXE`, `CYBER/GRAPHICS/SHELL.FNT`, `CYBER/SPLASH.AVI` / `SPLASH4.AVI` if present. A simple CUE alone cannot prove the retail image or its media assets.
 
+## New diagnostic available in feature branch
+
+Run the PR #5 testing executable **next to or with access to the original CUE/BIN**:
+
+```text
+CyberGladiatorsFix.exe --inspect-disc CYBERG.CUE
+```
+
+Under Wine:
+
+```sh
+wine CyberGladiatorsFix.exe --inspect-disc CYBERG.CUE
+```
+
+The command is intentionally **read-only for all retail game files**. It parses and validates the CUE, creates a temporary normalized ISO in the launcher's directory (automatically deleted), examines the filesystem, checks the original `CYBER/CYBER.EXE` SHA-256 and reports SHA-256 and size for `graphics/shell.fnt`, `splash.avi`, `splash4.avi` where present. Results are recorded in the single `CyberGladiatorsFix.log` alongside the executable; no game is installed or launched, and no executable or resource is patched.
+
+**Send that log instead of uploading the large BIN.** Detection of the French EXE shows `FR_CANDIDATE_NOT_AUTHENTICATED` and `fr_patch_enabled=0` until the CD's resources and per-edition runtime hooks have been verified. If there is no matching `CYBERG.BIN`, the command fails with a clear error and cannot authenticate anything.
+
 ## Implementation plan, isolated from the US release
 
 1. Obtain the **French CD `.cue`** plus the **disc asset manifest**. Determine track modes and whether the disc contains audio tracks; establish SHA-256 for `CYBER/CYBER.EXE`, `CYBER/GRAPHICS/SHELL.FNT`, `CYBER/SPLASH.AVI`, `CYBER/SPLASH4.AVI`, and any edition-specific resources. Never accept unverified files by language string alone.
