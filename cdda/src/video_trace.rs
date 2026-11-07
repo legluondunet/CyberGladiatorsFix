@@ -74,8 +74,20 @@ use std::ffi::{c_void,CString};
 use std::sync::atomic::{AtomicBool,AtomicU32,Ordering};
 
 const EXPECTED_GAME_BASE:usize=0x0040_0000;
-const GAME_HWND_RVA:usize=0x0012_8018;
-const GAME_CLASS_PROC_RVA:usize=0x0000_5f82;
+// Per-retail-edition addresses validated from the original PE32 code.
+// Fall back to US for old diagnostic aliases without CYBER_GAME_EDITION.
+fn hwnd_rva_for(edition:Option<&str>)->usize{
+    if edition==Some("FR"){0x0012_8118}else{0x0012_8018}
+}
+fn class_proc_rva_for(edition:Option<&str>)->usize{
+    if edition==Some("FR"){0x0000_604e}else{0x0000_5f82}
+}
+fn game_hwnd_rva()->usize{
+    hwnd_rva_for(std::env::var("CYBER_GAME_EDITION").ok().as_deref())
+}
+fn game_class_proc_rva()->usize{
+    class_proc_rva_for(std::env::var("CYBER_GAME_EDITION").ok().as_deref())
+}
 const GCL_WNDPROC:i32=-24;
 const GWL_WNDPROC:i32=-4;
 const GWL_STYLE:i32=-16;
@@ -526,13 +538,13 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         video_log(&format!("SKIP unsupported_image_base={base:#x}"));
         return None;
     }
-    let game=std::ptr::read_volatile((base+GAME_HWND_RVA) as *const usize);
+    let game=std::ptr::read_volatile((base+game_hwnd_rva()) as *const usize);
     let hwnd=game as *mut c_void;
     let mut pid=0u32;
     if original_window!=game || IsWindow(hwnd)==0
         || GetWindowThreadProcessId(hwnd,&mut pid)!=GetCurrentThreadId()
         || pid!=GetCurrentProcessId()
-        || GetClassLongA(hwnd,GCL_WNDPROC) as usize!=base+GAME_CLASS_PROC_RVA {
+        || GetClassLongA(hwnd,GCL_WNDPROC) as usize!=base+game_class_proc_rva() {
         video_log("SKIP invalid_game_window_or_class_or_thread");
         return None;
     }
@@ -762,7 +774,7 @@ fn start_vulkan_fullscreen_recovery(){
         return;
     }
     let hwnd=unsafe{std::ptr::read_volatile(
-        (EXPECTED_GAME_BASE+GAME_HWND_RVA) as *const usize)} as *mut c_void;
+        (EXPECTED_GAME_BASE+game_hwnd_rva()) as *const usize)} as *mut c_void;
     let hwnd_value=hwnd as usize;
     video_log("VULKAN_AUTO_FULLSCREEN scheduled=1 initial_wait_ms=900 max_toggles=2 monitor_checked=1 foreground_guard=1 independent_game_thread=1");
     std::thread::spawn(move||{
@@ -842,7 +854,7 @@ fn gameframe_prepare_window(phase:&str){
             video_log("GAMEFRAME_HANDOFF_PREPARE SKIP unexpected_exe_base");
             return;
         }
-        let hwnd=std::ptr::read_volatile((base+GAME_HWND_RVA) as *const u32)
+        let hwnd=std::ptr::read_volatile((base+game_hwnd_rva()) as *const u32)
             as usize as *mut c_void;
         let mut pid=0u32;
         let tid=if !hwnd.is_null() && IsWindow(hwnd)!=0{
@@ -852,7 +864,7 @@ fn gameframe_prepare_window(phase:&str){
             video_log("GAMEFRAME_HANDOFF_PREPARE SKIP invalid_hwnd_or_owner_thread");
             return;
         }
-        if GetClassLongA(hwnd,GCL_WNDPROC) as usize!=base+GAME_CLASS_PROC_RVA{
+        if GetClassLongA(hwnd,GCL_WNDPROC) as usize!=base+game_class_proc_rva(){
             video_log("GAMEFRAME_HANDOFF_PREPARE SKIP unexpected_game_class");
             return;
         }
@@ -1265,7 +1277,7 @@ fn early_black_host() {
             video_log("SMOOTH_EARLY_SKIP unknown_game_image");
             return;
         }
-        let game=std::ptr::read_volatile((base+GAME_HWND_RVA) as *const usize);
+        let game=std::ptr::read_volatile((base+game_hwnd_rva()) as *const usize);
         let Some(h)=prepare_host(game) else{
             video_log("SMOOTH_EARLY_SKIP game_window_not_ready; fallback=normal_MCI_open");
             return;
