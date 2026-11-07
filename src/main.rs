@@ -12,6 +12,7 @@ mod gameframe;
 mod graphics;
 mod settings;
 mod patch;
+mod fr_patch;
 mod verify;
 mod diagnostics;
 mod bundle;
