@@ -63,6 +63,19 @@ Computed **in memory**, from the supplied file, by applying the candidate byte e
 
 This table is a research trace only and does not authorize production patching.
 
+## French CD CUE structure — supplied 2026-11-07
+
+The user supplied `CYBERG.CUE`, a 966-byte ASCII/CRLF cue sheet with SHA-256 `5bfd895c9dc3b4d4d24ea2b42abee4f086e95b2c2d9bd415315fedea1fc285f0`.
+
+- **One** `FILE "CYBERG.BIN" BINARY` declaration for all tracks. **No actual BIN supplied or verified yet.**
+- **15 tracks**: `TRACK 01 MODE1/2352` at `INDEX 01 00:00:00`, then **14** `AUDIO` tracks numbered 02 through 15. The data-to-audio boundary is at sector **32,240** (`07:09:65`). The 2048-byte/sector normalized data ISO would therefore be **66,027,520 bytes**, assuming the BIN sectors validate.
+- Track 02 has `PREGAP 00:02:00` and `INDEX 01 07:09:65`. Later audio tracks use separate `INDEX 00` (pregap) and `INDEX 01` (actual audio) offsets. The last track starts at sector **127,317** (`28:17:42`), and its duration cannot be determined without the BIN size.
+- With sufficient valid BIN data, the current `cue::tracks`, `cue::normalize`, `cue::track_end` and `audio::extract` should be able to handle the layout and generate `music/Track02.flac` through `music/Track15.flac`. **This is parser compatibility, not proof of successful extraction.**
+- The special `PREGAP` directive is accepted but ignored by our parser because it represents a virtual pregap not stored as data in `CYBERG.BIN`; for subsequent tracks the stored `INDEX 00` pregaps are intentionally excluded from FLAC audio by the `track_end` boundary calculation.
+- The supplied `cyber.exe` cannot yet be cryptographically associated with `CYBERG.BIN`. Confirm its SHA-256 against `CYBER/CYBER.EXE` **extracted from the original data track**.
+
+**Minimum needed to authenticate the FR edition:** the raw `CYBERG.BIN` in a controlled workspace, or a trustworthy extracted file manifest with SHA-256 digests for `CYBER/CYBER.EXE`, `CYBER/GRAPHICS/SHELL.FNT`, `CYBER/SPLASH.AVI` / `SPLASH4.AVI` if present. A simple CUE alone cannot prove the retail image or its media assets.
+
 ## Implementation plan, isolated from the US release
 
 1. Obtain the **French CD `.cue`** plus the **disc asset manifest**. Determine track modes and whether the disc contains audio tracks; establish SHA-256 for `CYBER/CYBER.EXE`, `CYBER/GRAPHICS/SHELL.FNT`, `CYBER/SPLASH.AVI`, `CYBER/SPLASH4.AVI`, and any edition-specific resources. Never accept unverified files by language string alone.
