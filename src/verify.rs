@@ -158,7 +158,7 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// GameFrame's verified native AVI -> first real OpenGL-present launch.
 /// The original nGlide setup is never changed; the selected Apache-2.0
 /// Glide DLL was temporarily installed by gameframe::Session.
-pub fn launch_gameframe(root:&Path,fr_borderless_test:bool)->Result<Child,String>{
+pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:bool)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     let skip_intro=settings::read(&game)?;
@@ -201,13 +201,24 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool)->Result<Child,String
     if fr_borderless_test && !native_fr_alt_tab{
         return Err("--fr-borderless-test is restricted to the verified French edition on native Windows".into());
     }
+    // Exact profile gate: this US DirectDraw COM-proxy experiment must not
+    // affect native Windows, unrecognized EXEs, or the French Wine path.
+    // It is deliberately independent of the native-FR A/B test.
+    if us_wine_virtual_test && (edition!="US" || diagnostics::is_native_windows()){
+        return Err("--us-virtual-ddraw-test requires the verified US game under Wine/Proton".into());
+    }
     cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_fr_alt_tab{"1"}else{"0"});
     // A diagnostic child flag is always explicitly set, never inherited
     // from the caller. The normal user launch takes the validated #168 path.
     cmd.env("CYBER_FR_VIRTUAL_DDRAW",if fr_borderless_test{"1"}else{"0"});
+    cmd.env("CYBER_US_WINE_VIRTUAL_DDRAW",if us_wine_virtual_test{"1"}else{"0"});
     crate::show(&format!(
         "FR_VIRTUAL_DDRAW enabled={} native_FR={} opt_in=1 system_ddraw_vtable_unchanged=1 no_external_wrapper=1",
         u8::from(fr_borderless_test),u8::from(native_fr_alt_tab)
+    ),root);
+    crate::show(&format!(
+        "US_WINE_VIRTUAL_DDRAW enabled={} edition={edition} wine={}          alternative_to_wine_native_forward=1 inherited_env_overridden=1          virtual_surfaces=1 physical_mode_request=0 experimental=1",
+        u8::from(us_wine_virtual_test),u8::from(!diagnostics::is_native_windows())
     ),root);
     crate::show(&format!(
         "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
@@ -240,8 +251,11 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool)->Result<Child,String
     // GameFrame build may forward its 640x480x16 DirectDraw request to the
     // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
     // The native Windows loader always leaves this interception inactive.
-    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","1");
-    crate::show("WINE_DDRAW_NATIVE_FORWARD requested=1 activation=wine_only forwarding=real_DirectDraw_when_intercepted game_only=1",root);
+    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD",if us_wine_virtual_test{"0"}else{"1"});
+    crate::show(&format!(
+        "WINE_DDRAW_NATIVE_FORWARD requested={} activation=wine_only          forwarding=real_DirectDraw_when_intercepted game_only=1          disabled_for_us_virtual_ab={}",
+        u8::from(!us_wine_virtual_test),u8::from(us_wine_virtual_test)
+    ),root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
@@ -571,6 +585,21 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     cmd.spawn().map_err(|e|format!("Unable to start CYBER.EXE: {e}"))
 }
 
+#[cfg(test)]
+mod us_virtual_ddraw_tests {
+    use super::*;
+    #[test]
+    fn us_virtual_proxy_is_not_an_implicit_default(){
+        // An exact US edition + Wine/Proton runtime is mandatory before
+        // setting the child flag; normal launches set it to "0".
+        for (edition,native,enabled) in [
+            ("US",false,true),("US",true,false),
+            ("FR",false,false),("FR",true,false),
+        ]{
+            assert_eq!(edition=="US"&&!native,enabled);
+        }
+    }
+}
 #[cfg(test)]
 mod experimental_launch_tests {
     use super::*;
