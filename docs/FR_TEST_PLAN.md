@@ -60,6 +60,12 @@ rather than only the video window changing size.
      interception must remain disabled** (the previous native COM hook crashed).
    - `GAMEFRAME_FIRST_GL_HANDOFF`, `GAME_EXIT exit code: 0` and
      `SESSION END success`: confirm the already-working transition and exit.
+   - `FR_DISPLAY_MODE_SNAPSHOT stage=after_game_exit`: compare the native
+     mode's **color depth** against `before_game_spawn`. Alt+Tab has been
+     observed restoring 1920×1200 while leaving 16 bpp active, versus the
+     32 bpp registry setting; only a post-exit reading can show whether the
+     mismatch survives game shutdown. Do not forcibly restore modes from
+     the diagnostic itself.
 
 These read-only measurements do **not** prevent the original game's
 resolution request. They narrow down when the mode changes so that a later
