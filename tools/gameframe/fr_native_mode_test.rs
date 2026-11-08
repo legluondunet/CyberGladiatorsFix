@@ -91,6 +91,9 @@ unsafe fn cyber_replace_process_bytes(address: usize, expected: &[u8],
 
 fn cyber_fr_native_mode_test_apply() {
     let Some((w,h,depth))=cyber_native_mode_requested() else{return;};
+    static ATTEMPTED:std::sync::atomic::AtomicBool=
+        std::sync::atomic::AtomicBool::new(false);
+    if ATTEMPTED.swap(true,std::sync::atomic::Ordering::AcqRel){return;}
     // The verified 32-bit retail game is intentionally not ASLR relocated.
     let base=unsafe{crate::win32::GetModuleHandleA(std::ptr::null())} as usize;
     if base != 0x0040_0000 {
@@ -107,7 +110,6 @@ fn cyber_fr_native_mode_test_apply() {
     }
     let (wrapper,direct)=cyber_native_mode_arguments(w,h,depth);
     let replacements: [&[u8];3]=[&wrapper,&wrapper,&direct];
-    let mut applied=0usize;
     for (index, &(address,original)) in CYBER_MODE_SITES.iter().enumerate() {
         if !unsafe{cyber_replace_process_bytes(address,original,replacements[index])}{
             // Include the failing site: its bytes may already have been
@@ -122,7 +124,6 @@ fn cyber_fr_native_mode_test_apply() {
             log!("CYBER_FR_NATIVE_MODE_TEST status=refused stage=patch_failed index={index} rollback_attempted=1");
             return;
         }
-        applied+=1;
     }
     log!("CYBER_FR_NATIVE_MODE_TEST status=applied edition=FR runtime=nativeWindows game_ram_only=1 original_mode=640x480x16 requested_mode={w}x{h}x{depth} callsites=0x4050af,0x406a68,0x436411 real_DirectDraw_call_preserved=1 no_vtable_hook=1 original_exe_unchanged=1");
 }
