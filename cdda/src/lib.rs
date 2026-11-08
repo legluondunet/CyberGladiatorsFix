@@ -16,6 +16,20 @@ mod exception_trace;
 mod ddraw_native;
 mod virtual_ddraw;
 
+/// Called by the experimental project-owned C++ DirectDraw v1 adapter.
+/// Diagnostic strings are internal fixed literals/formatting, not input from
+/// the game, and are appended to the existing unified session log.
+#[no_mangle]
+pub unsafe extern "C" fn cyber_virtual_ddraw_trace(message:*const c_char){
+    if message.is_null(){return;}
+    if let Ok(value)=CStr::from_ptr(message).to_str(){
+        super_log_virtual(value);
+    }
+}
+fn super_log_virtual(line:&str){
+    log(&format!("FR_VIRTUAL_DDRAW {line}"));
+}
+
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
 use std::fs::{self,OpenOptions};
