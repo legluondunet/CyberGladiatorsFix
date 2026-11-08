@@ -1,5 +1,8 @@
 # CyberGladiatorsFix — pre-release code audit
 
+> **Status update — 2026-11-08: PR #6 acceptance matrix completed.** The `ee639245` common owned-COM DirectDraw/MCI runtime is automatically selected by verified US and FR editions. **All four combinations were field-tested:** US/Windows 11 (complete ~40s AVI), FR/Windows 11 (fresh `CYBERG.cue` install and successful native game), US/Wine-staging 11.17 on XFCE (keyboard skip without Alt+Tab, fullscreen/Alt+Tab and clean exit), and **FR/Wine-staging 11.17** (fresh `CYBERG.cue` installation, second launch, Espace skip, reversible Alt+Tab during playback, uninterrupted ~39s AVI on another run, FLAC and clean exit). The original US single-BIN `CYBER.cue` with exactly 150 undeclared all-zero audio pregap sectors was also accepted without changing source media. Prior CI [#42505502686](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42505502686) passed on `ee639245`. **The remaining sections below document the historical 2026-11-06 baseline; statements that Windows gameplay, first CD installation or FR/Wine are untested no longer describe the current branch.** This is still a *pre-release*: public release, tags, reproducible dependencies and cross-hardware claims are separate decisions.
+
+
 Audit date: **2026-11-06**. Baseline: `main` commit `fbe8fb9f5f8d0cc39f2d8bfed2c2d79a6161e35e`, produced by merged PRs #1, #2 and #3. All proposed changes belong to `audit/pre-release-cleanup` until independently reviewed and integrated.
 
 ## What has been verified

@@ -71,7 +71,7 @@ fn after_in(state:&mut MovieState,command:&str,code:u32,reply:&str)->Option<Stri
 // A fullscreen host is used only when the launcher verified the game,
 // SkipIntro=0 and the in-process WinMM/CDDA bridge.
 use std::ffi::{c_void,CString};
-use std::sync::atomic::{AtomicBool,AtomicU32,Ordering};
+use std::sync::atomic::{AtomicBool,AtomicU32,AtomicUsize,Ordering};
 
 const EXPECTED_GAME_BASE:usize=0x0040_0000;
 // Per-retail-edition addresses validated from the original PE32 code.
@@ -91,6 +91,7 @@ fn game_class_proc_rva()->usize{
 const GCL_WNDPROC:i32=-24;
 const GWL_WNDPROC:i32=-4;
 const GWL_STYLE:i32=-16;
+const GWL_EXSTYLE:i32=-20;
 const SWP_NOZORDER:u32=0x0004;
 const FROM_ADDRESS:u32=0x0000_0004;
 const UNCHANGED_REFCOUNT:u32=0x0000_0002;
@@ -122,6 +123,8 @@ static GAMEFRAME_FIRST_GL_ARMED:AtomicBool=AtomicBool::new(false);
 static GAMEFRAME_HANDOFF_START:OnceLock<Mutex<Option<Instant>>>=OnceLock::new();
 const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
+const SW_SHOWNOACTIVATE:i32=4;
+const SW_MINIMIZE:i32=6;
 const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
 // One deterministic 1-second hold runs in the MCI close call *before* the
 // verified game can return to nGlide / resume its 3D display.
@@ -191,6 +194,8 @@ unsafe extern "C" {
 }
 static KEY_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 static KEY_FILTER_ALLOWED:AtomicU32=AtomicU32::new(0);
+static KEY_FILTER_LAST_ALLOWED_DOWN:AtomicU32=AtomicU32::new(0);
+static KEY_FILTER_LAST_ALLOWED_FG:AtomicUsize=AtomicUsize::new(0);
 static MOUSE_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 #[derive(Default)]
 struct Timing {
@@ -303,6 +308,7 @@ extern "system" {
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
     fn SetWindowLongA(hwnd:*mut c_void,index:i32,value:i32)->i32;
     fn GetForegroundWindow()->*mut c_void;
+    fn SetForegroundWindow(hwnd:*mut c_void)->i32;
     fn GetSystemMetrics(index:i32)->i32;
     fn EnumDisplaySettingsW(device:*const u16,mode:i32,out:*mut DevModeW)->i32;
     fn IsIconic(hwnd:*mut c_void)->i32;
@@ -326,7 +332,12 @@ struct NativeHost {
     surface:usize,
     first_frame_cover:usize, // smooth test only; opaque sibling above video
     first_frame_cover_started:Option<Instant>,
-    native_fr_last_active:Option<bool>,
+    video_last_active:Option<bool>,
+    game_switcher_original_exstyle:Option<u32>, // temporarily hide only the black game entry on native Windows
+    wine_game_minimized_for_avi:bool,
+    wine_initial_focus_attempted:bool,
+    wine_minimize_attempts:u8,
+    wine_minimize_last:Option<Instant>,
     game:usize,
     owner_thread:u32,
     video_width:i32,
@@ -416,16 +427,42 @@ unsafe extern "system" fn black_host_proc(
 }
 // Unlike the separate black popup and first-frame curtain, a window
 // supplied by the application via MCI_WINDOW is responsible for WM_PAINT.
-// The previous experimental path reused black_host_proc for the actual AVI
-// destination, overwriting MCI's frames in WM_PAINT. Windows documents that
-// the application-owned video HWND must repaint invalid regions. Keep a
-// dedicated WndProc only for verified Windows-FR DirectDraw virtualization;
-// preserve the known-good original host/cover paths for US and Wine.
-fn virtual_mci_surface_enabled()->bool{
-    smooth_enabled()
-        && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
-        && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
+// Reusing black_host_proc on the MCI surface caused video stalls on Windows
+// FR; its dedicated WndProc, 50 ms timer and *BeginPaint* MCI update were
+// field-validated there. Both explicit US virtual-DirectDraw A/B profiles
+// (Wine and native Windows) use THIS EXACT SAME implementation; normal
+// launch paths remain unchanged.
+// One video renderer and repaint strategy for both verified US/FR retail
+// editions on Windows and Wine. Only the compositor focus adapter differs.
+fn virtual_mci_profile(requested:bool,verified_edition:bool)->bool{
+    requested&&verified_edition
+}
+fn owned_virtual_ddraw_requested()->bool{
+    std::env::var("CYBER_VIRTUAL_DDRAW").as_deref()==Ok("1")
+}
+fn wine_virtual_mci_profile()->bool{
+    matches!(std::env::var("CYBER_GAME_EDITION").as_deref(),Ok("US"|"FR"))
+        && owned_virtual_ddraw_requested()
+        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1")
+}
+fn us_native_virtual_mci_profile()->bool{
+    std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
+        && owned_virtual_ddraw_requested()
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
+}
+fn virtual_mci_log_prefix()->&'static str{
+    match (std::env::var("CYBER_GAME_EDITION").as_deref(),
+           std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()){
+        (Ok("US"),Ok("1"))=>"US_NATIVE_VIRTUAL_VIDEO",
+        (Ok("US"),_)=>"US_WINE_VIRTUAL_VIDEO",
+        (Ok("FR"),Ok("1"))=>"FR_VIRTUAL_VIDEO",
+        (Ok("FR"),_)=>"FR_WINE_VIRTUAL_VIDEO",
+        _=>"VIRTUAL_VIDEO",
+    }
+}
+fn virtual_mci_surface_enabled()->bool{
+    let verified=matches!(std::env::var("CYBER_GAME_EDITION").as_deref(),Ok("US"|"FR"));
+    smooth_enabled() && virtual_mci_profile(owned_virtual_ddraw_requested(),verified)
 }
 unsafe extern "system" fn virtual_video_surface_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
@@ -438,7 +475,7 @@ unsafe extern "system" fn virtual_video_surface_proc(
                 let queued=InvalidateRect(hwnd,std::ptr::null(),0);
                 if tick==1 || tick%300==0{
                     video_log(&format!(
-                        "FR_VIRTUAL_VIDEO_TIMER ticks={tick} invalidate={queued}                          interval_ms={VIRTUAL_MCI_TIMER_MS} repaint_target=video_surface_only"
+                        "{} ticks={tick} invalidate={queued} interval_ms={VIRTUAL_MCI_TIMER_MS} repaint_target=video_surface_only",virtual_mci_log_prefix().to_owned()+"_TIMER"
                     ));
                 }
             }
@@ -461,7 +498,7 @@ unsafe extern "system" fn virtual_video_surface_proc(
                             .fetch_add(1,Ordering::Relaxed)+1;
                         if count<=3 || count%300==0 || code!=Some(0){
                             video_log(&format!(
-                                "FR_VIRTUAL_VIDEO_PAINT calls={count}                                  mci_update_result={code:?} owner_thread=1                                  beginpaint_hdc_valid=1 black_fill=0"
+                                "{} calls={count} mci_update_result={code:?} owner_thread=1 beginpaint_hdc_valid=1 black_fill=0",virtual_mci_log_prefix().to_owned()+"_PAINT"
                             ));
                         }
                         VIRTUAL_MCI_SURFACE_IN_PAINT.store(false,Ordering::Release);
@@ -492,10 +529,10 @@ unsafe fn register_virtual_video_class(instance:*mut c_void)->bool{
         };
         let atom=RegisterClassA(&class);
         if atom==0{
-            video_log(&format!("FR_VIRTUAL_VIDEO_CLASS_FAILED win32={}",GetLastError()));
+            video_log(&format!("{}_CLASS_FAILED win32={}",virtual_mci_log_prefix(),GetLastError()));
             false
         }else{
-            video_log("FR_VIRTUAL_VIDEO_CLASS registered=1 mci_destination_paints=video_frames                 parent_and_cover=black windowed=1 nonexclusive=1");
+            video_log(&format!("{}_CLASS registered=1 mci_destination_paints=video_frames parent_and_cover=black windowed=1 nonexclusive=1",virtual_mci_log_prefix()));
             true
         }
     })
@@ -510,7 +547,8 @@ unsafe fn stop_virtual_mci_video_surface(reason:&str){
         }else{0}
     }else{0};
     video_log(&format!(
-        "FR_VIRTUAL_VIDEO_STOP reason={reason} timer_stopped={timer_stopped}          paint_calls={} timer_ticks={} physical_display_mode_unchanged=1",
+        "{}_STOP reason={reason} timer_stopped={timer_stopped} paint_calls={} timer_ticks={} physical_display_mode_unchanged=1",
+        virtual_mci_log_prefix(),
         VIRTUAL_MCI_SURFACE_PAINT_COUNT.load(Ordering::Relaxed),
         VIRTUAL_MCI_SURFACE_TIMER_COUNT.load(Ordering::Relaxed)
     ));
@@ -550,6 +588,14 @@ unsafe extern "system" fn movie_keyboard_filter(
     if code>=0 && KEY_FILTER_ACTIVE.load(Ordering::Relaxed){
         if allowed_movie_skip_key(key){
             KEY_FILTER_ALLOWED.fetch_add(1,Ordering::Relaxed);
+            // Capture the last allowed key-down without doing I/O inside
+            // the keyboard hook. No new input is synthesized.
+            if (flags as usize & 0x8000_0000)==0 {
+                KEY_FILTER_LAST_ALLOWED_DOWN.store(key as u32,Ordering::Relaxed);
+                KEY_FILTER_LAST_ALLOWED_FG.store(
+                    GetForegroundWindow() as usize,Ordering::Relaxed
+                );
+            }
         }else{
             KEY_FILTER_BLOCKED.fetch_add(1,Ordering::Relaxed);
             return 1;
@@ -590,6 +636,8 @@ fn enable_movie_keys(){
         if host.keyboard_hook!=0{return;}
         KEY_FILTER_BLOCKED.store(0,Ordering::Relaxed);
         KEY_FILTER_ALLOWED.store(0,Ordering::Relaxed);
+        KEY_FILTER_LAST_ALLOWED_DOWN.store(0,Ordering::Relaxed);
+        KEY_FILTER_LAST_ALLOWED_FG.store(0,Ordering::Relaxed);
         MOUSE_FILTER_BLOCKED.store(0,Ordering::Relaxed);
         let hook=SetWindowsHookExA(WH_KEYBOARD,Some(movie_keyboard_filter),
             std::ptr::null_mut(),host.owner_thread);
@@ -662,6 +710,65 @@ fn destination_command(text:&str)->bool {
 fn host_exstyle(smooth:bool)->u32 {
     WS_EX_NOACTIVATE|WS_EX_TOPMOST|
         if smooth{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
+}
+// With the independently managed AVI host in the Windows task switcher,
+// exposing the underlying black GameFrame/Glide HWND produces two Alt+Tab
+// thumbnails. Temporarily mark ONLY that original game HWND as a tool window
+// while native Windows plays the owned-COM/MCI AVI. Keep the AVI host as the
+// one normal application entry so returning to the video still works.
+// Wine keeps its separately validated focus/unmap/minimize policy unchanged.
+fn hide_game_switcher_entry(virtual_video:bool,native_focus:bool)->bool{
+    virtual_video && native_focus
+}
+fn game_avi_toolwindow_exstyle(previous:u32)->u32{
+    (previous & !WS_EX_APPWINDOW)|WS_EX_TOOLWINDOW
+}
+unsafe fn apply_native_avi_switcher_policy(game:*mut c_void,enabled:bool)->Option<u32>{
+    if !enabled{return None;}
+    if IsWindow(game)==0{
+        video_log("AVI_SWITCHER game_window_invalid=1 action=skip");
+        return None;
+    }
+    let previous=GetWindowLongA(game,GWL_EXSTYLE) as u32;
+    let temporary=game_avi_toolwindow_exstyle(previous);
+    if previous==temporary {
+        video_log(&format!("AVI_SWITCHER game_already_toolwindow=1 original_exstyle={previous:#010x} action=unchanged"));
+        return None;
+    }
+    let _=SetWindowLongA(game,GWL_EXSTYLE,temporary as i32);
+    let framed=SetWindowPos(game,std::ptr::null_mut(),0,0,0,0,
+        SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+    let readback=GetWindowLongA(game,GWL_EXSTYLE) as u32;
+    if framed==0 || readback!=temporary {
+        // Do not leave the game stuck as a tool window when setup fails.
+        let _=SetWindowLongA(game,GWL_EXSTYLE,previous as i32);
+        let _=SetWindowPos(game,std::ptr::null_mut(),0,0,0,0,
+            SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+        video_log(&format!(
+            "AVI_SWITCHER game_hide_failed=1 original_exstyle={previous:#010x} requested_exstyle={temporary:#010x} observed_exstyle={readback:#010x} framed={framed} rollback=attempted"
+        ));
+        return None;
+    }
+    video_log(&format!(
+        "AVI_SWITCHER native_video=1 visible_alt_tab_entries_target=1 game_hidden_from_switcher=1 avi_host_kept=1 original_exstyle={previous:#010x} temporary_exstyle={temporary:#010x} framed={framed} no_minimize=1 no_activation=1"
+    ));
+    Some(previous)
+}
+unsafe fn restore_native_avi_switcher_policy(h:&NativeHost){
+    let Some(original)=h.game_switcher_original_exstyle else{return;};
+    let game=h.game as *mut c_void;
+    if IsWindow(game)==0{
+        video_log("AVI_SWITCHER restore_skipped=1 reason=game_window_destroyed");
+        return;
+    }
+    let _=SetWindowLongA(game,GWL_EXSTYLE,original as i32);
+    let framed=SetWindowPos(game,std::ptr::null_mut(),0,0,0,0,
+        SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+    let readback=GetWindowLongA(game,GWL_EXSTYLE) as u32;
+    video_log(&format!(
+        "AVI_SWITCHER game_restored_to_alt_tab={} original_exstyle={original:#010x} observed_exstyle={readback:#010x} framed={framed} game_hwnd_preserved=1",
+        u8::from(framed!=0 && readback==original)
+    ));
 }
 fn video_surface_style(smooth:bool)->u32 {
     // The ordinary validated launch retains STATIC/SS_BLACKRECT. The opt-in
@@ -742,7 +849,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     let smooth=smooth_enabled();
     let virtual_video=smooth&&virtual_mci_surface_enabled();
     if virtual_video && !register_virtual_video_class(base as *mut c_void){
-        video_log("FR_VIRTUAL_VIDEO_SETUP_FAILED reason=class_registration");
+        video_log(&format!("{}_SETUP_FAILED reason=class_registration",virtual_mci_log_prefix()));
         return None;
     }
     // The smooth experiment requests an independent managed NORMAL fullscreen
@@ -816,6 +923,12 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
             info.monitor.left,info.monitor.top,screen_w,screen_h
         ));
     }
+    // Apply only after all host/child creations have succeeded. Restore the
+    // exact original game extended style when the AVI host is destroyed.
+    let native_focus=std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
+    let game_switcher_original_exstyle=apply_native_avi_switcher_policy(
+        hwnd,hide_game_switcher_entry(virtual_video,native_focus)
+    );
     // Force a fresh black paint before Wine's MCI window becomes visible.
     let _=InvalidateRect(host,std::ptr::null(),1);
     let _=UpdateWindow(host);
@@ -825,7 +938,10 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         info.monitor.left,info.monitor.top,screen_w,screen_h,u8::from(smooth)));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,
-        first_frame_cover,first_frame_cover_started:None,native_fr_last_active:None,
+        first_frame_cover,first_frame_cover_started:None,video_last_active:None,
+        game_switcher_original_exstyle,
+        wine_game_minimized_for_avi:false,wine_initial_focus_attempted:false,
+        wine_minimize_attempts:0,wine_minimize_last:None,
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,
         keyboard_hook:0,mouse_hook:0,
@@ -844,9 +960,11 @@ unsafe fn stop_movie_input(h:&mut NativeHost){
     if h.keyboard_hook!=0{
         let unhooked=UnhookWindowsHookEx(h.keyboard_hook as *mut c_void);
         video_log(&format!(
-            "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={}",
+            "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={} last_allowed_keydown={:#x} last_allowed_foreground={:#x}",
             KEY_FILTER_ALLOWED.load(Ordering::Relaxed),
-            KEY_FILTER_BLOCKED.load(Ordering::Relaxed)
+            KEY_FILTER_BLOCKED.load(Ordering::Relaxed),
+            KEY_FILTER_LAST_ALLOWED_DOWN.load(Ordering::Relaxed),
+            KEY_FILTER_LAST_ALLOWED_FG.load(Ordering::Relaxed)
         ));
         h.keyboard_hook=0;
     }
@@ -1138,6 +1256,10 @@ fn close_host(reason:&str){
                 ));
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
+            // Only the owned-MCI host was the Alt+Tab entry during the AVI.
+            // Re-enable the game's original task-switcher style as GameFrame
+            // becomes the sole visible top-level window after first GL Swap.
+            restore_native_avi_switcher_policy(&h);
             video_log(&format!("HOST_CLOSED reason={reason} destroy_result={destroyed}"));
             timing("HOST_DESTROYED");
         }
@@ -1158,12 +1280,13 @@ fn should_pump_virtual_avi(status_ok:bool,is_status:bool,virtual_fr:bool,keys_ac
 /// a second window loop. The C++ adapter preserves WM_QUIT and guards
 /// against nested pumps, without editing the real display mode.
 pub fn pump_virtual_avi_messages(command:&str,result:u32){
-    let virtual_fr=std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
-        &&std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
-        &&gameframe_first_present_handoff();
+    // Same bounded native Win32 message dispatch as field-validated Windows
+    // FR, now also when the US/Wine COM-owned DirectDraw experiment selects
+    // its exact same custom MCI video-surface implementation.
+    let virtual_mci=virtual_mci_surface_enabled()&&gameframe_first_present_handoff();
     if !should_pump_virtual_avi(
         result==0,command.trim().eq_ignore_ascii_case("status movie mode"),
-        virtual_fr,KEY_FILTER_ACTIVE.load(Ordering::Acquire)
+        virtual_mci,KEY_FILTER_ACTIVE.load(Ordering::Acquire)
     ){return;}
     let owner={
         let guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
@@ -1175,8 +1298,8 @@ pub fn pump_virtual_avi_messages(command:&str,result:u32){
     VIRTUAL_AVI_PUMP_MESSAGES.fetch_add(count,Ordering::Relaxed);
     if polls==1 || polls%400==0 {
         video_log(&format!(
-            "FR_VIRTUAL_AVI_MESSAGE_PUMP polls={polls} dispatched_total={} last_batch={count}             max_per_status=16 normal_mode=disabled win32_msg_queue_serviced=1",
-            VIRTUAL_AVI_PUMP_MESSAGES.load(Ordering::Relaxed)
+            "{}_MESSAGE_PUMP polls={polls} dispatched_total={} last_batch={count} max_per_status=16 normal_mode=disabled win32_msg_queue_serviced=1",
+            virtual_mci_log_prefix(),VIRTUAL_AVI_PUMP_MESSAGES.load(Ordering::Relaxed)
         ));
     }
 }
@@ -1203,7 +1326,7 @@ fn mci_refresh_is_due(now:Instant,last:&mut Option<Instant>,interval:Duration)->
 pub fn virtual_fr_movie_repaint_target(command:&str,code:u32,reply:&str)->Option<usize>{
     if code!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
         || !reply.trim().eq_ignore_ascii_case("playing")
-        || std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        || !owned_virtual_ddraw_requested()
         || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
         || !gameframe_first_present_handoff()
         || !KEY_FILTER_ACTIVE.load(Ordering::Acquire){
@@ -1288,8 +1411,23 @@ fn should_arm_curtain(smooth:bool,mci_close_result:u32)->bool{
 // it does NOT prove that it is visibly above the game during those seconds.
 // Reassert a *temporary* topmost position while the curtain is active.
 // No SetForegroundWindow, focus stealing, D3D9 hook or WndProc subclassing.
+// The optional US/Wine background-minimize experiment must not remap the
+// black transition curtain over another Linux window if the AVI finishes
+// during Alt+Tab; native Windows FR behavior remains unchanged.
+fn should_promote_curtain_for_focus(wine_virtual:bool,game_active:bool)->bool{
+    !wine_virtual||game_active
+}
 unsafe fn promote_curtain(h:&mut NativeHost)->i32 {
     if IsWindow(h.host as *mut c_void)==0{return 0;}
+    if wine_virtual_mci_profile(){
+        let foreground=GetForegroundWindow();
+        let active=foreground==h.game as *mut c_void
+            || foreground==h.host as *mut c_void;
+        if !should_promote_curtain_for_focus(true,active){
+            video_log("WINE_CURTAIN_BACKGROUND skipped_raise=1 foreground_external=1 host_remains_hidden=1");
+            return 0;
+        }
+    }
     let promoted=SetWindowPos(h.host as *mut c_void,(-1isize) as *mut c_void,
         0,0,0,0,
         SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);
@@ -1709,8 +1847,8 @@ fn reveal_playing_video() {
             let timer=SetTimer(h.surface as *mut c_void,VIRTUAL_MCI_TIMER_ID,
                 VIRTUAL_MCI_TIMER_MS,std::ptr::null());
             video_log(&format!(
-                "FR_VIRTUAL_VIDEO_RENDER paint_class=separate                  parent_black=1 surface_black_during_play=0                  mci_update_in_wm_paint=1 timer_id={VIRTUAL_MCI_TIMER_ID}                  timer_ms={VIRTUAL_MCI_TIMER_MS} timer_armed={}                  no_desktop_mode_switch=1",
-                u8::from(timer!=0)
+                "{}_RENDER paint_class=separate parent_black=1 surface_black_during_play=0 mci_update_in_wm_paint=1 timer_id={VIRTUAL_MCI_TIMER_ID} timer_ms={VIRTUAL_MCI_TIMER_MS} timer_armed={} no_desktop_mode_switch=1",
+                virtual_mci_log_prefix(),u8::from(timer!=0)
             ));
         }
         video_log(&format!(
@@ -1800,21 +1938,63 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
     None
 }
 
-/// Native Windows FR switches the desktop out of the game's 640x480 mode
-/// during Alt+Tab. The initial host was correctly sized to 640x480, but
-/// without adapting it and the MCI destination on mode restoration the
-/// movie remains a small window. Run only after the ORIGINAL MCI status
-/// request has returned on the owner's thread; never hook DirectDraw or
-/// change the display mode ourselves.
-/// Returns a native MCI destination command to forward through the real
-/// system WinMM export, without recursively entering our own interceptor.
-pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
+/// The no-activate, always-on-top MCI AVI host must leave the foreground
+/// when the player Alt+Tabs away. Native Windows FR already uses the focus
+/// transition below, additionally resizing the destination after any actual
+/// desktop mode restoration. US + Wine's *owned* DirectDraw A/B mode needs
+/// ONLY that focus/z-order repair: the desktop and MCI dimensions stay stable
+/// and changing its already-working MCI rendering/resize is undesirable.
+///
+/// Called after the original "status movie mode" on the game's UI thread;
+/// neither route activates/minimizes windows or changes a display mode.
+/// Only native FR may return an updated native MCI destination string.
+fn experimental_movie_focus_profiles(native_fr:bool,wine_virtual:bool)->bool{
+    native_fr||wine_virtual
+}
+// The managed Wine/EWMH fullscreen popup can remain above the active Linux
+// application even after SetWindowPos(HWND_NOTOPMOST/HWND_BOTTOM) succeeds.
+// Unmapping the *temporary AVI host only* is definitive, and leaves the
+// real game's Win32 input window accessible in the normal Alt+Tab list.
+// The video device keeps playing; the native-MCI WM_PAINT surface redraws
+// the current frame immediately when the host is remapped on focus return.
+fn should_transfer_initial_avi_keyboard_focus(
+    wine_virtual:bool,first_status:bool,already_attempted:bool,
+    foreground_is_video_host:bool,same_game_ui_thread:bool
+)->bool{
+    wine_virtual && first_status && !already_attempted
+        && foreground_is_video_host && same_game_ui_thread
+}
+fn expected_virtual_avi_host_visibility(wine_virtual:bool,active:bool)->Option<bool>{
+    wine_virtual.then_some(active)
+}
+// The separate EWMH fullscreen AVI host is not the only possible visible
+// surface. The game HWND can continue showing an opaque black frame behind
+// it while Glide is in passthrough mode. A managed X11/Wayland window may
+// ignore Win32 HWND_BOTTOM, so an explicit, reversible *minimization* of the
+// original game window is tested when the player switches away during MCI.
+// Retain this as a distinct A/B policy: native FR and normal US/Wine must
+// never minimize the game through this path.
+fn should_minimize_wine_game(
+    wine_virtual:bool,active:bool,iconic:bool,
+    attempts:u8,elapsed:Option<Duration>
+)->bool{
+    // Some Wine window managers reject or immediately undo minimization.
+    // A bounded, throttled experiment must not issue 100 ShowWindow calls
+    // per second while the game busy-polls MCI status.
+    wine_virtual && !active && !iconic && attempts<3
+        && elapsed.is_none_or(|d|d>=Duration::from_millis(500))
+}
+pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString>{
     if result!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
-        || !gameframe_first_present_handoff()
-        || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
-        || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1"){
-        return None;
-    }
+        || !gameframe_first_present_handoff(){return None;}
+    let native_fr=std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
+        &&std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
+    // Native US reuses the Windows FR focus and geometry pathway.
+    // Wine US alone applies extra fullscreen unmap/minimize adaptations.
+    let us_native_virtual=us_native_virtual_mci_profile();
+    let native_focus=native_fr || us_native_virtual;
+    let wine_virtual=wine_virtual_mci_profile();
+    if !experimental_movie_focus_profiles(native_focus,wine_virtual){return None;}
     // Snapshot under the mutex and release it BEFORE synchronous Win32
     // SetWindowPos: native window messages can reenter the WinMM bridge.
     let h=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
@@ -1824,20 +2004,70 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
             || IsWindow(h.surface as *mut c_void)==0 {
             return None;
         }
-        // The host is a NOACTIVATE topmost window, while the actual
-        // foreground belongs to the original game. On focus loss, lower
-        // BOTH windows so neither covers the selected application. Do not
-        // activate or minimize either window.
+        // The host may be foreground on Xfwm despite WS_EX_NOACTIVATE.
+        // Give initial keyboard ownership back to the verified original game,
+        // only if OUR temporary video host is itself currently foreground.
+        // One attempt per movie; never steal focus after user Alt+Tab.
+        let foreground_before=GetForegroundWindow();
+        if wine_virtual && h.video_last_active.is_none()
+            && !h.wine_initial_focus_attempted {
+            let host_is_foreground=foreground_before==h.host as *mut c_void;
+            let game=h.game as *mut c_void;
+            let mut game_pid=0;
+            let game_tid=GetWindowThreadProcessId(game,&mut game_pid);
+            let same_ui_thread=game_tid==h.owner_thread && game_pid==GetCurrentProcessId();
+            let attempted=should_transfer_initial_avi_keyboard_focus(
+                wine_virtual,h.video_last_active.is_none(),
+                h.wine_initial_focus_attempted,host_is_foreground,
+                same_ui_thread && IsWindow(game)!=0
+            );
+            let (result,foreground_after)=if attempted{
+                let result=SetForegroundWindow(game);
+                (result,GetForegroundWindow())
+            }else{(0,foreground_before)};
+            video_log(&format!(
+                "WINE_AVI_INITIAL_INPUT_FOCUS attempted={} result={} before={:#x} after={:#x} target_game={:#x} same_ui_thread={} external_focus_untouched=1 once=1",
+                u8::from(attempted),result,foreground_before as usize,
+                foreground_after as usize,h.game,u8::from(same_ui_thread)
+            ));
+            if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
+                if current.host==h.host{current.wine_initial_focus_attempted=true;}
+            }
+        }
         let foreground=GetForegroundWindow();
         let active=foreground==h.game as *mut c_void
             || foreground==h.host as *mut c_void;
-        if h.native_fr_last_active!=Some(active){
+        let host=h.host as *mut c_void;
+        let game=h.game as *mut c_void;
+        let expected_visibility=expected_virtual_avi_host_visibility(wine_virtual,active);
+        // If Wine silently remaps the popup or the underlying game window,
+        // correct it on the next MCI poll without modifying the MCI clock.
+        let visibility_wrong=expected_visibility
+            .is_some_and(|wanted|(IsWindowVisible(host)!=0)!=wanted);
+        let game_is_iconic=IsIconic(game)!=0;
+        let game_background_wrong=should_minimize_wine_game(
+            wine_virtual,active,game_is_iconic,
+            h.wine_minimize_attempts,
+            h.wine_minimize_last.map(|at|at.elapsed())
+        );
+        if h.video_last_active!=Some(active)||visibility_wrong||game_background_wrong{
             const NO_MOVE_SIZE_ACTIVATE:u32=SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE;
-            let host=h.host as *mut c_void;
-            let game=h.game as *mut c_void;
+            let previous_visible=IsWindowVisible(host)!=0;
             let (host_result,game_result)=if active{
+                // Remap the same host and video-surface HWNDs; no new
+                // renderer, no alternative decoder and no focus stealing.
+                if wine_virtual {
+                    // The Linux window manager normally remaps the game
+                    // when its task-switcher entry is selected. A guarded
+                    // restore below handles the case where it does not.
+                    if h.wine_game_minimized_for_avi && IsIconic(game)!=0{
+                        let _=ShowWindow(game,SW_SHOWNOACTIVATE);
+                    }
+                    let _=ShowWindow(host,SW_SHOWNOACTIVATE);
+                }
                 (SetWindowPos(host,(-1isize) as *mut c_void,
-                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE),-1)
+                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE|
+                    if wine_virtual{SWP_SHOWWINDOW}else{0}),-1)
             }else{
                 let _=SetWindowPos(host,(-2isize) as *mut c_void,
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
@@ -1847,17 +2077,76 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
                 let game_result=SetWindowPos(game,1usize as *mut c_void,
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
+                if wine_virtual {
+                    // The original game HWND remains the task-switcher
+                    // return target: minimize, do not hide or destroy it.
+                    // This also removes the black passthrough GL window
+                    // behind the already-hidden MCI host from the screen.
+                    let _=ShowWindow(host,SW_HIDE);
+                    if game_background_wrong{
+                        let _=ShowWindow(game,SW_MINIMIZE);
+                    }
+                }
                 (host_result,game_result)
             };
+            let now_visible=IsWindowVisible(host)!=0;
+            let game_iconic_after=IsIconic(game)!=0;
             video_log(&format!(
-                "FR_NATIVE_VIDEO_FOCUS active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1",
+                "{} active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1 no_minimize=1 topmost_when_active=1",
+                if wine_virtual{"WINE_VIDEO_FOCUS"}
+                else if us_native_virtual{"US_NATIVE_VIDEO_FOCUS"}
+                else{"FR_NATIVE_VIDEO_FOCUS"},
                 u8::from(active),foreground as usize,host_result,game_result
             ));
-            trace_fr_mode("movie_focus_transition");
+            if wine_virtual{
+                video_log(&format!(
+                    "WINE_AVI_HOST_VISIBILITY foreground_game={} visible_before={} visible_after={} expected_visible={} operation={} EWMH_fullscreen_unmap=1 game_window_kept_for_alt_tab=1 MCI_remains_open=1",
+                    u8::from(active),u8::from(previous_visible),u8::from(now_visible),
+                    u8::from(active),if active{"remap"}else{"unmap"}
+                ));
+                video_log(&format!(
+                    "WINE_AVI_GAME_WINDOW active={} iconic_before={} iconic_after={} requested={} restore_on_focus=1 game_hidden=0 game_destroyed=0 native_windows_unchanged=1",
+                    u8::from(active),u8::from(game_is_iconic),u8::from(game_iconic_after),
+                    if active{"restore_if_owned"}else{"minimize_if_visible"}
+                ));
+                if active && now_visible{
+                    // Trigger the FR-derived native MCI WM_PAINT redraw
+                    // after reappearing; preserves the current movie time.
+                    let surface=h.surface as *mut c_void;
+                    let _=InvalidateRect(surface,std::ptr::null(),0);
+                    let _=UpdateWindow(surface);
+                }
+            }
+            if native_fr{trace_fr_mode("movie_focus_transition");}
+            let accepted=if let Some(wanted)=expected_visibility{
+                host_result!=0 && (active||game_result!=0)
+                    && now_visible==wanted
+            }else{true};
             if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
-                if current.host==h.host {current.native_fr_last_active=Some(active);}
+                if current.host==h.host{
+                    if wine_virtual {
+                        if !active && game_background_wrong{
+                            current.wine_minimize_attempts=
+                                current.wine_minimize_attempts.saturating_add(1);
+                            current.wine_minimize_last=Some(Instant::now());
+                        }
+                        if !active && !game_is_iconic && game_iconic_after {
+                            current.wine_game_minimized_for_avi=true;
+                        }else if active{
+                            current.wine_minimize_attempts=0;
+                            current.wine_minimize_last=None;
+                            if !game_iconic_after {
+                                current.wine_game_minimized_for_avi=false;
+                            }
+                        }
+                    }
+                    if accepted{current.video_last_active=Some(active);}
+                }
             }
         }
+        // The Wine path has already captured stable fullscreen
+        // geometry; do not touch its MCI destination, overlay or 3D HWND size.
+        if wine_virtual {return None;}
         let (width,height)=(GetSystemMetrics(0),GetSystemMetrics(1));
         let Some((x,y,w,vh))=fit_4_3(width,height) else{return None;};
         let mut previous=WinRect::default();
@@ -2005,6 +2294,41 @@ mod fullscreen_tests {
             "limit deferral to the proven transition");
     }
     #[test]
+    fn wine_virtual_focus_is_its_own_profile_and_other_paths_remain_unmodified(){
+        assert!(experimental_movie_focus_profiles(true,false));
+        assert!(experimental_movie_focus_profiles(false,true));
+        assert!(!experimental_movie_focus_profiles(false,false));
+        assert!(experimental_movie_focus_profiles(true,true));
+    }
+    #[test]
+    fn us_wine_black_curtain_never_reappears_over_foreground_application(){
+        assert!(!should_promote_curtain_for_focus(true,false));
+        assert!(should_promote_curtain_for_focus(true,true));
+        assert!(should_promote_curtain_for_focus(false,false),
+            "native FR transition must remain identical");
+    }
+    #[test]
+    fn us_wine_minimizes_game_only_while_inactive_for_mci_video(){
+        assert!(should_minimize_wine_game(true,false,false,0,None));
+        assert!(!should_minimize_wine_game(true,false,true,0,None));
+        assert!(!should_minimize_wine_game(true,true,false,0,None));
+        assert!(!should_minimize_wine_game(false,false,false,0,None),
+            "native FR and ordinary US/Wine must never be minimized here");
+        assert!(!should_minimize_wine_game(true,false,false,1,
+            Some(Duration::from_millis(499))),"retry must be throttled");
+        assert!(should_minimize_wine_game(true,false,false,1,
+            Some(Duration::from_millis(500))));
+        assert!(!should_minimize_wine_game(true,false,false,3,
+            Some(Duration::from_secs(5))),"never retry indefinitely");
+    }
+    #[test]
+    fn us_wine_avi_host_is_unmapped_only_when_another_app_has_focus(){
+        assert_eq!(expected_virtual_avi_host_visibility(true,true),Some(true));
+        assert_eq!(expected_virtual_avi_host_visibility(true,false),Some(false));
+        assert_eq!(expected_virtual_avi_host_visibility(false,true),None);
+        assert_eq!(expected_virtual_avi_host_visibility(false,false),None);
+    }
+    #[test]
     fn native_fr_read_only_display_mode_uses_win32_devmode_abi(){
         assert_eq!(std::mem::size_of::<DevModeW>(),220);
     }
@@ -2106,6 +2430,23 @@ mod fullscreen_tests {
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
     }
     #[test]
+    fn native_virtual_video_is_one_alt_tab_entry_and_restores_original_style(){
+        assert!(hide_game_switcher_entry(true,true));
+        assert!(!hide_game_switcher_entry(false,true));
+        assert!(!hide_game_switcher_entry(true,false),
+            "US/Wine must keep its validated independent application windows");
+        for previous in [0,WS_EX_APPWINDOW,WS_EX_TOPMOST|WS_EX_APPWINDOW,
+            WS_EX_NOACTIVATE|WS_EX_APPWINDOW] {
+            let temporary=game_avi_toolwindow_exstyle(previous);
+            assert_ne!(temporary & WS_EX_TOOLWINDOW,0);
+            assert_eq!(temporary & WS_EX_APPWINDOW,0);
+            assert_eq!(temporary & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW),
+                previous & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW));
+        }
+        assert_ne!(host_exstyle(true)&WS_EX_APPWINDOW,0,
+            "video host must remain selectable from native Alt+Tab");
+    }
+    #[test]
     fn handoff_3d_has_readiness_grace_and_bounded_fallback(){
         assert_eq!(decide_handoff(100,None,true),"wait");
         assert_eq!(decide_handoff(600,Some(HANDOFF_STABLE_3D_MS-1),true),"wait");
@@ -2153,6 +2494,15 @@ mod fullscreen_tests {
         assert!(!blocked_movie_mouse_message(WM_PAINT));
     }
     #[test]
+    fn wine_initial_keyboard_focus_transfer_never_steals_from_other_apps(){
+        assert!(should_transfer_initial_avi_keyboard_focus(true,true,false,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(false,true,false,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,false,false,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,true,true,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,true,false,false,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,true,false,true,false));
+    }
+    #[test]
     fn skip_filter_accepts_only_three_virtual_keys(){
         for key in [VK_ESCAPE,VK_RETURN,VK_SPACE]{
             assert!(allowed_movie_skip_key(key));
@@ -2196,6 +2546,16 @@ mod tests {
             &mut last,Duration::from_millis(500)));
         assert!(mci_refresh_is_due(now+Duration::from_millis(1000),
             &mut last,Duration::from_millis(500)));
+    }
+    #[test]
+    fn shared_video_painter_serves_all_authenticated_editions(){
+        assert!(virtual_mci_profile(true,true));
+        assert!(!virtual_mci_profile(true,false));
+        assert!(!virtual_mci_profile(false,true));
+        assert!(!virtual_mci_profile(false,false));
+        assert_eq!(video_surface_class_for(true,true),VIRTUAL_VIDEO_CLASS);
+        assert_eq!(video_surface_class_for(true,false),HOST_CLASS);
+        assert_eq!(video_surface_class_for(false,true),b"STATIC\0");
     }
     #[test]
     fn virtual_avi_message_pump_only_during_successful_status_poll(){

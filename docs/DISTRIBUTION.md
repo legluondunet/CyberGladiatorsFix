@@ -11,8 +11,8 @@ are NOT included. No nGlide, DXVK or standalone video player is shipped.
 
 QUICK START
 -----------
-Place CyberGladiatorsFix.exe beside the CUE/BIN dump of your original,
-supported US retail CD and double-click the EXE. Under Wine/Proton use:
+Place CyberGladiatorsFix.exe beside an authenticated original US or FR
+retail CUE/BIN image and double-click the EXE. Under Wine/Proton use:
 
   wine CyberGladiatorsFix.exe
 
@@ -26,7 +26,11 @@ does not require the CD image again. An absent or ambiguous CD or an
 unverified existing installation triggers a clear error, never a
 silent replacement of the player's files.
 
-Supported retail image: CUE/BIN, including separate CD audio tracks.
+Supported retail images: exact-hash authenticated US and FR CUE/BIN,
+including separate CD audio tracks. A verified two-second (150-sector)
+all-zero pause before the first AUDIO INDEX 01 can be recognized when
+INDEX 00 is omitted in a single raw 2352-byte BIN; source CUE/BIN are
+never altered and strict CD-ROM sector/resource checks remain active.
 Standalone ISO support is a future option, NOT part of this build.
 
 Game installation:
@@ -67,16 +71,14 @@ the desktop resolution and limited to 60 FPS. The original Cinepak AVI
 plays in native Wine/Windows MCI. Its temporary GDI video host stays
 black after AVI close until the FIRST REAL successful GameFrame OpenGL
 SwapBuffers, which releases the host on the original game UI thread.
-A bounded timeout prevents indefinite black. The native-size
-DirectDraw forwarding fix was validated on build #85 (2026-11-06)
-under Wine-staging 11.17 with and without a Wine virtual desktop
-and under Proton reporting Wine 11.0 with uninterrupted full AVI.
-The real IDirectDraw::SetDisplayMode method is called at the
-prelaunch width and height with the game's original 16-bit depth.
-The game continues to render internally at 640x480. The reported
-desktop dimensions did not change; a physical monitor mode/color
-depth transition has not been independently ruled out.
-Native Windows never enables this Wine-only interception.
+A bounded timeout prevents indefinite black. In PR #6 the standard
+launcher automatically enables one owned DirectDraw v1 COM and MCI
+video implementation for authenticated US and FR retail editions on
+both native Windows and Wine/Proton. The original logical 640x480x16
+DirectDraw surfaces do not request a physical display-mode change.
+Only the window-manager-specific Alt+Tab/focus adapter is selected
+automatically. The former Wine native-size DirectDraw forwarding
+experiment remains in diagnostic code, not in normal launch.
 
 VALIDATION BEFORE PUBLIC RELEASE
 --------------------------------
@@ -84,25 +86,31 @@ Start from your own CUE/BIN next to the EXE, not from an installed game.
 Let the full intro AVI play, verify music, input, focus and 4:3 scene;
 then exit normally. Start the EXE a second time without the CD files
 to verify installed-game detection, and check that glide.dll persists.
-Review the ONE CyberGladiatorsFix.log next to the launcher. Native
-Windows 10/11 gameplay remains to be field-tested.
+Review the ONE CyberGladiatorsFix.log next to the launcher. No special
+command, environment variable or INI option is needed for the shared
+DirectDraw/MCI engine. All four US/FR × Windows 11/Wine-staging 11.17 combinations have now
+been field-tested on normal, no-flag launch. FR/Wine was also checked
+against a clean original CYBERG.cue install, repeat launch, video skip,
+Alt+Tab and uninterrupted movie. Other systems are not guaranteed.
 
 Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
   CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
   CyberGladiatorsFix.exe --verify        strict SHA-256 check
+  CyberGladiatorsFix.exe --inspect-disc original.cue   read-only CD inspection
   CyberGladiatorsFix.exe --max-graphics  max game settings
   CyberGladiatorsFix.exe --check-bundle  embedded DLL checks
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
 This is a pre-release testing artifact, NOT a public release.
-The implementation and audit are merged into main (2026-11-06).
-Builds 85 and 90 were validated under Wine-staging and Proton,
-including complete fullscreen introduction on build 85 and normal
-skip/transition on build 90. A new clean CUE/BIN installation,
-native Windows 10/11 gameplay and display-mode/depth behavior still
-require validation before publishing the first release.
+The baseline implementation and audit were merged into main on 2026-11-06.
+PR #6 (not yet merged) selects the common owned-COM DirectDraw/MCI engine
+automatically on normal launch and supports the verified original US CUE
+pregap. The default all-host selection has now been field-validated for both
+retail editions on Windows 11 and Wine-staging 11.17, including FR/Wine
+fresh install, first-key skip and complete movie playback. A public
+release must not claim universal hardware or window-manager compatibility.
 A green CI workflow checks compilation, PE exports and loading,
 but DOES NOT verify actual video or gameplay on a player's machine.
 

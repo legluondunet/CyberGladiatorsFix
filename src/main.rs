@@ -32,7 +32,7 @@ Usage:
   CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
   CyberGladiatorsFix.exe --verify      Strict original retail manifest and patches
-  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only CD fingerprint and FR discovery (no installation)
+  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only US/FR CD fingerprint (no installation)
   CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
   CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
   CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
@@ -41,8 +41,8 @@ Usage:
 
 No launch argument is required. On first use, keep the original .cue
 and its .bin track files next to this EXE. CYBER.EXE and retail data are
-extracted only from a SHA-256-verified supported US CD image. Subsequent
-launches check the installation and start automatically.
+extracted only from an authenticated, SHA-256-verified US or French retail
+CUE/BIN image. Subsequent launches verify the installation and start automatically.
 
 One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
 (Apache-2.0) and the project's CyberGladiatorsFix.dll WinMM/CDDA bridge
@@ -55,8 +55,13 @@ No original game data is distributed. IQ data is never silently changed.
 A fresh, single CyberGladiatorsFix.log appears beside the launcher.
 --verify always applies strict SHA-256 checks. The optional INI setting
 AllowModifiedIQ=1 permits only same-size IQ modifications during launch.
-The FR executable is recognized for read-only disc inspection only;
-FR patching and launching remain disabled until its disc is authenticated.
+Both US and French retail discs are authenticated by exact EXE and resource
+hashes before installing or patching. A single-BIN raw disc with a verified
+150-sector zero pause before the first AUDIO INDEX 01 is accepted even when
+its original CUE omits INDEX 00; the source CUE/BIN are never rewritten.
+The same owned DirectDraw/MCI adapter is selected automatically for US/FR
+under Windows and Wine/Proton. No special launch mode is necessary;
+the French edition under Wine still requires field validation.
 Existing nGlide/developer commands are retained internally for forensic
 regression tests but are not needed for normal use.
 ";
@@ -208,7 +213,7 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
 /// renderer. Legacy nGlide diagnostics are kept separately for developers.
-fn user_gameframe_launch(root:&Path,fr_borderless_test:bool)->Result<(),String>{
+fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
@@ -224,7 +229,7 @@ fn user_gameframe_launch(root:&Path,fr_borderless_test:bool)->Result<(),String>{
     }else{
         None
     };
-    let child=verify::launch_gameframe(root,fr_borderless_test)?;
+    let child=verify::launch_gameframe(root)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
@@ -233,14 +238,11 @@ fn user_gameframe_launch(root:&Path,fr_borderless_test:bool)->Result<(),String>{
     // Stop/join the read-only sampler before the final launcher snapshot.
     // It has no authority to restore or modify the user's desktop mode.
     drop(display_watch);
-    // Native FR's retail game switches Windows to 640x480x16 during its AVI.
-    // Alt+Tab restores geometry but can leave the current mode at 16 bpp.
-    // Observe the mode *after the process exits* before considering any
-    // corrective action. This is a read-only Windows query, not a restore.
-    if diagnostics::is_native_windows()
-        && crate::fr_patch::owns(&game.join("cyber.exe")).unwrap_or(false) {
+    // Read-only after-game audit for both native Windows retail editions;
+    // the common DirectDraw adapter never requests a physical mode change.
+    if diagnostics::is_native_windows(){
         show(&format!(
-            "FR_DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
+            "DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
             diagnostics::prelaunch_display_modes()
         ),root);
     }
@@ -300,7 +302,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         []=>{
             let _lock=autostart::lock(root)?;
             autostart::prepare(root,None)?;
-            return user_gameframe_launch(root,false);
+            return user_gameframe_launch(root);
         },
         [one] if one.to_str()==Some("--install-only")=>{
             let _lock=autostart::lock(root)?;
@@ -315,7 +317,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let _lock=autostart::lock(root)?;
             let source=PathBuf::from(one);
             autostart::prepare(root,Some(&source))?;
-            return user_gameframe_launch(root,false);
+            return user_gameframe_launch(root);
         },
         [one] if one.to_str()==Some("--inspect-disc")=>{
             let cue=install::find_cue(root)?;
@@ -338,18 +340,28 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let r=graphics::maximize_saved(&root.join(install::DIR))?;
             show(&r,root);return Ok(());
         },
-        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
+        [one] if one.to_str()==Some("--launch")=>{
+            // Backward-compatible alias for the exact same one-click path.
+            let _lock=autostart::lock(root)?;
+            autostart::prepare(root,None)?;
+            return user_gameframe_launch(root);
+        },
         [one,two] if one.to_str()==Some("--launch")
             && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root,false),
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--fr-borderless-test")=>
-            return user_gameframe_launch(root,true),
+            return user_gameframe_launch(root),
+        // Historical A/B CLI aliases now launch the exact same common
+        // default path; no per-edition or per-host switch is needed.
+        [one,two] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--us-virtual-ddraw-test")=>
+            return user_gameframe_launch(root),
         // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-first-present-handoff")=>
-            return user_gameframe_launch(root,false),
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
@@ -498,6 +510,7 @@ mod diagnostics_tests {
             assert!(HELP.contains(expected),"{expected}");
         }
         assert!(!HELP.contains("--launch"));
+        assert!(!HELP.contains("--us-virtual-ddraw-test"));
         assert!(!HELP.contains("--avi-in-game-window"));
         assert!(!HELP.contains("--nglide-vulkan"));
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));

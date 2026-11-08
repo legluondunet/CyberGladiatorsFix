@@ -110,6 +110,71 @@ fn cyber_native_fr_alt_tab_zorder(hwnd: HWND) {
     }
 }
 
+/// Wine/XFCE must receive an actual fullscreen window-style/geometry
+/// synchronization, not WS_EX_TOPMOST (_NET_WM_STATE_ABOVE). TOPMOST covers
+/// the XFCE panel on click but also traps Alt+Tab behind the game.
+/// Reassert the original HWND's Win32 POPUP fullscreen contract ONCE after
+/// the independent MCI host is destroyed and the game is foreground.
+/// Wine's X11/Wayland driver then translates the window state to its WM.
+/// Never activate, raise, minimize, or alter the physical display mode.
+/// The ordinary native Windows path is untouched.
+fn cyber_wine_sync_fullscreen_hint(hwnd: HWND) {
+    if std::env::var("CYBER_GAMEFRAME_TEST").as_deref() != Ok("1")
+        || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref() == Ok("1") {
+        return;
+    }
+    use std::sync::atomic::Ordering;
+    static SYNCED_THIS_FOCUS:std::sync::atomic::AtomicBool=
+        std::sync::atomic::AtomicBool::new(false);
+    unsafe {
+        if IsWindowVisible(hwnd)==0 || IsIconic(hwnd)!=0 {
+            SYNCED_THIS_FOCUS.store(false,Ordering::Relaxed);
+            return;
+        }
+        let mut owner_pid=0;
+        let owner_tid=GetWindowThreadProcessId(hwnd,&mut owner_pid);
+        if owner_tid==0 || owner_pid!=GetCurrentProcessId()
+            || owner_tid!=GetCurrentThreadId(){return;}
+        let active=GetForegroundWindow()==hwnd;
+        if !active {
+            SYNCED_THIS_FOCUS.store(false,Ordering::Relaxed);
+            return;
+        }
+        // Only after MCI -> real OpenGL first-present handoff: do not
+        // change the stacking of the video window or early black cover.
+        if !FindWindowA(b"CyberGladiatorsFix_AVI_4x3_Host_v2\\0".as_ptr(),
+            std::ptr::null()).is_null(){return;}
+        if SYNCED_THIS_FOCUS.swap(true,Ordering::Relaxed){return;}
+        let Some(target)=target_monitor(hwnd) else{return};
+        let old_style=GetWindowLongA(hwnd,GWL_STYLE) as u32;
+        let original_exstyle=GetWindowLongA(hwnd,-20) as u32;
+        // WS_MAXIMIZE=0x01000000 asks Xfwm for the WORKAREA (1920x1043),
+        // unlike a full-monitor WS_POPUP. The game sometimes restores
+        // this bit on focus return; clear it only for this Wine game HWND.
+        let new_style=(old_style & !(0x00c4_0000u32|0x0100_0000u32))
+            |0x8000_0000u32|WS_VISIBLE;
+        let mut before=RECT::default();
+        let _=GetWindowRect(hwnd,&mut before);
+        if old_style!=new_style{
+            SetWindowLongA(hwnd,GWL_STYLE,new_style as i32);
+        }
+        // SWP_FRAMECHANGED is deliberate even if geometry already equals
+        // the monitor: request Win32/Wine to re-evaluate fullscreen WM
+        // hints. NOZORDER and NOACTIVATE preserve Alt+Tab switching.
+        let ok=SetWindowPos(hwnd,null_mut(),target.left,target.top,
+            target.right-target.left,target.bottom-target.top,
+            SWP_NOZORDER|0x10|0x20);
+        let mut after=RECT::default();
+        let readback=GetWindowRect(hwnd,&mut after);
+        let exstyle=GetWindowLongA(hwnd,-20) as u32;
+        log!("GAMEFRAME_WINE_FULLSCREEN_HINT requested=1 hwnd={hwnd:?} old_style={old_style:#010x} new_style={new_style:#010x} cleared_maximized={} original_exstyle={original_exstyle:#010x} exstyle={exstyle:#010x} old_rect=({},{},{},{}) target=({},{},{},{}) after=({},{},{},{}) setpos={ok} readback={readback} no_topmost_request=1 no_activate=1 framechanged=1",
+            u8::from(old_style&0x0100_0000!=0),
+            before.left,before.top,before.right,before.bottom,
+            target.left,target.top,target.right,target.bottom,
+            after.left,after.top,after.right,after.bottom);
+    }
+}
+
 /// The native AVI host has closed, and CYBER.EXE can reset its HWND to
 /// 648x513 again BEFORE Glide presents the first menu frame.
 /// Prepare the correct borderless parent BEFORE the first OpenGL Swap,
@@ -177,6 +242,11 @@ pub fn cyber_maintain_fullscreen() {
     static FRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     static BAD_SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let frame = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Re-synchronize the game's fullscreen state through Win32 once per
+    // foreground interval, after MCI handoff. Never use HWND_TOPMOST.
+    if let Some(hwnd)=cyber_game_window(){
+        cyber_wine_sync_fullscreen_hint(hwnd);
+    }
     // Check native FR Alt+Tab on every rendered frame: during/just after
     // video handoff the 30-frame geometry cadence can miss a focus switch.
     // This only changes z-order when necessary, never steals activation.

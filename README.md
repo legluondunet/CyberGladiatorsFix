@@ -6,12 +6,12 @@
 
 CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wine/Proton. It bundles two Windows x86 DLLs: **CyberGladiatorsFix.dll** (our WinMM/Cinepak video and FLAC audio bridge) and **GameFrame glide.dll** (an open-source Apache-2.0 Glide-to-OpenGL wrapper). It does not distribute Cyber Gladiators, its copyrighted assets or proprietary nGlide.
 
-**Pre-release status (2026-11-06):** The audited implementation is merged into `main`. Fullscreen 4:3 AVI, FLAC music, the first-real-OpenGL-frame handoff, and normal Glide restoration were verified under **Wine-staging 11.17** (with and without a virtual desktop) and **Proton reporting Wine 11.0** (builds 85 and 90). A complete uninterrupted ~40-second AVI was verified on build 85; build 90's Wine/Proton checks used the skip control and confirmed the transition. The frame limiter targets **60 FPS**, with ~59.5 FPS observed after stabilization. **This is not yet a public release:** native Windows gameplay and a first-time CUE/BIN install still require end-to-end field testing. See [Release readiness](docs/RELEASE_READINESS.md).
+**Pre-release field validation (2026-11-08):** **[PR #6](https://github.com/legluondunet/CyberGladiatorsFix/pull/6)** provides one project-owned DirectDraw v1 COM and MCI/WM_PAINT video implementation **automatically** for authenticated US and FR retail games under native Windows and Wine-staging 11.17, with small host-specific Alt+Tab/focus adapters. **All four edition/runtime combinations were tested successfully on the default launch:** US/Windows (complete ~40s AVI), FR/Windows (fresh original-CD installation, AVI skip, Alt+Tab), US/Wine (first-frame keyboard focus, XFCE fullscreen, Alt+Tab, AVI skip), and FR/Wine (fresh `CYBERG.cue` installation, second launch, complete ~39s AVI, Alt+Tab, keyboard skip, FLAC and clean exit). The original US `CYBER.cue` with an unindexed 150-sector zero pregap was also field-validated. This remains **pre-release testing**, not a general promise of compatibility with every GPU, Wine version or window manager. See [release readiness](docs/RELEASE_READINESS.md).
 
 ## Quick start
 
 1. For testing, download a successful [Windows x64 pre-release artifact](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml). The artifact includes `CyberGladiatorsFix.exe`, both open-source license notices, `README.txt`, and `SHA256SUMS.txt` to verify the downloaded files. This is **not** a published release.
-2. Put **CyberGladiatorsFix.exe** beside a supported **CUE/BIN** image in a fresh writable folder. The validated US edition is supported; the French **CYBERG.CUE/CYBERG.BIN** path is experimental in PR #5 until field testing is complete.
+2. Put **CyberGladiatorsFix.exe** beside a supported original **US `CYBER.cue`/`CYBER.bin`** or **French `CYBERG.CUE`/`CYBERG.BIN`** image in a fresh writable folder. Both are authenticated by exact executable and media hashes; the new pregap tolerance is included in the PR #6 test build.
 3. **Double-click CyberGladiatorsFix.exe**. Under Wine, run **wine CyberGladiatorsFix.exe**.
 
 **There is no need for --launch or an additional player.**
@@ -19,6 +19,8 @@ CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wi
 On first run the launcher searches for the supported CD image, identifies the original US or French executable by SHA-256, verifies edition-specific media fingerprints, extracts into a temporary staging folder, verifies the files, installs the edition-specific compatibility patch and both embedded DLLs, then launches. On later runs it checks the existing installation first and launches directly; the CUE/BIN need not be present.
 
 If an installation exists but does not pass its checks, the launcher refuses to run rather than deleting or silently replacing user files. Only one CUE image in the launcher's directory is accepted without an explicit path. **Standalone ISO input is not supported yet.** Data-only dumps cannot provide the original CD music.
+
+**CUE/BIN compatibility:** Some single-BIN CD dumps (including the supplied CYBER.cue/CYBER.bin) store an actual two-second zero-filled pause before the first audio track but omit its INDEX 00. For a 2352-byte raw data track followed by AUDIO in the same BIN, CyberGladiatorsFix recognizes **exactly 150 consecutive all-zero sectors immediately preceding the first audio INDEX 01**. It excludes only that verified pause from the extracted ISO data; the original CUE and BIN are never modified, CDDA remains bounded by each declared INDEX 01, and every remaining data-sector sync/mode plus the authenticated retail EXE and resource hashes must still pass strict validation. Nonzero or malformed sectors are never silently skipped. Use --inspect-disc CYBER.cue to verify a disc read-only before installation.
 
 ## Installed layout
 
@@ -49,9 +51,24 @@ The CD audio is extracted without resampling to **FLAC, 44.1 kHz, stereo, 16-bit
 
 GameFrame renders the original **640×480** Glide game at the current display resolution, preserving the **4:3** aspect ratio with black side bars and a **60 FPS** frame limit. The original Cinepak AVI plays via the native WinMM/MCI player in a temporary fullscreen window. The handoff to the game is synchronized with the **first successful OpenGL SwapBuffers**, eliminating desktop flashes and the temporary 640×480 game window. A bounded timeout prevents a permanent black screen.
 
-**Wine/Proton DirectDraw compatibility:** The 1996 game requests exclusive DirectDraw **640×480×16** twice before the AVI. On Wine only, the verified x86 bridge forwards these calls to the **real DirectDraw implementation**, substituting the captured desktop width and height while retaining the requested 16-bit color depth. This prevents Wine's desktop **dimensions** from collapsing to 640×480 and allows fullscreen 4:3 video without changing the game's internal rendering resolution. This is **not** a simulated successful DirectDraw call and is not enabled on native Windows. The observed display geometry remained 1920×1080 in the validated sessions; native depth or physical display-mode transitions have **not** been independently ruled out.
+**Windows/Wine DirectDraw compatibility (PR #6):** The original game requests exclusive DirectDraw **640×480×16** before the AVI. The default verified-edition launcher uses one **owned COM DirectDraw v1 adapter** that preserves the logical surface/mode state without requesting a physical monitor-mode change. It is not a fake success return or a system-wide vtable patch. A previous Wine-only native-dimension forwarding mechanism remains in legacy diagnostics but is not selected during normal launch. The same MCI/WM_PAINT video renderer serves both platforms; focus adaptations are chosen internally from the host runtime.
 
 The one EXE embeds and validates both x86 DLLs before writing them. The GameFrame DLL remains installed after a fresh first run. If the player had a different valid glide.dll, it is backed up byte-for-byte and restored at the end of gameplay.
+
+## Automatic common DirectDraw / MCI engine (PR #6)
+
+**No platform- or edition-specific command is required.** Start `CyberGladiatorsFix.exe` normally on Windows, or `wine CyberGladiatorsFix.exe` on Linux. After verifying the retail edition, the launcher automatically selects one owned DirectDraw COM adapter, 640×480×16 logical surfaces, native MCI/WM_PAINT 4:3 AVI playback, WinMM/FLAC and first-real-OpenGL-present handoff. No physical display-mode switch is requested by the owned adapter; system DirectDraw vtables are untouched.
+
+| Edition | Host | Common engine | Field status |
+| --- | --- | --- | --- |
+| FR | Native Windows | Enabled by default | **Validated on default launch**: clean `CYBERG.cue` install, single Alt+Tab entry, unchanged physical display mode, OpenGL/FLAC; full ~40s AVI on earlier test build |
+| US | Native Windows | Enabled by default | **Validated on default launch**: complete ~40s AVI, single Alt+Tab entry, OpenGL/FLAC, original Glide restore |
+| US | Wine-staging 11.17 | Enabled by default | **Validated on default launch**: XFCE fullscreen, first-key video skip, Alt+Tab, GameFrame/FLAC and clean exit |
+| FR | Wine-staging 11.17 | Enabled by default | **Validated**: clean `CYBERG.cue` install, re-launch, full ~39s AVI, keyboard skip, Alt+Tab, GameFrame/FLAC and clean exit |
+
+The engine is selected automatically via an internal, child-scoped `CYBER_VIRTUAL_DDRAW=1` value after exact retail SHA-256 authentication. **Users do not set this variable.** The only host-specific code concerns the operating system's window-manager behavior: native Windows temporarily hides the black game HWND from Alt+Tab during the AVI (then restores its exact style), whereas Wine uses reversible host unmap and bounded minimize/restore. Both adaptations use the **same** video/DirectDraw/WinMM components and are not alternative player implementations.
+
+The old `--fr-borderless-test` and `--us-virtual-ddraw-test` options, if used from existing scripts, are backward-compatible aliases for the *same* normal engine; they do not select separate paths. Legacy nGlide and original Wine DirectDraw experiments remain isolated from the normal user path.
 
 ## Commands
 
@@ -60,6 +77,7 @@ CyberGladiatorsFix.exe               Auto-install/verify and play
 CyberGladiatorsFix.exe <disc.cue>    Use specified CUE/BIN image
 CyberGladiatorsFix.exe --install-only   Install/upgrade without starting game
 CyberGladiatorsFix.exe --verify      Strict integrity check
+CyberGladiatorsFix.exe --inspect-disc original.cue    Read-only disc inspection
 CyberGladiatorsFix.exe --max-graphics
 CyberGladiatorsFix.exe --check-bundle
 CyberGladiatorsFix.exe --upgrade-cdda
@@ -81,17 +99,15 @@ A single **CyberGladiatorsFix.log**, next to the EXE, records the system and dis
 
 ### Compatibility and safety
 
-The validated **US retail** edition and an **experimental French CYBERG retail** edition are identified by distinct SHA-256 profiles. The French profile is awaiting real Wine/Proton gameplay tests and is **not yet a stable supported release**. The US WinMM import-name migration is checked against previously pinned executable hashes; the FR implementation has its own checked preimages, import slot and known full-binary hashes. Unknown executable revisions, unknown DLLs, unsafe symlinks, unexpected manifest entries and incomplete installs fail closed. CUE/BIN input is read-only, and the game installation uses a staging folder. A per-installation Windows mutex prevents concurrent launch or install.
+The **US and French CYBERG retail** editions are identified by distinct exact SHA-256 profiles. All four US/FR × Windows/Wine combinations select the same owned-COM video implementation by default and have been tested on real Windows 11 / Wine-staging 11.17 hosts. Other systems require their own field verification. The US WinMM import-name migration is checked against previously pinned executable hashes; the FR implementation has its own checked preimages, import slot and known full-binary hashes. Unknown executable revisions, unknown DLLs, unsafe symlinks, unexpected manifest entries and incomplete installs fail closed. CUE/BIN input is read-only, and the game installation uses a staging folder. A per-installation Windows mutex prevents concurrent launch or install.
 
-Native Windows game rendering has **not yet been verified in the field**. The sole distribution workflow runs Rust tests (including DirectDraw mode-selection and backup-integrity checks), verifies the x86 DLLs and Glide exports, checks the CLI, and smoke-tests the native Windows loader, but it does not play the game. Historical experimental branches and diagnostics remain available for regression research, not as supported user entrypoints. Read the [build-85 technical audit](docs/BUILD85_AUDIT.md) and the [pre-release checklist](docs/RELEASE_READINESS.md) for outstanding risks.
+Native Windows **FR and US** GameFrame rendering and video handoff have now been field-tested on PR #6 builds; this does not establish compatibility with every GPU or Windows configuration. The sole distribution workflow runs Rust tests (including DirectDraw mode-selection and backup-integrity checks), verifies the x86 DLLs and Glide exports, checks the CLI, and smoke-tests the native Windows loader, but it does not play the game. Historical experimental branches and diagnostics remain available for regression research, not as supported user entrypoints. Read the [build-85 technical audit](docs/BUILD85_AUDIT.md) and the [pre-release checklist](docs/RELEASE_READINESS.md) for outstanding risks.
 
-## French retail edition (experimental PR #5)
+## French retail edition
 
-The original French `CYBERG.BIN` data track and `cyber.exe` have been authenticated byte-for-byte. The 15-track `CYBERG.CUE` layout contains one MODE1/2352 data track and 14 CDDA tracks. French-specific `CYBER.EXE` patch offsets, backed-up executable SHA-256 hashes, and the game HWND / WndProc addresses are separate from the US ones.
+The original `CYBERG.BIN` data track and `CYBER.EXE` are authenticated byte-for-byte, independently of the US media. The 15-track `CYBERG.CUE` has one MODE1/2352 data track and 14 CDDA tracks. Its game patches, verified original EXE backup and game HWND/WndProc addresses are distinct from the US ones.
 
-For a first test, use **a separate, empty folder** containing the experimental `CyberGladiatorsFix.exe`, `CYBERG.CUE` and `CYBERG.BIN`. Do not put two CUEs beside the launcher. Test the native 4:3 introduction without skipping, menu, gameplay speed and input, FLAC tracks, Alt+Tab, clean exit, and a second boot without the CUE/BIN. Check `--verify` and share the single `CyberGladiatorsFix.log`. The original IQ data must not be edited by the launcher.
-
-See [FR test procedure](docs/FR_TEST_PLAN.md) and [original-disc/patch research](docs/FRENCH_EDITION_RESEARCH.md). The French edition must pass Wine/Proton and a separate US non-regression test before this draft PR can merge.
+On **native Windows**, the shared owned-COM mode has been field-validated with a complete ~40-second movie, single Alt+Tab entry, GameFrame handoff, FLAC, unchanged physical display mode and clean exit. It is now selected by default. The same code is automatically selected for FR/Wine as well, but **FR/Wine needs a dedicated real-machine acceptance test** before declaring that combination validated. For older diagnostic experiments, see the [historical FR test plan](docs/FR_TEST_PLAN.md).
 
 ## Licenses
 
