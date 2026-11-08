@@ -220,12 +220,18 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
     cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
-    // Only the SHA-256-verified retail game on Wine and the dedicated
-    // GameFrame build may forward its 640x480x16 DirectDraw request to the
-    // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
-    // The native Windows loader always leaves this interception inactive.
+    // Preserve the validated Wine path. Native Windows FR alone may also
+    // forward the retail game's 640x480x16 DirectDraw mode request to the
+    // prelaunch monitor size. Unlike returning fake DD_OK, this calls the
+    // *real* DirectDraw interface, with a fallback to the original request
+    // if the Windows display driver rejects the native-sized 16bpp mode.
+    // The launcher already authenticated the edition and executable backup.
     cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","1");
-    crate::show("WINE_DDRAW_NATIVE_FORWARD requested=1 activation=wine_only forwarding=real_DirectDraw_when_intercepted game_only=1",root);
+    cmd.env("CYBER_NATIVE_FR_DDRAW_SIZE_FORWARD",if native_fr_alt_tab{"1"}else{"0"});
+    crate::show(&format!(
+        "DDRAW_SIZE_FORWARD wine_enabled=1 native_fr_enabled={} original_ddraw_called=1 fallback_on_native_mode_failure=1 no_fake_DD_OK=1",
+        u8::from(native_fr_alt_tab)
+    ),root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
