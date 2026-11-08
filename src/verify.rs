@@ -249,7 +249,7 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     );
     cmd.env("CYBER_GAMEFRAME_MENU_SIGNATURE",&menu_signature);
     crate::show(&format!(
-        "GAMEFRAME_MENU_SIGNATURE enabled=1 source=launcher_version_commit placement=lower_right detection=two_green_player_captions runtime=OpenGL text={menu_signature}"
+        "GAMEFRAME_MENU_SIGNATURE enabled=1 source=launcher_version_commit placement=upper_left_transparent detection=two_green_player_captions runtime=OpenGL text={menu_signature}"
     ),root);
     // The former Wine mode-forwarding fallback remains in diagnostic code,
     // but is off for ALL normal US/FR Windows/Wine launches.

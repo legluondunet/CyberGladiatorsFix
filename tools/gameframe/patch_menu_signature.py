@@ -4,7 +4,7 @@
 Pure OpenGL overlay, with on-GPU frame pixel recognition; no new Win32
 window, native focus change, game asset modification or bundled font file.
 All text is minted by the x64 launcher and inherited by the child only.
-The three anchored substitutions fail closed if the pinned upstream drifts.
+The anchored substitutions fail closed if the pinned upstream drifts.
 """
 from pathlib import Path
 import sys
@@ -62,11 +62,26 @@ def main(root: Path) -> None:
             crate::gl::check(gl, "in the frame");""",
         "GL-only menu text before actual swap",
     )
+    # The normal frame is presented with blending disabled, so its alpha is
+    # visually irrelevant. Preserve alpha in the *same* present shader to
+    # allow our transparent pixel glyphs (no border/card/background).
+    shader_file = render / "shaders.rs"
+    shaders = shader_file.read_text(encoding="utf-8")
+    shaders = once(
+        shaders,
+        "    vec3 c = texture(uImg, vec2(vUV.x, 1.0 - vUV.y)).rgb;\n"
+        "    oColor = vec4(pow(c, vec3(1.0 / uGamma)), 1.0);",
+        "    vec4 c = texture(uImg, vec2(vUV.x, 1.0 - vUV.y));\n"
+        "    oColor = vec4(pow(c.rgb, vec3(1.0 / uGamma)), c.a);",
+        "preserve generated signature texture alpha",
+    )
+
     # Publish all files only after every pinned-source anchor matches.
     (render / "cyber_signature.rs").write_text(module_src, encoding="utf-8")
     frame_file.write_text(src, encoding="utf-8")
     module_file.write_text(module, encoding="utf-8")
-    print("GameFrame CyberGladiators menu version signature installed (GL-only, conditional)")
+    shader_file.write_text(shaders, encoding="utf-8")
+    print("GameFrame CyberGladiators upper-left transparent menu signature installed (GL-only, conditional)")
 
 
 if __name__ == "__main__":

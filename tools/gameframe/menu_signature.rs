@@ -72,28 +72,26 @@ fn safe_label(text:&str)->bool{
             suffix.len()==8 && suffix.bytes().all(|v|v.is_ascii_hexdigit()))
 }
 fn make_sprite(text:&str)->(Vec<u8>,i32,i32){
-    let w=(text.len()*6+12) as i32;
-    let h=17i32;
+    // Transparent, minimal 5x7 lettering with one-pixel dark drop-shadow.
+    // No card/background/border: the game image remains visible behind it.
+    let w=(text.len()*6+1) as i32;
+    let h=9i32;
     let mut data=vec![0u8;(w*h*4) as usize];
     // The upstream present shader flips Y; supply bottom-up GL texels.
     let mut pixel=|x:i32,y:i32,color:[u8;4]|{
         let i=(((h-1-y)*w+x)*4) as usize;
         data[i..i+4].copy_from_slice(&color);
     };
-    for y in 0..h {
-        for x in 0..w {
-            let color=if x==0||y==0||x==w-1||y==h-1 {
-                [69,93,81,255]
-            }else{[9,16,19,255]};
-            pixel(x,y,color);
-        }
-    }
     for (i,ch) in text.chars().enumerate(){
         let glyph=glyph(ch);
         for (y,row) in glyph.iter().enumerate(){
             for x in 0..5{
                 if (row >> (4-x))&1!=0 {
-                    pixel(6+(i*6) as i32+x as i32,5+y as i32,[205,235,208,255]);
+                    let px=1+(i*6) as i32+x as i32;
+                    let py=y as i32;
+                    // Small shadow preserves contrast on the busy menu art.
+                    pixel(px+1,py+1,[0,0,0,180]);
+                    pixel(px,py,[216,232,220,255]);
                 }
             }
         }
@@ -196,14 +194,20 @@ impl MenuSignature {
         let scale=(ch/480).clamp(1,3);
         let (w,h)=(self.pixel_width*scale,self.pixel_height*scale);
         if w+20>vw||h+20>vh{return;}
-        let left=vx+vw-w-9;
-        let top=vy+vh-h-7;
+        // Anchored inside the original centered 4:3 game image, not to
+        // the physical monitor edge or black pillarbox/letterbox bars.
+        let left=vx+12;
+        let top=vy+12;
         unsafe{
             (gl.BindFramebuffer)(FRAMEBUFFER,0);
             (gl.Viewport)(0,0,cw,ch);
             (gl.Disable)(DEPTH_TEST);
             (gl.Disable)(SCISSOR_TEST);
-            (gl.Disable)(BLEND);
+            // The present shader preserves the sprite's alpha. Only
+            // lettering and its tiny shadow are composited; transparent
+            // texels leave the original menu pixels untouched.
+            (gl.Enable)(BLEND);
+            (gl.BlendFuncSeparate)(0x0302,0x0303,1,0x0303); // SRC_ALPHA, ONE_MINUS_SRC_ALPHA
             (gl.ColorMask)(1,1,1,1);
             (gl.UseProgram)(p.id);
             (gl.ActiveTexture)(TEXTURE0);
@@ -214,6 +218,7 @@ impl MenuSignature {
             (gl.Uniform4f)(p.loc("uRect"),left as f32,top as f32,
                 (left+w) as f32,(top+h) as f32);
             (gl.DrawArrays)(0x0005,0,4);
+            (gl.Disable)(BLEND);
         }
     }
 }
@@ -226,6 +231,20 @@ mod tests{
         assert!(!safe_label("CyberGladiatorsFix v0.2.13-abcdef"));
         assert!(!safe_label("OtherFix v0.2.13-1234abcd"));
         assert!(!safe_label("CyberGladiatorsFix v0.2.13-1234abcd\nbad"));
+    }
+    #[test]
+    fn signature_sprite_is_transparent_without_any_border_or_panel(){
+        let (pixels,w,h)=make_sprite("AB");
+        assert_eq!((w,h),(13,9));
+        // Transparent space around text, not an opaque backing card.
+        let at=|x:i32,y:i32| {
+            let i=(((h-1-y)*w+x)*4) as usize;
+            &pixels[i..i+4]
+        };
+        assert_eq!(at(0,0),&[0,0,0,0]);
+        assert_eq!(at(w-1,h-1),&[0,0,0,0]);
+        assert_eq!(at(1,0)[3],255);
+        assert!(pixels.chunks_exact(4).any(|p|p[3]==180));
     }
     #[test]
     fn menu_requires_green_titles_and_instructions_for_both_players(){
