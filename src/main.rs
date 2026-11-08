@@ -208,7 +208,7 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
 /// renderer. Legacy nGlide diagnostics are kept separately for developers.
-fn user_gameframe_launch(root:&Path,fr_borderless_test:bool)->Result<(),String>{
+fn user_gameframe_launch(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
@@ -224,7 +224,7 @@ fn user_gameframe_launch(root:&Path,fr_borderless_test:bool)->Result<(),String>{
     }else{
         None
     };
-    let child=verify::launch_gameframe(root,fr_borderless_test)?;
+    let child=verify::launch_gameframe(root,fr_borderless_test,us_wine_virtual_test)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
@@ -300,7 +300,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         []=>{
             let _lock=autostart::lock(root)?;
             autostart::prepare(root,None)?;
-            return user_gameframe_launch(root,false);
+            return user_gameframe_launch(root,false,false);
         },
         [one] if one.to_str()==Some("--install-only")=>{
             let _lock=autostart::lock(root)?;
@@ -315,7 +315,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let _lock=autostart::lock(root)?;
             let source=PathBuf::from(one);
             autostart::prepare(root,Some(&source))?;
-            return user_gameframe_launch(root,false);
+            return user_gameframe_launch(root,false,false);
         },
         [one] if one.to_str()==Some("--inspect-disc")=>{
             let cue=install::find_cue(root)?;
@@ -341,15 +341,21 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
         [one,two] if one.to_str()==Some("--launch")
             && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root,false),
+            return user_gameframe_launch(root,false,false),
         [one,two] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--fr-borderless-test")=>
-            return user_gameframe_launch(root,true),
+            return user_gameframe_launch(root,true,false),
+        // Compare the real project-owned DirectDraw v1 COM proxy against the
+        // verified Wine-only SetDisplayMode forwarding on an authentic US EXE.
+        // This must never change the ordinary launch or native Windows path.
+        [one,two] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--us-virtual-ddraw-test")=>
+            return user_gameframe_launch(root,false,true),
         // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-first-present-handoff")=>
-            return user_gameframe_launch(root,false),
+            return user_gameframe_launch(root,false,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
@@ -498,6 +504,7 @@ mod diagnostics_tests {
             assert!(HELP.contains(expected),"{expected}");
         }
         assert!(!HELP.contains("--launch"));
+        assert!(!HELP.contains("--us-virtual-ddraw-test"));
         assert!(!HELP.contains("--avi-in-game-window"));
         assert!(!HELP.contains("--nglide-vulkan"));
         assert!(!HELP.contains("CyberGladiatorsIntro.exe"));
