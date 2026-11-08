@@ -18,7 +18,7 @@ static void trace(const char *text) { cyber_virtual_ddraw_trace(text); }
 static void log_mode(const char *event,DWORD w,DWORD h,DWORD bpp,HRESULT hr) {
     char msg[192];
     wsprintfA(msg,"%s size=%lux%lux%lu hr=0x%08lx physical_mode_request=0",
-        event,(unsigned long)w,(unsigned long)h,(unsigned long)bpp),(void)hr;
+        event,(unsigned long)w,(unsigned long)h,(unsigned long)bpp,(unsigned long)hr);
     // Use a separate compact trace for HRESULT, avoid relying on
     // undocumented C++ stream initialization in DLL startup.
     trace(msg);
@@ -37,7 +37,7 @@ public:
     VirtualSurface *back;
     bool locked;
     VirtualSurface(VirtualDraw *o,DWORD w,DWORD h,DWORD c);
-    ~VirtualSurface() override;
+    ~VirtualSurface();
     bool valid() const { return pixels!=nullptr; }
     HRESULT fill_desc(LPDDSURFACEDESC out,bool expose_pixels);
     STDMETHOD(QueryInterface)(REFIID,LPVOID*) override;
@@ -88,7 +88,7 @@ public:
     explicit VirtualDraw(IDirectDraw *source)
        :real(source),refs(1),width(640),height(480),bpp(16),
         cooperative(false),configured(false),primary(nullptr) {}
-    ~VirtualDraw() override { real->Release(); }
+    ~VirtualDraw() { real->Release(); }
     STDMETHOD(QueryInterface)(REFIID,LPVOID*) override;
     STDMETHOD_(ULONG,AddRef)() override { return static_cast<ULONG>(InterlockedIncrement(&refs)); }
     STDMETHOD_(ULONG,Release)() override {
@@ -150,7 +150,7 @@ ULONG VirtualSurface::Release() {
 }
 HRESULT VirtualSurface::QueryInterface(REFIID iid,LPVOID *out) {
     if(!out)return E_POINTER;*out=nullptr;
-    if(iid==IID_IUnknown || iid==IID_IDirectDrawSurface) {
+    if(IsEqualIID(iid,IID_IUnknown) || IsEqualIID(iid,IID_IDirectDrawSurface)) {
         *out=static_cast<IDirectDrawSurface*>(this);AddRef();return S_OK;
     }
     trace("SURFACE QueryInterface unsupported IID");
@@ -158,7 +158,7 @@ HRESULT VirtualSurface::QueryInterface(REFIID iid,LPVOID *out) {
 }
 HRESULT VirtualDraw::QueryInterface(REFIID iid,LPVOID *out) {
     if(!out)return E_POINTER;*out=nullptr;
-    if(iid==IID_IUnknown || iid==IID_IDirectDraw) {
+    if(IsEqualIID(iid,IID_IUnknown) || IsEqualIID(iid,IID_IDirectDraw)) {
         *out=static_cast<IDirectDraw*>(this);AddRef();return S_OK;
     }
     trace("DDRAW_VIRTUAL QueryInterface unsupported IID");
@@ -296,8 +296,7 @@ HRESULT VirtualSurface::Blt(LPRECT dst,LPDIRECTDRAWSURFACE source,LPRECT src,
     if(locked || (back&&back->locked))return DDERR_SURFACEBUSY;
     RECT d={0,0,(LONG)width,(LONG)height};
     if(dst)d=*dst;
-    if(d.left<0||d.top<0||d.right>d.right /* intentionally no-op checked below */
-       ||d.right>(LONG)width||d.bottom>(LONG)height
+    if(d.left<0||d.top<0||d.right>(LONG)width||d.bottom>(LONG)height
        ||d.left>=d.right||d.top>=d.bottom)return DDERR_INVALIDRECT;
     if(flags&DDBLT_COLORFILL){
         if(!fx || fx->dwSize<sizeof(DDBLTFX))return DDERR_INVALIDPARAMS;
