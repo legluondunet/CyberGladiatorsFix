@@ -55,10 +55,17 @@ IQ modifications for launch, never for --verify.
 SINGLE EXE, TWO DLLs
 --------------------
 Both DLLs have SHA-256 and PE32 checks before installation. The first
-clean install retains GameFrame glide.dll after gameplay. If the user
-already has a different valid glide.dll, it is backed up byte-for-byte
-and restored after the game process exits; known, unknown, ambiguous
-and symlink cases are treated conservatively.
+clean install retains GameFrame glide.dll after gameplay. If an old,
+unknown or malformed regular-file glide.dll exists, the launcher first
+renames it to glide.dll.bak without overwriting any existing backup,
+then installs the embedded GameFrame DLL and launches the game.
+If glide.dll.bak is already occupied, it archives the old DLL under
+glide.dll.<16-character-SHA256>.bak, then a numbered .bak if necessary.
+After the game exits, GameFrame stays installed and the backup remains
+available for manual recovery; it is NOT automatically restored.
+Operations, original and embedded SHA-256 digests, selected archive path
+and any collision fallback are recorded in CyberGladiatorsFix.log.
+Unsafe symlinks, non-regular files and oversized active DLLs are refused.
 
 The WinMM import name in the patched US retail executable now refers
 to CyberGladiatorsFix.dll rather than the old CyberGladiatorsCDDA.dll.

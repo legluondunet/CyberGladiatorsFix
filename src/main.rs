@@ -217,7 +217,7 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
-    let mut previous_glide=gameframe::Session::begin(root,&game)?;
+    let mut glide_session=gameframe::Session::begin(root,&game)?;
     // Start before spawning CYBER.EXE: its DirectDraw initialization may
     // switch the physical desktop mode before the first MCI AVI event.
     // This is passive, native-Windows/FR-only sampling; no hook or graphics
@@ -246,9 +246,11 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
             diagnostics::prelaunch_display_modes()
         ),root);
     }
-    let restored=previous_glide.restore();
-    match (result,restored){
-        (Err(game),Err(dll))=>Err(format!("{game}; original Glide restoration failed: {dll}")),
+    // Keep the verified embedded GameFrame DLL after exit; any original
+    // glide.dll stays archived in a unique .bak, never auto-restored.
+    let finalized=glide_session.finish();
+    match (result,finalized){
+        (Err(game),Err(dll))=>Err(format!("{game}; GameFrame finalization failed: {dll}")),
         (Err(game),_)=>Err(game),
         (_,Err(dll))=>Err(dll),
         (Ok(()),Ok(()))=>Ok(()),
@@ -309,7 +311,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             autostart::prepare(root,None)?;
             let game=root.join(install::DIR);
             let mut glide=gameframe::Session::begin(root,&game)?;
-            glide.restore()?;
+            glide.finish()?;
             show(&format!("AUTO_INSTALL_ONLY verified: {}",verify::verify(root)?),root);
             return Ok(());
         },
