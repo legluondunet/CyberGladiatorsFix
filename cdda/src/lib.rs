@@ -27,7 +27,12 @@ pub unsafe extern "C" fn cyber_virtual_ddraw_trace(message:*const c_char){
     }
 }
 fn super_log_virtual(line:&str){
-    log(&format!("FR_VIRTUAL_DDRAW {line}"));
+    let profile=if std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1"){
+        "US_WINE_VIRTUAL_DDRAW"
+    }else{
+        "FR_VIRTUAL_DDRAW"
+    };
+    log(&format!("{profile} {line}"));
 }
 
 use player::{Command as AudioCommand, Shared as AudioShared};
