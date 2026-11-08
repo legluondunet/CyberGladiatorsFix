@@ -32,6 +32,40 @@
 - Alt+Tab to another window and back; check graphics, keyboard/mouse input and focus.
 - Test under Proton as well as Wine-staging, and compare native desktop geometry before/after startup. Do not assume unchanged reported dimensions prove unchanged physical color depth.
 
+## Native Windows FR — read-only resolution-switch diagnostic (PR #5)
+
+Use the **latest successful** Windows build containing the passive display probes.
+One complete launch is sufficient for this diagnostic; do **not** repeatedly
+Alt+Tab to compensate for a display problem. Before starting, note whether
+Windows itself visibly switches to 640x480 (screen blink, desktop scaling),
+rather than only the video window changing size.
+
+1. Start the game from the existing, verified FR installation with no manual
+   display settings changes. Let `splash4.avi` play naturally.
+2. During the intro, press Alt+Tab **once** to a different window and return.
+   Check that the AVI remains visible and preserves its 4:3 aspect ratio.
+3. After the full ~40-second intro, check the menu, a gameplay scene, 60 FPS,
+   and one Alt+Tab during gameplay; quit normally.
+4. Share only the unified `CyberGladiatorsFix.log`. Compare these markers:
+   - `FR_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn`: current versus
+     registry Windows mode before the EXE runs (dimensions, bpp, refresh).
+   - `GAMEFRAME_FR_DISPLAY stage=before_grGlideInit`,
+     `before_grSstOpen`, `after_grSstOpen`: screen geometry at the earliest
+     intercepted Glide entry points.
+   - `FR_DISPLAY_MODE stage=before_avivideo_open` and
+     `stage=before_video_play`: system mode versus registry after game startup.
+   - `FR_DISPLAY_MODE stage=movie_focus_transition` and
+     `FR_NATIVE_VIDEO_RESIZED`: any changes triggered by Alt+Tab.
+   - `DDRAW_NATIVE_SUMMARY ... enabled=0`: **native Windows DirectDraw
+     interception must remain disabled** (the previous native COM hook crashed).
+   - `GAMEFRAME_FIRST_GL_HANDOFF`, `GAME_EXIT exit code: 0` and
+     `SESSION END success`: confirm the already-working transition and exit.
+
+These read-only measurements do **not** prevent the original game's
+resolution request. They narrow down when the mode changes so that a later
+native-Windows-specific remedy can be designed and tested without disrupting
+the validated Wine/Proton and US paths.
+
 ## Group D — unchanged US edition
 
 Repeat a quick verified install/launch and video/FLAC/exit test with the known US retail edition in a separate directory. The US code path must continue to use its original file hashes, offsets, HWND and WndProc.
