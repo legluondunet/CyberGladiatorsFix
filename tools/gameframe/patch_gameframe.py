@@ -162,6 +162,50 @@ pub fn cyber_viewport_size(w: u32, h: u32) -> Option<(u32, u32)> {
 
     path = glide / "api" / "sst.rs"
     src = path.read_text(encoding="utf-8")
+    # Passive sampling at the FIRST Glide entry points, before the game's
+    # AVI bridge is invoked. A few GetSystemMetrics reads only; no DirectDraw
+    # hooks, display-mode modifications, or user-facing window operations.
+    display_marker = '#[unsafe(no_mangle)]\\npub extern "system" fn grGlideInit() {'
+    display_probe = """// Cyber Gladiators: Windows-native FR-only resolution timeline.
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn GetSystemMetrics(index: i32) -> i32;
+}
+fn cyber_fr_readonly_display_probe(stage: &str) {
+    if std::env::var("CYBER_GAME_EDITION").as_deref() != Ok("FR")
+        || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref() != Ok("1") {
+        return;
+    }
+    unsafe {
+        log!("GAMEFRAME_FR_DISPLAY stage={stage} metrics={}x{} read_only=1",
+            GetSystemMetrics(0), GetSystemMetrics(1));
+    }
+}
+
+"""
+    src = replace_one(src, display_marker, display_probe + display_marker,
+        "probe before first Glide initialization")
+    src = replace_one(src, '    shim::call!("grGlideInit");',
+        '    cyber_fr_readonly_display_probe("before_grGlideInit");\\n    shim::call!("grGlideInit");',
+        "early Glide initialization probe")
+    src = replace_one(src, '    shim::call!("grSstOpen", res, refresh, format, origin, smoothing, buffers);',
+        '    cyber_fr_readonly_display_probe("before_grSstOpen");\\n    shim::call!("grSstOpen", res, refresh, format, origin, smoothing, buffers);',
+        "before Glide resolution open")
+    src = replace_one(src,
+        """    opened(w, h, format, origin);
+    flush();
+    1
+}""",
+        """    opened(w, h, format, origin);
+    flush();
+    cyber_fr_readonly_display_probe("after_grSstOpen");
+    1
+}""",
+        "after Glide resolution open")
+    src = replace_one(src, '    log!("grSstPassthruMode {mode}");',
+        '    log!("grSstPassthruMode {mode}");\\n    cyber_fr_readonly_display_probe("grSstPassthruMode");',
+        "Glide video passthrough probe")
+
     marker = '#[unsafe(no_mangle)]\npub extern "system" fn grBufferSwap(_interval: u32) {'
     paced = """/// The original Voodoo's display synchronization kept this old game's
 /// simulation at a reasonable speed. Modern OpenGL on a 120 Hz monitor
