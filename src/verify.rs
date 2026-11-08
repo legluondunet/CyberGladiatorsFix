@@ -158,7 +158,7 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// GameFrame's verified native AVI -> first real OpenGL-present launch.
 /// The original nGlide setup is never changed; the selected Apache-2.0
 /// Glide DLL was temporarily installed by gameframe::Session.
-pub fn launch_gameframe(root:&Path)->Result<Child,String>{
+pub fn launch_gameframe(root:&Path,fr_borderless_test:bool)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     let skip_intro=settings::read(&game)?;
@@ -198,7 +198,17 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     // Scope Alt+Tab focus/z-order recovery to the reported native-Windows FR
     // case. Always override inherited environment variables.
     let native_fr_alt_tab=edition=="FR" && diagnostics::is_native_windows();
+    if fr_borderless_test && !native_fr_alt_tab{
+        return Err("--fr-borderless-test is restricted to the verified French edition on native Windows".into());
+    }
     cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_fr_alt_tab{"1"}else{"0"});
+    // A diagnostic child flag is always explicitly set, never inherited
+    // from the caller. The normal user launch takes the validated #168 path.
+    cmd.env("CYBER_FR_VIRTUAL_DDRAW",if fr_borderless_test{"1"}else{"0"});
+    crate::show(&format!(
+        "FR_VIRTUAL_DDRAW enabled={} native_FR={} opt_in=1 system_ddraw_vtable_unchanged=1 no_external_wrapper=1",
+        u8::from(fr_borderless_test),u8::from(native_fr_alt_tab)
+    ),root);
     crate::show(&format!(
         "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
         u8::from(native_fr_alt_tab)
