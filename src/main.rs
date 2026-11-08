@@ -314,9 +314,15 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
         [one] if one.to_str()==Some("--fr-native-mode-test")=>{
-            // Only the already verified FR installation on native Windows.
-            // No auto-install: do not change the retail EXE or its resources.
+            // Opt-in only, existing verified French game on native Windows.
+            // Refuse missing installs before Session::begin touches Glide.
             let _lock=autostart::lock(root)?;
+            if !diagnostics::is_native_windows(){
+                return Err("Native FR mode experiment unavailable on Wine/Proton".into());
+            }
+            if !root.join(install::DIR).join("cyber.exe").is_file(){
+                return Err("Native FR mode experiment requires an existing installed game".into());
+            }
             return user_gameframe_launch(root,true);
         },
         [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
