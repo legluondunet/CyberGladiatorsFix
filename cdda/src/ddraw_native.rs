@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Wine-only DirectDraw v1 display-size compatibility for the verified game.
+//! Verified Windows/Wine DirectDraw v1 desktop-size compatibility.
+//! Native Windows forwarding is restricted to the French retail game.
 //!
 //! The verified Cyber Gladiators retail game requests fullscreen exclusive
 //! DirectDraw 640x480x16 twice before opening its native MCI AVI. Wine changes
@@ -12,8 +13,10 @@
 //! 16-bit depth but the desktop's prelaunch WIDTH and HEIGHT. This lets Wine
 //! initialize DirectDraw state while keeping the native desktop dimensions.
 //! This does NOT promise no internal color-depth transition; it only prevents
-//! a 640x480 desktop-size request. Never used on native Windows or without
-//! the validated GameFrame launch path.
+//! a 640x480 desktop-size request when the real DirectDraw driver accepts the
+//! native-sized 16bpp mode. On native Windows FR, if the driver rejects that
+//! mode, forward the original request and report the fallback rather than
+//! pretending the DirectDraw call succeeded. Other native editions are excluded.
 //!
 //! The only PE patch is to the exact CYBER.EXE ddraw.dll DirectDrawCreate IAT
 //! thunk, in memory, before game startup. The returned single COM object's
@@ -36,6 +39,8 @@ static INSTALLED:AtomicBool=AtomicBool::new(false);
 static INITIALIZED:AtomicBool=AtomicBool::new(false);
 static IMPORT_FOUND:AtomicBool=AtomicBool::new(false);
 static ENABLED:AtomicBool=AtomicBool::new(false);
+static NATIVE_FR_MODE:AtomicBool=AtomicBool::new(false);
+static NATIVE_FR_FALLBACKS:AtomicU32=AtomicU32::new(0);
 static NATIVE_W:AtomicU32=AtomicU32::new(0);
 static NATIVE_H:AtomicU32=AtomicU32::new(0);
 static CREATE_FN:AtomicUsize=AtomicUsize::new(0);
@@ -77,6 +82,16 @@ unsafe fn env_is_one(key:&[u8])->bool{
     let mut out=[0i8;4];
     GetEnvironmentVariableA(key.as_ptr().cast(),out.as_mut_ptr(),out.len() as u32)==1
         && out[0]==b'1' as i8
+}
+unsafe fn is_french_child()->bool{
+    let mut out=[0i8;4];
+    GetEnvironmentVariableA(
+        b"CYBER_GAME_EDITION\0".as_ptr().cast(),
+        out.as_mut_ptr(),out.len() as u32
+    )==2 && out[0]==b'F' as i8 && out[1]==b'R' as i8
+}
+fn native_fr_eligible(wine:bool,explicit:bool,french:bool)->bool{
+    !wine&&explicit&&french
 }
 fn parse_native_desktop(input:&str)->Option<(u32,u32)>{
     let (w,h)=input.split_once('x')?;
@@ -156,15 +171,21 @@ static EARLY_FORWARD_INIT:unsafe extern "C" fn()=initialize;
 
 unsafe extern "C" fn initialize(){
     INITIALIZED.store(true,Ordering::Release);
-    if !env_is_one(b"CYBER_WINE_DDRAW_NATIVE_FORWARD\0")
-        ||!env_is_one(b"CYBER_GAMEFRAME_TEST\0"){return;}
-    // Do not intercept native Windows. This symbol is provided by Wine ntdll.
+    if !env_is_one(b"CYBER_GAMEFRAME_TEST\0"){return;}
     let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
-    if ntdll.is_null()||
-        GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null(){return;}
+    if ntdll.is_null(){return;}
+    let wine=!GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null();
+    let wine_enabled=wine&&env_is_one(b"CYBER_WINE_DDRAW_NATIVE_FORWARD\0");
+    let native_fr=native_fr_eligible(
+        wine,
+        env_is_one(b"CYBER_NATIVE_FR_DDRAW_SIZE_FORWARD\0"),
+        is_french_child()
+    );
+    if !wine_enabled&&!native_fr{return;}
     let Some((w,h))=captured_desktop()else{return;};
     NATIVE_W.store(w,Ordering::Release);
     NATIVE_H.store(h,Ordering::Release);
+    NATIVE_FR_MODE.store(native_fr,Ordering::Release);
     ENABLED.store(true,Ordering::Release);
     INSTALLED.store(hook_ddraw_create(),Ordering::Release);
 }
@@ -238,23 +259,34 @@ unsafe extern "system" fn forward_ddraw_setmode(
     let original:unsafe extern "system" fn(*mut c_void,u32,u32,u32)->i32=
         std::mem::transmute(original_ptr);
     let before=(GetSystemMetrics(0),GetSystemMetrics(1));
-    // IMPORTANT: call real Wine DirectDraw! Never return fake DD_OK.
-    let hr=original(this,target_w,target_h,bpp);
+    // Call real DirectDraw, preserving its required initialization.
+    let first_hr=original(this,target_w,target_h,bpp);
+    let native_fr=NATIVE_FR_MODE.load(Ordering::Acquire);
+    // Some native Windows graphics drivers do not expose a 16bpp desktop
+    // mode at the current 32bpp monitor dimensions. Fail safe: retry the
+    // game's original 640x480 request and log it for the user's report.
+    let fallback=native_fr&&intercept&&first_hr!=0
+        &&(target_w!=width||target_h!=height);
+    let hr=if fallback{
+        NATIVE_FR_FALLBACKS.fetch_add(1,Ordering::Relaxed);
+        original(this,width,height,bpp)
+    }else{first_hr};
     let after=(GetSystemMetrics(0),GetSystemMetrics(1));
     if intercept{
         MODES_FORWARDED.fetch_add(1,Ordering::Relaxed);
     }
     super::log(&format!(
-        "DDRAW_NATIVE_SETMODE requested={}x{}x{} forwarded={}x{}x{} native_desktop={}x{} monitor_before={}x{} monitor_after={}x{} original_hr={:#010x} native_dimensions_requested={} not_a_noop=1",
+        "DDRAW_NATIVE_SETMODE requested={}x{}x{} forwarded={}x{}x{} native_desktop={}x{} monitor_before={}x{} monitor_after={}x{} original_hr={:#010x} native_dimensions_requested={} not_a_noop=1 native_fr={} requested_native_hr={:#010x} fallback_original={} fallback_hr={:#010x}",
         width,height,bpp,target_w,target_h,bpp,native_w,native_h,
-        before.0,before.1,after.0,after.1,hr,u8::from(intercept)
+        before.0,before.1,after.0,after.1,hr,u8::from(intercept),
+        u8::from(native_fr),first_hr,u8::from(fallback),hr
     ));
     hr
 }
 pub fn report_once(){
     if REPORTED.swap(true,Ordering::AcqRel){return;}
     super::log(&format!(
-        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
+        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={} native_fr={} native_fallbacks={}",
         u8::from(INITIALIZED.load(Ordering::Acquire)),
         u8::from(ENABLED.load(Ordering::Acquire)),
         u8::from(IMPORT_FOUND.load(Ordering::Acquire)),
@@ -265,7 +297,9 @@ pub fn report_once(){
         MODES_FORWARDED.load(Ordering::Acquire),
         NATIVE_W.load(Ordering::Acquire),
         NATIVE_H.load(Ordering::Acquire),
-        SHADOW_LIMIT_REACHED.load(Ordering::Acquire)
+        SHADOW_LIMIT_REACHED.load(Ordering::Acquire),
+        u8::from(NATIVE_FR_MODE.load(Ordering::Acquire)),
+        NATIVE_FR_FALLBACKS.load(Ordering::Acquire)
     ));
 }
 #[cfg(test)]
@@ -293,6 +327,13 @@ mod tests{
         assert_eq!(requested_mode_to_native(640,480,8,1920,1080),(640,480,false));
         assert_eq!(requested_mode_to_native(640,480,16,0,0),(640,480,false));
         assert_eq!(requested_mode_to_native(640,480,16,320,240),(640,480,false));
+    }
+    #[test]
+    fn native_windows_forwarding_requires_explicit_french_profile(){
+        assert!(native_fr_eligible(false,true,true));
+        assert!(!native_fr_eligible(false,true,false)); // US unchanged
+        assert!(!native_fr_eligible(false,false,true)); // unrequested
+        assert!(!native_fr_eligible(true,true,true)); // Wine uses own path
     }
     #[test]
     fn shadow_allocation_is_bounded(){
