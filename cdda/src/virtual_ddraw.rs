@@ -137,7 +137,7 @@ pub fn viewport_4_3(width:u32,height:u32)->Rect{
     let (w,h)=if u64::from(width)*3>=u64::from(height)*4{
         (u64::from(height)*4/3,height)
     }else{
-        (width,(u64::from(width)*3/4) as u32)
+        (u64::from(width),(u64::from(width)*3/4) as u32)
     };
     let w=w as u32;
     Rect{x:(width-w)/2,y:(height-h)/2,width:w,height:h}
