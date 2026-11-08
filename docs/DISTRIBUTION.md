@@ -88,9 +88,10 @@ then exit normally. Start the EXE a second time without the CD files
 to verify installed-game detection, and check that glide.dll persists.
 Review the ONE CyberGladiatorsFix.log next to the launcher. No special
 command, environment variable or INI option is needed for the shared
-DirectDraw/MCI engine. The formerly opt-in Windows FR, Windows US and
-Wine US configurations have been field-tested. FR/Wine is newly enabled
-and requires its own acceptance test; other systems are not guaranteed.
+DirectDraw/MCI engine. All four US/FR × Windows 11/Wine-staging 11.17 combinations have now
+been field-tested on normal, no-flag launch. FR/Wine was also checked
+against a clean original CYBERG.cue install, repeat launch, video skip,
+Alt+Tab and uninterrupted movie. Other systems are not guaranteed.
 
 Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
@@ -106,9 +107,10 @@ This is a pre-release testing artifact, NOT a public release.
 The baseline implementation and audit were merged into main on 2026-11-06.
 PR #6 (not yet merged) selects the common owned-COM DirectDraw/MCI engine
 automatically on normal launch and supports the verified original US CUE
-pregap. Earlier optional FR/Windows, US/Windows and US/Wine profiles
-were field-validated; the new all-host default and FR/Wine still require
-testing. A public release must not claim universal compatibility.
+pregap. The default all-host selection has now been field-validated for both
+retail editions on Windows 11 and Wine-staging 11.17, including FR/Wine
+fresh install, first-key skip and complete movie playback. A public
+release must not claim universal hardware or window-manager compatibility.
 A green CI workflow checks compilation, PE exports and loading,
 but DOES NOT verify actual video or gameplay on a player's machine.
 

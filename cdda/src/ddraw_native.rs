@@ -4,23 +4,20 @@
 //! Host-specific focus is handled in the WinMM video window layer.
 //!
 //! The verified Cyber Gladiators retail game requests fullscreen exclusive
-//! DirectDraw 640x480x16 twice before opening its native MCI AVI. Wine changes
-//! its desktop from the launcher's captured native dimensions, clipping the
-//! deliberately fullscreen 4:3 native video host.
+//! DirectDraw 640x480x16 twice before opening its native MCI AVI.
+//! The default shared adapter creates an owned DirectDraw v1 COM wrapper and
+//! virtualizes those logical mode/surface operations on both Windows and Wine,
+//! without forwarding physical SetDisplayMode or modifying system vtables.
 //!
-//! Do NOT return DD_OK without calling DirectDraw: that produced a black
-//! screen in CI build 83 (DirectDraw state was not initialized).
-//! Instead forward the *real* IDirectDraw v1::SetDisplayMode with unchanged
-//! 16-bit depth but the desktop's prelaunch WIDTH and HEIGHT. This lets Wine
-//! initialize DirectDraw state while keeping the native desktop dimensions.
-//! This does NOT promise no internal color-depth transition; it only prevents
-//! a 640x480 desktop-size request. Never used on native Windows or without
-//! the validated GameFrame launch path.
+//! Historical Wine native-size forwarding (real Wine SetDisplayMode with the
+//! captured desktop dimensions) remains a separate diagnostic fallback, never
+//! selected by the standard US/FR launcher path. Returning a fake DD_OK
+//! without initializing DirectDraw was previously shown to produce black
+//! video and is not used.
 //!
-//! The only PE patch is to the exact CYBER.EXE ddraw.dll DirectDrawCreate IAT
-//! thunk, in memory, before game startup. The returned single COM object's
-//! vtable is privately copied. No Wine DLLs, shared vtables, original game
-//! files or actual desktop registry settings are modified.
+//! The PE hook targets only the original authenticated CYBER.EXE
+//! DirectDrawCreate IAT thunk in memory. Neither the owned-COM path nor the
+//! diagnostic fallback changes original game files or global registry settings.
 //! CRT startup routine is loader-safe: no heap, file I/O, TLS, or COM calls.
 use std::ffi::{c_char,c_void};
 use std::sync::atomic::{AtomicBool,AtomicU32,AtomicUsize,Ordering};
@@ -39,6 +36,7 @@ static INITIALIZED:AtomicBool=AtomicBool::new(false);
 static IMPORT_FOUND:AtomicBool=AtomicBool::new(false);
 static ENABLED:AtomicBool=AtomicBool::new(false);
 static NATIVE_VIRTUAL:AtomicBool=AtomicBool::new(false);
+static HOST_IS_WINE:AtomicBool=AtomicBool::new(false);
 static US_WINE_VIRTUAL:AtomicBool=AtomicBool::new(false);
 static US_NATIVE_VIRTUAL:AtomicBool=AtomicBool::new(false);
 static VIRTUAL_OBJECTS:AtomicU32=AtomicU32::new(0);
@@ -194,6 +192,7 @@ unsafe extern "C" fn initialize(){
     let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
     let wine=!ntdll.is_null()
         &&!GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null();
+    HOST_IS_WINE.store(wine,Ordering::Release);
     let (fr_virtual,us_wine_virtual,us_native_virtual)=owned_virtual_profiles(
         env_is_one(b"CYBER_VIRTUAL_DDRAW\0"),env_is_fr(),env_is_us(),wine
     );
@@ -233,7 +232,7 @@ unsafe extern "system" fn forward_ddraw_create(
             "DDRAW_VIRTUAL_CREATE edition={} wine={} native_vtable_modified=0 wrapper_owned=1 original_hr={hr:#010x} wrapped_hr={wrapped:#010x}",
             if US_WINE_VIRTUAL.load(Ordering::Acquire)
                 || US_NATIVE_VIRTUAL.load(Ordering::Acquire){"US"}else{"FR"},
-            u8::from(US_WINE_VIRTUAL.load(Ordering::Acquire))
+            u8::from(HOST_IS_WINE.load(Ordering::Acquire))
         ));
         return wrapped;
     }
