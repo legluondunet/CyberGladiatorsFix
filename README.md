@@ -66,11 +66,26 @@ WINEDEBUG=-all wine CyberGladiatorsFix.exe --launch --us-virtual-ddraw-test
 ```
 
 This flag is **experimental and restricted to the verified US edition
-on Wine/Proton**; it does not enable the French MCI surface modifications,
-does not affect the normal one-click launch and refuses native Windows.
-The test still uses the same WinMM/MCI 4:3 intro, GameFrame 60 FPS
-rendering and CDDA FLAC support. The expected unified session log
-contains `US_WINE_VIRTUAL_DDRAW enabled=1`,
+on Wine/Proton**; it does not affect the normal one-click launch and refuses
+native Windows. **For the current A/B build it also enables the exact same
+dedicated MCI video-surface Win32 procedure used by the validated native
+Windows FR mode**: native `WM_PAINT` / `BeginPaint` / `update movie hdc`,
+50 ms invalidation timer, bounded message pumping on the game's UI thread,
+and explicit foreground/z-order management. The host remains 4:3; the black
+parent and cover remain separate. This comparison deliberately replaces
+the former US/Wine `black_host_proc` movie destination only in this opt-in
+mode, as requested after the AVI host stayed above other applications in
+build #199. An MCI video behavior difference under Wine is possible and
+must be assessed in a real test, not assumed from successful compilation.
+
+The test still uses WinMM/MCI Cinepak decoding, GameFrame 60 FPS rendering
+and CDDA FLAC support. The expected unified session log contains
+`US_WINE_VIRTUAL_DDRAW enabled=1`,
+`US_WINE_VIRTUAL_VIDEO_CLASS registered=1`,
+`US_WINE_VIRTUAL_VIDEO_RENDER ... mci_update_in_wm_paint=1`,
+`US_WINE_VIRTUAL_VIDEO_PAINT`, `US_WINE_VIRTUAL_VIDEO_TIMER`,
+`US_WINE_VIRTUAL_VIDEO_MESSAGE_PUMP` and
+`US_WINE_VIDEO_FOCUS active=0/1`,
 `DDRAW_VIRTUAL_CREATE edition=US wine=1`, virtual `SetDisplayMode`
 and `DDRAW_NATIVE_SUMMARY ... us_wine_virtual=1 ... native_mode_forwarded=0`.
 
