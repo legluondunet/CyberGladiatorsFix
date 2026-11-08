@@ -136,6 +136,35 @@ pub fn track_end(tracks:&[Track],which:usize,total_sectors:u64)->Result<u64,Stri
     Ok(end)
 }
 
+/// Some valid single-BIN Red Book rips store an actual two-second pause as
+/// 150 all-zero raw sectors before AUDIO track 02, but omit INDEX 00.
+/// Recognize ONLY this exact, bounded anomaly: a first raw 2352-byte data
+/// track, next AUDIO track in the same BIN with no INDEX 00, and precisely
+/// 150 all-zero sectors immediately preceding the declared INDEX 01.
+/// This never skips nonzero/invalid data or modifies the original media.
+/// The prior data sectors and retail SHA-256 fingerprints remain mandatory.
+const UNINDEXED_AUDIO_PREGAP_SECTORS:u64=150;
+fn infer_unindexed_zero_audio_pregap(
+    input:&mut File, tracks:&[Track], sector_size:usize, total_sectors:u64
+)->Result<Option<u64>,String>{
+    if sector_size!=2352 || tracks.len()<2{return Ok(None);}
+    let data=&tracks[0];
+    let next=&tracks[1];
+    if next.mode!="AUDIO" || next.index00.is_some()
+        || !next.file.eq_ignore_ascii_case(&data.file)
+        || next.index01>total_sectors
+        || next.index01<data.index01.saturating_add(UNINDEXED_AUDIO_PREGAP_SECTORS+1)
+    {return Ok(None);}
+    let start=next.index01-UNINDEXED_AUDIO_PREGAP_SECTORS;
+    input.seek(SeekFrom::Start(start*2352)).map_err(|e|e.to_string())?;
+    let mut sector=[0u8;2352];
+    for _ in 0..UNINDEXED_AUDIO_PREGAP_SECTORS{
+        input.read_exact(&mut sector).map_err(|e|format!("Truncated BIN pregap: {e}"))?;
+        if sector.iter().any(|&byte|byte!=0){return Ok(None);}
+    }
+    Ok(Some(start))
+}
+
 pub fn normalize(cue:&Path, temp_dir:&Path)->Result<TempIso,String>{
     let tracks=tracks(cue)?;
     let data=&tracks[0];
@@ -152,7 +181,17 @@ pub fn normalize(cue:&Path, temp_dir:&Path)->Result<TempIso,String>{
         return Err("BIN size is invalid or does not align to sector size".into());
     }
     let total=len/sector_size as u64;
-    let end=track_end(&tracks,0,total)?;
+    let mut end=track_end(&tracks,0,total)?;
+    if let Some(inferred)=infer_unindexed_zero_audio_pregap(&mut input,&tracks,sector_size,total)?{
+        if inferred>=end || inferred<=data.index01 {
+            return Err("Invalid inferred CUE data-track boundary".into());
+        }
+        end=inferred;
+        crate::show(&format!(
+            "CUE_UNINDEXED_PREGAP inferred=1 following_audio_track={:02} zero_sectors={} boundary_sector={} original_index01_sector={} source_bin_unchanged=1",
+            tracks[1].number,UNINDEXED_AUDIO_PREGAP_SECTORS,end,tracks[1].index01
+        ),temp_dir);
+    }
     let output=temp_dir.join("CyberGladiatorsFix-disc.tmp.iso");
     let mut out=OpenOptions::new().create_new(true).write(true).open(&output)
         .map_err(|e|format!("Temporary ISO already exists or cannot be created ({}): {e}",output.display()))?;
@@ -320,6 +359,89 @@ FILE "Track 03.bin" BINARY
         assert!(!valid_relative("track.wav"));
         assert!(!valid_relative("disc.iso"));
         assert!(valid_relative("Track 02.BIN"));
+    }
+    #[test]
+    fn unindexed_150_sector_zero_pregap_matches_explicit_index00(){
+        let dir=std::env::temp_dir().join(format!(
+            "cyber-unindexed-pregap-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()
+        ));
+        fs::create_dir(&dir).unwrap();
+        let data_sectors=3usize;
+        let audio_start=data_sectors+UNINDEXED_AUDIO_PREGAP_SECTORS as usize;
+        let mut bin=vec![0u8;(audio_start+2)*2352];
+        for (i,sector) in bin.chunks_exact_mut(2352).take(data_sectors).enumerate(){
+            sector[..12].copy_from_slice(&[0,255,255,255,255,255,255,255,255,255,255,0]);
+            sector[15]=1;
+            sector[16..2064].fill(0x41+i as u8);
+        }
+        bin[audio_start*2352..].fill(0x37);
+        let bin_path=dir.join("CYBER.bin");
+        fs::write(&bin_path,&bin).unwrap();
+        let original_hash=crate::patch::digest(&bin);
+        let cue=dir.join("CYBER.cue");
+        let original_cue=concat!(
+            "FILE \"CYBER.bin\" BINARY\n",
+            " TRACK 01 MODE1/2352\n",
+            " INDEX 01 00:00:00\n",
+            " TRACK 02 AUDIO\n",
+            " INDEX 01 00:02:03\n",
+        );
+        fs::write(&cue,original_cue).unwrap();
+        let unindexed=normalize(&cue,&dir).unwrap();
+        let normalized=fs::read(&unindexed.0).unwrap();
+        assert_eq!(normalized.len(),data_sectors*2048);
+        assert_eq!(normalized[0],0x41);
+        assert_eq!(normalized[2048],0x42);
+        drop(unindexed);
+        let explicit_cue=original_cue.replace(
+            " TRACK 02 AUDIO\n",
+            " TRACK 02 AUDIO\n INDEX 00 00:00:03\n",
+        );
+        fs::write(&cue,&explicit_cue).unwrap();
+        let indexed=normalize(&cue,&dir).unwrap();
+        assert_eq!(fs::read(&indexed.0).unwrap(),normalized);
+        drop(indexed);
+        assert_eq!(crate::patch::digest(&fs::read(&bin_path).unwrap()),original_hash);
+        fs::write(&cue,original_cue).unwrap();
+        assert_eq!(fs::read_to_string(&cue).unwrap(),original_cue);
+        // A nonzero byte in the presumed pause must NOT be skipped.
+        bin[(data_sectors+65)*2352+26]=1;
+        fs::write(&bin_path,&bin).unwrap();
+        assert!(normalize(&cue,&dir).err().expect("malformed pause must be rejected").contains("Invalid raw CD sector sync pattern"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+    #[test]
+    fn unindexed_pregap_cannot_skip_valid_data_or_missing_audio(){
+        let mut bytes=vec![0u8;153*2352];
+        for sector in bytes.chunks_exact_mut(2352){
+            sector[..12].copy_from_slice(&[0,255,255,255,255,255,255,255,255,255,255,0]);
+            sector[15]=1;
+        }
+        let dir=std::env::temp_dir().join(format!("cyber-no-false-pregap-{}",std::process::id()));
+        let _=fs::remove_dir_all(&dir);
+        fs::create_dir(&dir).unwrap();
+        let file=dir.join("data.bin");
+        fs::write(&file,&bytes).unwrap();
+        let mut input=File::open(&file).unwrap();
+        let tracks=vec![
+            Track{number:1,file:"data.bin".into(),mode:"MODE1/2352".into(),
+                index00:None,index01:0},
+            Track{number:2,file:"data.bin".into(),mode:"AUDIO".into(),
+                index00:None,index01:153}
+        ];
+        assert_eq!(infer_unindexed_zero_audio_pregap(&mut input,&tracks,2352,153).unwrap(),None);
+        assert_eq!(infer_unindexed_zero_audio_pregap(&mut input,&tracks,2048,153).unwrap(),None);
+        let mut different_file=tracks.clone();
+        different_file[1].file="audio.bin".into();
+        assert_eq!(infer_unindexed_zero_audio_pregap(&mut input,&different_file,2352,153).unwrap(),None);
+        let mut indexed=tracks.clone();
+        indexed[1].index00=Some(3);
+        assert_eq!(infer_unindexed_zero_audio_pregap(&mut input,&indexed,2352,153).unwrap(),None);
+        drop(input);
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn same_file_boundary_uses_next_index00(){

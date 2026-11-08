@@ -20,6 +20,8 @@ On first run the launcher searches for the supported CD image, identifies the or
 
 If an installation exists but does not pass its checks, the launcher refuses to run rather than deleting or silently replacing user files. Only one CUE image in the launcher's directory is accepted without an explicit path. **Standalone ISO input is not supported yet.** Data-only dumps cannot provide the original CD music.
 
+**CUE/BIN compatibility:** Some single-BIN CD dumps (including the supplied CYBER.cue/CYBER.bin) store an actual two-second zero-filled pause before the first audio track but omit its INDEX 00. For a 2352-byte raw data track followed by AUDIO in the same BIN, CyberGladiatorsFix recognizes **exactly 150 consecutive all-zero sectors immediately preceding the first audio INDEX 01**. It excludes only that verified pause from the extracted ISO data; the original CUE and BIN are never modified, CDDA remains bounded by each declared INDEX 01, and every remaining data-sector sync/mode plus the authenticated retail EXE and resource hashes must still pass strict validation. Nonzero or malformed sectors are never silently skipped. Use --inspect-disc CYBER.cue to verify a disc read-only before installation.
+
 ## Installed layout
 
 ~~~text
