@@ -105,9 +105,9 @@ Useful commands:
 
 This is a pre-release testing artifact, NOT a public release.
 The baseline implementation and audit were merged into main on 2026-11-06.
-PR #6 (not yet merged) selects the common owned-COM DirectDraw/MCI engine
-automatically on normal launch and supports the verified original US CUE
-pregap. The default all-host selection has now been field-validated for both
+Merged PR #6 introduced the common owned-COM DirectDraw/MCI engine,
+selected automatically on normal launch, plus the verified original US
+CUE pregap compatibility. The default all-host selection has now been field-validated for both
 retail editions on Windows 11 and Wine-staging 11.17, including FR/Wine
 fresh install, first-key skip and complete movie playback. A public
 release must not claim universal hardware or window-manager compatibility.

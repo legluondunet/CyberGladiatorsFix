@@ -61,9 +61,9 @@ hashes before installing or patching. A single-BIN raw disc with a verified
 its original CUE omits INDEX 00; the source CUE/BIN are never rewritten.
 The same owned DirectDraw/MCI adapter is selected automatically for US/FR
 under Windows and Wine/Proton. No special launch mode is necessary;
-the French edition under Wine still requires field validation.
-Existing nGlide/developer commands are retained internally for forensic
-regression tests but are not needed for normal use.
+both original editions were field-tested on Windows 11 and Wine-staging 11.17.
+Older nGlide/developer diagnostics remain available for forensic testing
+but are never selected during normal one-click operation.
 ";
 fn show(s:&str,root:&Path){
     println!("{s}");
@@ -346,17 +346,12 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             autostart::prepare(root,None)?;
             return user_gameframe_launch(root);
         },
-        [one,two] if one.to_str()==Some("--launch")
-            && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root),
-        [one,two] if one.to_str()==Some("--launch")
-            && two.to_str()==Some("--fr-borderless-test")=>
-            return user_gameframe_launch(root),
-        // Historical A/B CLI aliases now launch the exact same common
-        // default path; no per-edition or per-host switch is needed.
-        [one,two] if one.to_str()==Some("--launch")
-            && two.to_str()==Some("--us-virtual-ddraw-test")=>
-            return user_gameframe_launch(root),
+        // Historical A/B names are aliases for the SAME common renderer.
+        // No edition-specific or host-specific engine is selected here.
+        [one,two] if one.to_str()==Some("--launch") && matches!(
+            two.to_str(),
+            Some("--gameframe"|"--gameframe-test"|"--fr-borderless-test"|"--us-virtual-ddraw-test")
+        )=>return user_gameframe_launch(root),
         // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")

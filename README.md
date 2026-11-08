@@ -6,12 +6,12 @@
 
 CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wine/Proton. It bundles two Windows x86 DLLs: **CyberGladiatorsFix.dll** (our WinMM/Cinepak video and FLAC audio bridge) and **GameFrame glide.dll** (an open-source Apache-2.0 Glide-to-OpenGL wrapper). It does not distribute Cyber Gladiators, its copyrighted assets or proprietary nGlide.
 
-**Pre-release field validation (2026-11-08):** **[PR #6](https://github.com/legluondunet/CyberGladiatorsFix/pull/6)** provides one project-owned DirectDraw v1 COM and MCI/WM_PAINT video implementation **automatically** for authenticated US and FR retail games under native Windows and Wine-staging 11.17, with small host-specific Alt+Tab/focus adapters. **All four edition/runtime combinations were tested successfully on the default launch:** US/Windows (complete ~40s AVI), FR/Windows (fresh original-CD installation, AVI skip, Alt+Tab), US/Wine (first-frame keyboard focus, XFCE fullscreen, Alt+Tab, AVI skip), and FR/Wine (fresh `CYBERG.cue` installation, second launch, complete ~39s AVI, Alt+Tab, keyboard skip, FLAC and clean exit). The original US `CYBER.cue` with an unindexed 150-sector zero pregap was also field-validated. This remains **pre-release testing**, not a general promise of compatibility with every GPU, Wine version or window manager. See [release readiness](docs/RELEASE_READINESS.md).
+**Pre-release field validation (2026-11-08):** Merged **[PR #6](https://github.com/legluondunet/CyberGladiatorsFix/pull/6)** introduced one project-owned DirectDraw v1 COM and MCI/WM_PAINT video implementation **automatically** for authenticated US and FR retail games under native Windows and Wine-staging 11.17, with small host-specific Alt+Tab/focus adapters. **All four edition/runtime combinations were tested successfully on the default launch:** US/Windows (complete ~40s AVI), FR/Windows (fresh original-CD installation, AVI skip, Alt+Tab), US/Wine (first-frame keyboard focus, XFCE fullscreen, Alt+Tab, AVI skip), and FR/Wine (fresh `CYBERG.cue` installation, second launch, complete ~39s AVI, Alt+Tab, keyboard skip, FLAC and clean exit). The original US `CYBER.cue` with an unindexed 150-sector zero pregap was also field-validated. This remains **pre-release testing**, not a general promise of compatibility with every GPU, Wine version or window manager. See [release readiness](docs/RELEASE_READINESS.md).
 
 ## Quick start
 
 1. For testing, download a successful [Windows x64 pre-release artifact](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml). The artifact includes `CyberGladiatorsFix.exe`, both open-source license notices, `README.txt`, and `SHA256SUMS.txt` to verify the downloaded files. This is **not** a published release.
-2. Put **CyberGladiatorsFix.exe** beside a supported original **US `CYBER.cue`/`CYBER.bin`** or **French `CYBERG.CUE`/`CYBERG.BIN`** image in a fresh writable folder. Both are authenticated by exact executable and media hashes; the new pregap tolerance is included in the PR #6 test build.
+2. Put **CyberGladiatorsFix.exe** beside a supported original **US `CYBER.cue`/`CYBER.bin`** or **French `CYBERG.CUE`/`CYBERG.BIN`** image in a fresh writable folder. Both are authenticated by exact executable and media hashes; the verified pregap compatibility is included in the current pre-release build.
 3. **Double-click CyberGladiatorsFix.exe**. Under Wine, run **wine CyberGladiatorsFix.exe**.
 
 **There is no need for --launch or an additional player.**
@@ -51,11 +51,11 @@ The CD audio is extracted without resampling to **FLAC, 44.1 kHz, stereo, 16-bit
 
 GameFrame renders the original **640×480** Glide game at the current display resolution, preserving the **4:3** aspect ratio with black side bars and a **60 FPS** frame limit. The original Cinepak AVI plays via the native WinMM/MCI player in a temporary fullscreen window. The handoff to the game is synchronized with the **first successful OpenGL SwapBuffers**, eliminating desktop flashes and the temporary 640×480 game window. A bounded timeout prevents a permanent black screen.
 
-**Windows/Wine DirectDraw compatibility (PR #6):** The original game requests exclusive DirectDraw **640×480×16** before the AVI. The default verified-edition launcher uses one **owned COM DirectDraw v1 adapter** that preserves the logical surface/mode state without requesting a physical monitor-mode change. It is not a fake success return or a system-wide vtable patch. A previous Wine-only native-dimension forwarding mechanism remains in legacy diagnostics but is not selected during normal launch. The same MCI/WM_PAINT video renderer serves both platforms; focus adaptations are chosen internally from the host runtime.
+**Windows/Wine DirectDraw compatibility:** The original game requests exclusive DirectDraw **640×480×16** before the AVI. The default verified-edition launcher uses one **owned COM DirectDraw v1 adapter** that preserves the logical surface/mode state without requesting a physical monitor-mode change. It is not a fake success return or a system-wide vtable patch. A previous Wine-only native-dimension forwarding mechanism remains in legacy diagnostics but is not selected during normal launch. The same MCI/WM_PAINT video renderer serves both platforms; focus adaptations are chosen internally from the host runtime.
 
 The one EXE embeds and validates both x86 DLLs before writing them. The GameFrame DLL remains installed after a fresh first run. If the player had a different valid glide.dll, it is backed up byte-for-byte and restored at the end of gameplay.
 
-## Automatic common DirectDraw / MCI engine (PR #6)
+## Automatic common DirectDraw / MCI engine
 
 **No platform- or edition-specific command is required.** Start `CyberGladiatorsFix.exe` normally on Windows, or `wine CyberGladiatorsFix.exe` on Linux. After verifying the retail edition, the launcher automatically selects one owned DirectDraw COM adapter, 640×480×16 logical surfaces, native MCI/WM_PAINT 4:3 AVI playback, WinMM/FLAC and first-real-OpenGL-present handoff. No physical display-mode switch is requested by the owned adapter; system DirectDraw vtables are untouched.
 
@@ -68,7 +68,7 @@ The one EXE embeds and validates both x86 DLLs before writing them. The GameFram
 
 The engine is selected automatically via an internal, child-scoped `CYBER_VIRTUAL_DDRAW=1` value after exact retail SHA-256 authentication. **Users do not set this variable.** The only host-specific code concerns the operating system's window-manager behavior: native Windows temporarily hides the black game HWND from Alt+Tab during the AVI (then restores its exact style), whereas Wine uses reversible host unmap and bounded minimize/restore. Both adaptations use the **same** video/DirectDraw/WinMM components and are not alternative player implementations.
 
-The old `--fr-borderless-test` and `--us-virtual-ddraw-test` options, if used from existing scripts, are backward-compatible aliases for the *same* normal engine; they do not select separate paths. Legacy nGlide and original Wine DirectDraw experiments remain isolated from the normal user path.
+The historical A/B command aliases remain compatible with old test scripts, but they select the *same* common engine and are not required or documented as user commands. Legacy nGlide, DXVK and original Wine DirectDraw experiments remain isolated from normal gameplay. See the [post-merge cleanup audit](docs/POST_MERGE_AUDIT.md) for the retained diagnostics and deleted dead code.
 
 ## Commands
 
