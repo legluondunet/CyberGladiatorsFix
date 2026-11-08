@@ -129,6 +129,12 @@ fn wine_version()->Option<String>{
     if ptr.is_null(){return None;}
     Some(clean(&unsafe{CStr::from_ptr(ptr)}.to_string_lossy()))
 }
+/// The single launcher source of truth for selecting native-Windows-only
+/// compatibility behavior. The x86 child still receives an explicit
+/// edition-scoped flag; inherited caller environment is not trusted.
+pub fn is_native_windows()->bool{
+    wine_version().is_none()
+}
 fn physical_memory()->String{
     let mut m=MemoryStatus{
         length:std::mem::size_of::<MemoryStatus>() as u32,
