@@ -53,8 +53,15 @@ rather than only the video window changing size.
      **original FR backup**, limited to executable PE32 sections. A candidate
      `call_vtable_slot21` or `mov_vtable_slot21` means an x86 instruction
      **might** access DirectDraw v1 slot 21 (+0x54), not proof that the instruction
-     executes or that the pointer belongs to IDirectDraw. Only 24 candidate
-     instruction excerpts are written to the unified log, never the EXE.
+     executes or that the pointer belongs to IDirectDraw. Starting with the
+     static follow-up build, `slot21_calls` and `slot21_loads` are counted
+     separately, **all indirect-call candidates** are listed (up to a limit
+     of 64), and the known `0x00405EB7` wrapper is checked against its
+     exact verified byte signature. The `wrapper_caller` lines record
+     possible x86 `CALL rel32` instructions into the wrapper and bounded
+     surrounding bytes that may reveal 640×480×16 setup parameters.
+     These are byte-pattern findings, not a complete disassembly or a
+     confirmed execution trace. No proprietary EXE is logged or exported.
      No executable modification, runtime hook, or display-mode call occurs.
    - `GAMEFRAME_FR_DISPLAY stage=before_grGlideInit`,
      `before_grSstOpen`, `after_grSstOpen`: screen geometry at the earliest
