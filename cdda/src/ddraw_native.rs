@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Wine-only DirectDraw v1 display-size compatibility for the verified game.
+//! DirectDraw v1 compatibility: field-validated native FR owned COM
+//! virtualization; an isolated US Wine A/B uses that same owned adapter.
+//! Ordinary US Wine launches retain their validated native forwarding.
 //!
 //! The verified Cyber Gladiators retail game requests fullscreen exclusive
 //! DirectDraw 640x480x16 twice before opening its native MCI AVI. Wine changes
@@ -37,6 +39,7 @@ static INITIALIZED:AtomicBool=AtomicBool::new(false);
 static IMPORT_FOUND:AtomicBool=AtomicBool::new(false);
 static ENABLED:AtomicBool=AtomicBool::new(false);
 static NATIVE_VIRTUAL:AtomicBool=AtomicBool::new(false);
+static US_WINE_VIRTUAL:AtomicBool=AtomicBool::new(false);
 static VIRTUAL_OBJECTS:AtomicU32=AtomicU32::new(0);
 static NATIVE_W:AtomicU32=AtomicU32::new(0);
 static NATIVE_H:AtomicU32=AtomicU32::new(0);
@@ -92,6 +95,14 @@ unsafe fn env_is_fr()->bool{
         buf.as_mut_ptr(),buf.len() as u32
     );
     n==2 && buf[0]==b'F' as i8 &&buf[1]==b'R' as i8
+}
+unsafe fn env_is_us()->bool{
+    let mut buf=[0i8;5];
+    let n=GetEnvironmentVariableA(
+        b"CYBER_GAME_EDITION\0".as_ptr().cast(),
+        buf.as_mut_ptr(),buf.len() as u32
+    );
+    n==2 && buf[0]==b'U' as i8 &&buf[1]==b'S' as i8
 }
 fn parse_native_desktop(input:&str)->Option<(u32,u32)>{
     let (w,h)=input.split_once('x')?;
@@ -178,9 +189,15 @@ unsafe extern "C" fn initialize(){
     let native_fr_virtual=!wine
         &&env_is_one(b"CYBER_FR_VIRTUAL_DDRAW\0")
         &&env_is_fr();
-    if native_fr_virtual {
-        // Opt-in and FR only. Without the exact feature flag, native
-        // Windows executes the unchanged, previously validated path.
+    let us_wine_virtual=wine
+        &&env_is_one(b"CYBER_US_WINE_VIRTUAL_DDRAW\0")
+        &&env_is_us();
+    if native_fr_virtual || us_wine_virtual {
+        // Native FR uses the previously validated project-owned COM proxy.
+        // The explicit US Wine experiment reuses that same COM adapter,
+        // bypassing the separate vtable-shadow/native SetDisplayMode
+        // forwarding. Normal US Wine launches remain unchanged.
+        US_WINE_VIRTUAL.store(us_wine_virtual,Ordering::Release);
         NATIVE_VIRTUAL.store(true,Ordering::Release);
         INSTALLED.store(hook_ddraw_create(),Ordering::Release);
         return;
@@ -208,7 +225,9 @@ unsafe extern "system" fn forward_ddraw_create(
         let wrapped=cyber_wrap_existing_ddraw(out);
         if wrapped==0 {VIRTUAL_OBJECTS.fetch_add(1,Ordering::Relaxed);}
         super::log(&format!(
-            "DDRAW_VIRTUAL_CREATE native_FR=1 native_vtable_modified=0 wrapper_owned=1 original_hr={hr:#010x} wrapped_hr={wrapped:#010x}"
+            "DDRAW_VIRTUAL_CREATE edition={} wine={} native_vtable_modified=0 wrapper_owned=1 original_hr={hr:#010x} wrapped_hr={wrapped:#010x}",
+            if US_WINE_VIRTUAL.load(Ordering::Acquire){"US"}else{"FR"},
+            u8::from(US_WINE_VIRTUAL.load(Ordering::Acquire))
         ));
         return wrapped;
     }
@@ -288,10 +307,11 @@ unsafe extern "system" fn forward_ddraw_setmode(
 pub fn report_once(){
     if REPORTED.swap(true,Ordering::AcqRel){return;}
     super::log(&format!(
-        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} native_FR_virtual={} virtual_objects={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
+        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} owned_virtual={} us_wine_virtual={} virtual_objects={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
         u8::from(INITIALIZED.load(Ordering::Acquire)),
         u8::from(ENABLED.load(Ordering::Acquire)),
         u8::from(NATIVE_VIRTUAL.load(Ordering::Acquire)),
+        u8::from(US_WINE_VIRTUAL.load(Ordering::Acquire)),
         VIRTUAL_OBJECTS.load(Ordering::Acquire),
         u8::from(IMPORT_FOUND.load(Ordering::Acquire)),
         u8::from(INSTALLED.load(Ordering::Acquire)),
