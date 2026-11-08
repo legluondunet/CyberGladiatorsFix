@@ -125,11 +125,11 @@ const SW_HIDE:i32=0;
 const SW_SHOW:i32=5;
 const SW_SHOWNOACTIVATE:i32=4;
 const SW_MINIMIZE:i32=6;
-const VIDEO_LEAD_IN_MS:u64=1000; // only used by --smooth-video-test
+const VIDEO_LEAD_IN_MS:u64=1000; // shared default AVI pre-roll, not an A/B switch
 // One deterministic 1-second hold runs in the MCI close call *before* the
 // verified game can return to nGlide / resume its 3D display.
 const INITIAL_FRAME_COVER_MS:u32=300; // trial: let Cinepak decode behind black
-const TRANSITION_DELAY_MS:u64=1000; // only used by --smooth-video-test
+const TRANSITION_DELAY_MS:u64=1000; // shared default black handoff curtain
 // Never expose the desktop between the final black host and nGlide startup.
 // Once the 1-second hold ends, let 3D initialize underneath the retained host.
 // The original game's 3dfx-state DWORD comes from the existing trace module.
@@ -176,17 +176,6 @@ static VIRTUAL_MCI_SURFACE_TIMER_COUNT:AtomicU32=AtomicU32::new(0);
 static KEY_FILTER_ACTIVE:AtomicBool=AtomicBool::new(false);
 static VIRTUAL_AVI_PUMP_POLLS:AtomicU32=AtomicU32::new(0);
 static VIRTUAL_AVI_PUMP_MESSAGES:AtomicU32=AtomicU32::new(0);
-static VIRTUAL_AVI_MCI_REFRESH:OnceLock<Mutex<VirtualMciRefresh>>=OnceLock::new();
-#[derive(Default)]
-struct VirtualMciRefresh {
-    last:Option<Instant>,
-    requests:u32,
-    failures:u32,
-    disabled:bool,
-}
-fn virtual_mci_refresh()->&'static Mutex<VirtualMciRefresh>{
-    VIRTUAL_AVI_MCI_REFRESH.get_or_init(||Mutex::new(VirtualMciRefresh::default()))
-}
 unsafe extern "C" {
     // The canonical Win32 MSG ABI is compiled in the project-owned
     // C++ bridge; this Rust module never guesses MSG structure alignment.
@@ -776,8 +765,8 @@ fn video_surface_style(smooth:bool)->u32 {
     // theme-dependent COLOR_3DDKSHADOW (which can look gray).
     WS_CHILD|if smooth{0}else{SS_BLACKRECT|WS_VISIBLE}
 }
-fn video_surface_class_for(smooth:bool,virtual_fr:bool)->&'static [u8]{
-    if smooth && virtual_fr{VIRTUAL_VIDEO_CLASS}
+fn video_surface_class_for(smooth:bool,virtual_video:bool)->&'static [u8]{
+    if smooth && virtual_video{VIRTUAL_VIDEO_CLASS}
     else if smooth{HOST_CLASS}else{b"STATIC\0"}
 }
 fn video_surface_class(smooth:bool)->&'static [u8]{
@@ -1269,20 +1258,17 @@ fn close_host(reason:&str){
 /// visible with a synchronous hold AFTER the guarded WndProc repair. This
 /// prevents the game from reaching the next nGlide/3D phase until the hold
 /// ends, rather than repeatedly raising a competing fullscreen window.
-fn should_pump_virtual_avi(status_ok:bool,is_status:bool,virtual_fr:bool,keys_active:bool)->bool{
-    status_ok&&is_status&&virtual_fr&&keys_active
+fn should_pump_virtual_avi(status_ok:bool,is_status:bool,virtual_video:bool,keys_active:bool)->bool{
+    status_ok&&is_status&&virtual_video&&keys_active
 }
-/// The legacy game busy-polls WinMM throughout its roughly 40-second AVI
-/// without processing ordinary window messages. This can make a genuine
-/// NON-exclusive borderless HWND appear hung to Windows even while the
-/// movie continues playing. The experiment pumps up to 16 queued messages
-/// on the same UI thread at each MCI status poll, instead of synthesizing
-/// a second window loop. The C++ adapter preserves WM_QUIT and guards
-/// against nested pumps, without editing the real display mode.
+/// The original game busy-polls WinMM throughout its roughly 40-second AVI
+/// without dispatching Win32 messages. The common DirectDraw/MCI path pumps
+/// at most 16 messages on the existing game UI thread per status poll,
+/// letting the video HWND repaint on Windows and Wine. The Win32 adapter
+/// preserves WM_QUIT, prevents reentrancy, and never switches display mode.
 pub fn pump_virtual_avi_messages(command:&str,result:u32){
-    // Same bounded native Win32 message dispatch as field-validated Windows
-    // FR, now also when the US/Wine COM-owned DirectDraw experiment selects
-    // its exact same custom MCI video-surface implementation.
+    // This bounded Win32 dispatcher is shared by both retail editions
+    // on Windows and Wine; it is not an edition-specific A/B path.
     let virtual_mci=virtual_mci_surface_enabled()&&gameframe_first_present_handoff();
     if !should_pump_virtual_avi(
         result==0,command.trim().eq_ignore_ascii_case("status movie mode"),
@@ -1300,71 +1286,6 @@ pub fn pump_virtual_avi_messages(command:&str,result:u32){
         video_log(&format!(
             "{}_MESSAGE_PUMP polls={polls} dispatched_total={} last_batch={count} max_per_status=16 normal_mode=disabled win32_msg_queue_serviced=1",
             virtual_mci_log_prefix(),VIRTUAL_AVI_PUMP_MESSAGES.load(Ordering::Relaxed)
-        ));
-    }
-}
-/// MCIAVI is still playing after a frozen frame, and Alt+Tab temporarily
-/// makes the image advance. Window-message pumping alone did not fix the
-/// renderer. In this *experimental FR non-exclusive mode only*, periodically
-/// ask the **native MCI driver** to repaint the current frame to a valid DC.
-/// Do not invalidate our black-painted host: painting the parent would erase
-/// the video rather than refreshing it.
-///
-/// The returned HWND is owned by the same MCI/game UI thread. The WinMM
-/// caller must release the DC, perform the native MCI update without holding
-/// any host mutex, and report the return code. An unsupported update is
-/// disabled after the first failure to preserve ordinary playback.
-fn mci_refresh_is_due(now:Instant,last:&mut Option<Instant>,interval:Duration)->bool{
-    match *last {
-        Some(previous) if now.saturating_duration_since(previous)<interval=>false,
-        _=>{
-            *last=Some(now);
-            true
-        }
-    }
-}
-pub fn virtual_fr_movie_repaint_target(command:&str,code:u32,reply:&str)->Option<usize>{
-    if code!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
-        || !reply.trim().eq_ignore_ascii_case("playing")
-        || !owned_virtual_ddraw_requested()
-        || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
-        || !gameframe_first_present_handoff()
-        || !KEY_FILTER_ACTIVE.load(Ordering::Acquire){
-        return None;
-    }
-    let host=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
-    unsafe {
-        if host.owner_thread!=GetCurrentThreadId()
-            || IsWindow(host.surface as *mut c_void)==0
-            || IsWindowVisible(host.surface as *mut c_void)==0 {
-            return None;
-        }
-    }
-    let mut guard=virtual_mci_refresh().lock().unwrap_or_else(|e|e.into_inner());
-    if guard.disabled{return None;}
-    // Avoid any repaint while the original AVI pre-roll cover is active.
-    // Initial call starts the clock without issuing MCI commands.
-    let now=Instant::now();
-    if guard.last.is_none(){
-        guard.last=Some(now);
-        return None;
-    }
-    if !mci_refresh_is_due(now,&mut guard.last,Duration::from_millis(500)){
-        return None;
-    }
-    guard.requests=guard.requests.saturating_add(1);
-    Some(host.surface)
-}
-pub fn virtual_fr_movie_repaint_result(code:u32,has_dc:bool){
-    let mut guard=virtual_mci_refresh().lock().unwrap_or_else(|e|e.into_inner());
-    if !has_dc||code!=0 {
-        guard.failures=guard.failures.saturating_add(1);
-        guard.disabled=true; // fail closed; do not repeat unsupported updates
-    }
-    if guard.requests<=3 || guard.requests%20==0 || guard.disabled {
-        video_log(&format!(
-            "FR_VIRTUAL_MCI_FRAME_REFRESH requests={} result={code} hdc_acquired={}              disabled={} failures={} interval_ms=500 paint_method=native_MCI_UPDATE              physical_resolution_unchanged=1",
-            guard.requests,u8::from(has_dc),u8::from(guard.disabled),guard.failures
         ));
     }
 }
@@ -1938,17 +1859,16 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
     None
 }
 
-/// The no-activate, always-on-top MCI AVI host must leave the foreground
-/// when the player Alt+Tabs away. Native Windows FR already uses the focus
-/// transition below, additionally resizing the destination after any actual
-/// desktop mode restoration. US + Wine's *owned* DirectDraw A/B mode needs
-/// ONLY that focus/z-order repair: the desktop and MCI dimensions stay stable
-/// and changing its already-working MCI rendering/resize is undesirable.
+/// During native MCI playback, the game's original UI thread manages the
+/// separate AVI host's visibility and the original game HWND's Alt+Tab state.
+/// Native Windows retains its verified switcher-style policy; Wine restores
+/// keyboard ownership once and reversibly hides/minimizes only this game's
+/// windows when a different application takes focus.
 ///
-/// Called after the original "status movie mode" on the game's UI thread;
-/// neither route activates/minimizes windows or changes a display mode.
-/// Only native FR may return an updated native MCI destination string.
-fn experimental_movie_focus_profiles(native_fr:bool,wine_virtual:bool)->bool{
+/// Called after "status movie mode" on the original UI thread. Do not
+/// activate an unrelated application or change the physical display mode.
+/// A native-FR display-mode recovery may return an updated MCI destination.
+fn managed_movie_focus_profiles(native_fr:bool,wine_virtual:bool)->bool{
     native_fr||wine_virtual
 }
 // The managed Wine/EWMH fullscreen popup can remain above the active Linux
@@ -1967,34 +1887,32 @@ fn should_transfer_initial_avi_keyboard_focus(
 fn expected_virtual_avi_host_visibility(wine_virtual:bool,active:bool)->Option<bool>{
     wine_virtual.then_some(active)
 }
-// The separate EWMH fullscreen AVI host is not the only possible visible
-// surface. The game HWND can continue showing an opaque black frame behind
-// it while Glide is in passthrough mode. A managed X11/Wayland window may
-// ignore Win32 HWND_BOTTOM, so an explicit, reversible *minimization* of the
-// original game window is tested when the player switches away during MCI.
-// Retain this as a distinct A/B policy: native FR and normal US/Wine must
-// never minimize the game through this path.
+// The EWMH fullscreen AVI host is not the only possible surface. Under Wine
+// the original game HWND may remain an opaque black frame behind it.
+// Some window managers ignore HWND_BOTTOM, so this bounded, reversible
+// game minimization is used only while an unrelated app has foreground.
+// It is never used by either native-Windows edition.
 fn should_minimize_wine_game(
     wine_virtual:bool,active:bool,iconic:bool,
     attempts:u8,elapsed:Option<Duration>
 )->bool{
-    // Some Wine window managers reject or immediately undo minimization.
-    // A bounded, throttled experiment must not issue 100 ShowWindow calls
-    // per second while the game busy-polls MCI status.
+    // Some Wine window managers reject or undo minimization. Bound and
+    // throttle attempts so the busy-polling game cannot flood ShowWindow.
     wine_virtual && !active && !iconic && attempts<3
         && elapsed.is_none_or(|d|d>=Duration::from_millis(500))
 }
-pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString>{
+pub fn refresh_managed_movie_focus(command:&str,result:u32)->Option<CString>{
     if result!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
         || !gameframe_first_present_handoff(){return None;}
     let native_fr=std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
         &&std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
-    // Native US reuses the Windows FR focus and geometry pathway.
-    // Wine US alone applies extra fullscreen unmap/minimize adaptations.
+    // The same MCI host uses a host-specific focus policy: both native
+    // editions share native switcher handling; both Wine editions share
+    // reversible host visibility/minimize and first-key focus transfer.
     let us_native_virtual=us_native_virtual_mci_profile();
     let native_focus=native_fr || us_native_virtual;
     let wine_virtual=wine_virtual_mci_profile();
-    if !experimental_movie_focus_profiles(native_focus,wine_virtual){return None;}
+    if !managed_movie_focus_profiles(native_focus,wine_virtual){return None;}
     // Snapshot under the mutex and release it BEFORE synchronous Win32
     // SetWindowPos: native window messages can reenter the WinMM bridge.
     let h=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
@@ -2295,10 +2213,10 @@ mod fullscreen_tests {
     }
     #[test]
     fn wine_virtual_focus_is_its_own_profile_and_other_paths_remain_unmodified(){
-        assert!(experimental_movie_focus_profiles(true,false));
-        assert!(experimental_movie_focus_profiles(false,true));
-        assert!(!experimental_movie_focus_profiles(false,false));
-        assert!(experimental_movie_focus_profiles(true,true));
+        assert!(managed_movie_focus_profiles(true,false));
+        assert!(managed_movie_focus_profiles(false,true));
+        assert!(!managed_movie_focus_profiles(false,false));
+        assert!(managed_movie_focus_profiles(true,true));
     }
     #[test]
     fn us_wine_black_curtain_never_reappears_over_foreground_application(){
@@ -2533,20 +2451,6 @@ mod fullscreen_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn mci_repaint_throttle_never_repaints_faster_than_interval(){
-        let now=Instant::now();
-        let mut last=None;
-        assert!(mci_refresh_is_due(now,&mut last,Duration::from_millis(500)));
-        assert!(!mci_refresh_is_due(now+Duration::from_millis(499),
-            &mut last,Duration::from_millis(500)));
-        assert!(mci_refresh_is_due(now+Duration::from_millis(500),
-            &mut last,Duration::from_millis(500)));
-        assert!(!mci_refresh_is_due(now+Duration::from_millis(600),
-            &mut last,Duration::from_millis(500)));
-        assert!(mci_refresh_is_due(now+Duration::from_millis(1000),
-            &mut last,Duration::from_millis(500)));
-    }
     #[test]
     fn shared_video_painter_serves_all_authenticated_editions(){
         assert!(virtual_mci_profile(true,true));

@@ -3,8 +3,8 @@
 //! virtual CD-audio device are intercepted, controlled by the launcher's
 //! CYBER_CDDA_MUSIC setting. When disabled, CDDA commands also forward to
 //! native WinMM. The same DLL still handles native fullscreen MCIAVI,
-//! Wine-only DirectDraw geometry correction for GameFrame, and legacy
-//! opt-in WineD3D/DXVK diagnostics. This avoids a separate AVI player and
+//! shared DirectDraw geometry handling for GameFrame, and legacy opt-in
+//! WineD3D/DXVK diagnostics. This avoids a separate AVI player and
 //! preserves the caller's music preference independently of video.
 //! This DLL is loaded by an exact SHA-256-gated import-name patch to CYBER.EXE;
 //! it is never installed as a system-wide winmm.dll.
@@ -14,7 +14,6 @@ mod video_trace;
 mod glide_trace;
 mod exception_trace;
 mod ddraw_native;
-mod virtual_ddraw;
 
 /// Called by the experimental project-owned C++ DirectDraw v1 adapter.
 /// Diagnostic strings are internal fixed literals/formatting, not input from
@@ -386,8 +385,8 @@ pub unsafe extern "system" fn mciSendStringA(
 )->u32 {
     let entry=std::time::Instant::now();
     mark_trace_session_once();
-    // Report the verified Wine-only DirectDraw interception at the first
-    // native MCI video command. This is the single unified session log.
+    // Report the shared owned-COM DirectDraw state once at the first
+    // native MCI command, in the same unified session log.
     ddraw_native::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
@@ -406,35 +405,31 @@ pub unsafe extern "system" fn mciSendStringA(
         }
         if let Some(entry)=video_trace::before(text){log(&entry);}
     }
-    // Preserve the original WinMM timeline. 4:3 is established by rewriting
-    // only three recognized MCI window/rectangle commands. The opt-in smooth
-    // experiment prepares a black host earlier and releases it later.
-    // The temporary host must exist BEFORE the native WinMM "open avivideo"
-    // can briefly paint its uninitialized gray window. This is strictly
-    // opt-in, and falls back harmlessly if the verified game HWND is absent.
+    // Preserve the original WinMM timeline. The shared 4:3 adapter rewrites
+    // only the game's recognized MCI window/rectangle commands. The black
+    // host is prepared before the native "open avivideo" command, avoiding
+    // an uninitialized gray flash on both Windows and Wine. Fail open if
+    // the verified game HWND is unavailable.
     if let Some(ref text)=command {video_trace::before_mci_open(text);}
     let substitute=command.as_deref().and_then(video_trace::rewrite_for_4_3);
-    // Opt-in trial: hold the already-painted black AVI host for one second
-    // before starting the original MCI movie. In the validated normal launch
-    // this function is a no-op, and WinMM playback is forwarded immediately.
+    // The default 4:3 flow keeps the black host visible through the bounded
+    // pre-roll before forwarding the game's original MCI movie command.
     if let Some(ref text)=command {video_trace::before_mci_play(text);}
     let mut result=native(substitute.as_ref().map_or(cmd,|v|v.as_ptr()),out,len,hwnd);
     if let Some(ref text)=command {
         video_trace::on_4_3_command_result(text,substitute.is_some(),result);
-        // Both explicit DirectDraw virtualization A/B modes must release
-        // their independent TOPMOST AVI host when another app has focus.
-        // Native FR may additionally need a new MCI destination after a
-        // mode transition; US Wine already has fixed desktop geometry.
-        // Only a native-FR resize returns a command to forward to real
-        // system WinMM, never through our proxy.
-        if let Some(destination)=video_trace::refresh_experimental_movie_focus(text,result){
+        // The shared focus policy releases the temporary AVI host while an
+        // unrelated app has foreground, preserving Alt+Tab. Only a native
+        // display-mode recovery may return an updated MCI destination to
+        // forward to the real system WinMM, never to this proxy.
+        if let Some(destination)=video_trace::refresh_managed_movie_focus(text,result){
             let code=native(destination.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut());
             video_trace::native_fr_resize_mci_result(code);
         }
-        // During the experimental non-exclusive FR mode only, the legacy
-        // polling loop no longer leaves the original game HWND unresponsive
-        // to Windows for the full MCI movie. Dispatch occurs outside every
-        // WinMM/host mutex, and the normal verified launch is unaffected.
+        // On every verified US/FR Windows/Wine default launch, service a
+        // bounded set of messages on the game's original UI thread so the
+        // fullscreen AVI surface keeps painting. Dispatch occurs outside
+        // every WinMM/host mutex.
         video_trace::pump_virtual_avi_messages(text,result);
         if result!=0 && substitute.is_some() && video_trace::movie_open_game_hwnd_for_retry(text){
             // An unsupported child-style MCI driver must not prevent game
@@ -451,15 +446,13 @@ pub unsafe extern "system" fn mciSendStringA(
             String::from_utf8_lossy(&bytes[..end]).into_owned()
         }else{String::new()};
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
-        // The status-poll MCI_UPDATE experiment (#192) returned success
-        // but did not advance visible frames. The native FR virtual mode now
-        // repaints from the MCI destination's dedicated WM_PAINT handler,
-        // with a genuine BeginPaint HDC, not a busy-poll/GetDC loop.
+        // The common native MCI destination uses a dedicated WM_PAINT
+        // handler and a genuine BeginPaint HDC. The abandoned status-poll
+        // MCI_UPDATE experiment is no longer part of the runtime.
         if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
-            // The normal launch has already removed its video host.
-            // Only --smooth-video-test may leave a no-activate black
-            // curtain temporarily visible. The guarded WndProc repair stays
-            // at the exact same MCI close boundary as the validated build.
+            // The default first-OpenGL-present handoff retains the black
+            // curtain until a real Glide frame is available. The guarded
+            // diagnostic WndProc repair stays at the original MCI boundary.
             glide_trace::after_video_close();
             glide_trace::maybe_repair_windowproc_after_video_close();
             // Preserve the known-good guarded repair point, then hold the
