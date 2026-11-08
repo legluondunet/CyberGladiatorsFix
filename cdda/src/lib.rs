@@ -419,12 +419,13 @@ pub unsafe extern "system" fn mciSendStringA(
     let mut result=native(substitute.as_ref().map_or(cmd,|v|v.as_ptr()),out,len,hwnd);
     if let Some(ref text)=command {
         video_trace::on_4_3_command_result(text,substitute.is_some(),result);
-        // During verified native-Windows FR MCI playback, Alt+Tab can
-        // restore the desktop from 640x480 to its prelaunch size. Resize
-        // the temporary host and forward ONE updated movie destination
-        // through the actual system WinMM export, never our wrapper.
-        // The current status reply/result remain untouched.
-        if let Some(destination)=video_trace::native_fr_refresh_during_movie(text,result){
+        // Both explicit DirectDraw virtualization A/B modes must release
+        // their independent TOPMOST AVI host when another app has focus.
+        // Native FR may additionally need a new MCI destination after a
+        // mode transition; US Wine already has fixed desktop geometry.
+        // Only a native-FR resize returns a command to forward to real
+        // system WinMM, never through our proxy.
+        if let Some(destination)=video_trace::refresh_experimental_movie_focus(text,result){
             let code=native(destination.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut());
             video_trace::native_fr_resize_mci_result(code);
         }
