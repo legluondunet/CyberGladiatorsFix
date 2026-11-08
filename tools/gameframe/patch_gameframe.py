@@ -188,16 +188,6 @@ fn cyber_fr_readonly_display_probe(stage: &str) {
     src = replace_one(src, '    shim::call!("grGlideInit");',
         '    cyber_fr_readonly_display_probe("before_grGlideInit");\n    shim::call!("grGlideInit");',
         "early Glide initialization probe")
-    # Opt-in native FR only: patch the verified game's *loaded RAM*, never
-    # its on-disk EXE, before the original DirectDraw mode requests.
-    # All site signatures must match or no changes are attempted.
-    mode_source = Path(__file__).with_name("fr_native_mode_test.rs").read_text(encoding="utf-8")
-    src = replace_one(src, display_marker, mode_source + "\n" + display_marker,
-        "add native FR experimental in-memory arguments")
-    src = replace_one(src, '    cyber_fr_readonly_display_probe("before_grGlideInit");',
-        '    cyber_fr_readonly_display_probe("before_grGlideInit");\n    cyber_fr_native_mode_test_apply();',
-        "apply opt-in native FR experiment before Glide init")
-
     src = replace_one(src, '    shim::call!("grSstOpen", res, refresh, format, origin, smoothing, buffers);',
         '    cyber_fr_readonly_display_probe("before_grSstOpen");\n    shim::call!("grSstOpen", res, refresh, format, origin, smoothing, buffers);',
         "before Glide resolution open")
