@@ -241,6 +241,16 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
     cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
+    // Use the same checked-out source revision as --version and the log.
+    // Set a fresh child-scoped value so inherited environment variables
+    // cannot replace our signature with a stale or unrelated version.
+    let menu_signature=format!(
+        "CyberGladiatorsFix v{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT")
+    );
+    cmd.env("CYBER_GAMEFRAME_MENU_SIGNATURE",&menu_signature);
+    crate::show(&format!(
+        "GAMEFRAME_MENU_SIGNATURE enabled=1 source=launcher_version_commit placement=upper_left_transparent detection=two_green_player_captions runtime=OpenGL text={menu_signature}"
+    ),root);
     // The former Wine mode-forwarding fallback remains in diagnostic code,
     // but is off for ALL normal US/FR Windows/Wine launches.
     cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","0");
