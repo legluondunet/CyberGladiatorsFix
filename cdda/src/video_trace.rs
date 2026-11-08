@@ -1935,7 +1935,7 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
         enable_movie_keys();
     }
     if command.eq_ignore_ascii_case("close movie"){
-        stop_virtual_mci_video_surface("close_movie");
+        unsafe{stop_virtual_mci_video_surface("close_movie")};
         timing("MCI_MOVIE_CLOSED");
     }
     if command.eq_ignore_ascii_case("close avivideo"){
