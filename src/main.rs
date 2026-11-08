@@ -59,8 +59,9 @@ Both US and French retail discs are authenticated by exact EXE and resource
 hashes before installing or patching. A single-BIN raw disc with a verified
 150-sector zero pause before the first AUDIO INDEX 01 is accepted even when
 its original CUE omits INDEX 00; the source CUE/BIN are never rewritten.
-Shared owned-COM DirectDraw/MCI profiles are opt-in tests only; the French
-Wine virtual-DirectDraw profile is not yet enabled or field-validated.
+The same owned DirectDraw/MCI adapter is selected automatically for US/FR
+under Windows and Wine/Proton. No special --launch/test flag is necessary;
+the French edition under Wine still requires a field validation.
 Existing nGlide/developer commands are retained internally for forensic
 regression tests but are not needed for normal use.
 ";
@@ -212,7 +213,7 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
 /// renderer. Legacy nGlide diagnostics are kept separately for developers.
-fn user_gameframe_launch(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:bool)->Result<(),String>{
+fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
@@ -228,13 +229,7 @@ fn user_gameframe_launch(root:&Path,fr_borderless_test:bool,us_wine_virtual_test
     }else{
         None
     };
-    if us_wine_virtual_test && diagnostics::is_native_windows() {
-        show(&format!(
-            "US_NATIVE_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn {}",
-            diagnostics::prelaunch_display_modes()
-        ),root);
-    }
-    let child=verify::launch_gameframe(root,fr_borderless_test,us_wine_virtual_test)?;
+    let child=verify::launch_gameframe(root)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
@@ -243,20 +238,11 @@ fn user_gameframe_launch(root:&Path,fr_borderless_test:bool,us_wine_virtual_test
     // Stop/join the read-only sampler before the final launcher snapshot.
     // It has no authority to restore or modify the user's desktop mode.
     drop(display_watch);
-    if us_wine_virtual_test && diagnostics::is_native_windows() {
+    // Read-only after-game audit for both native Windows retail editions;
+    // the common DirectDraw adapter never requests a physical mode change.
+    if diagnostics::is_native_windows(){
         show(&format!(
-            "US_NATIVE_DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
-            diagnostics::prelaunch_display_modes()
-        ),root);
-    }
-    // Native FR's retail game switches Windows to 640x480x16 during its AVI.
-    // Alt+Tab restores geometry but can leave the current mode at 16 bpp.
-    // Observe the mode *after the process exits* before considering any
-    // corrective action. This is a read-only Windows query, not a restore.
-    if diagnostics::is_native_windows()
-        && crate::fr_patch::owns(&game.join("cyber.exe")).unwrap_or(false) {
-        show(&format!(
-            "FR_DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
+            "DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
             diagnostics::prelaunch_display_modes()
         ),root);
     }
@@ -316,7 +302,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         []=>{
             let _lock=autostart::lock(root)?;
             autostart::prepare(root,None)?;
-            return user_gameframe_launch(root,false,false);
+            return user_gameframe_launch(root);
         },
         [one] if one.to_str()==Some("--install-only")=>{
             let _lock=autostart::lock(root)?;
@@ -331,7 +317,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let _lock=autostart::lock(root)?;
             let source=PathBuf::from(one);
             autostart::prepare(root,Some(&source))?;
-            return user_gameframe_launch(root,false,false);
+            return user_gameframe_launch(root);
         },
         [one] if one.to_str()==Some("--inspect-disc")=>{
             let cue=install::find_cue(root)?;
@@ -354,24 +340,28 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let r=graphics::maximize_saved(&root.join(install::DIR))?;
             show(&r,root);return Ok(());
         },
-        [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
+        [one] if one.to_str()==Some("--launch")=>{
+            // Backward-compatible alias for the exact same one-click path.
+            let _lock=autostart::lock(root)?;
+            autostart::prepare(root,None)?;
+            return user_gameframe_launch(root);
+        },
         [one,two] if one.to_str()==Some("--launch")
             && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root,false,false),
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--fr-borderless-test")=>
-            return user_gameframe_launch(root,true,false),
-        // Compare the project-owned DirectDraw v1 COM device and shared
-        // MCI surface with the known-good US path on both Wine and Windows.
-        // The normal one-click launch stays unchanged on both platforms.
+            return user_gameframe_launch(root),
+        // Historical A/B CLI aliases now launch the exact same common
+        // default path; no per-edition or per-host switch is needed.
         [one,two] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--us-virtual-ddraw-test")=>
-            return user_gameframe_launch(root,false,true),
+            return user_gameframe_launch(root),
         // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-first-present-handoff")=>
-            return user_gameframe_launch(root,false,false),
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")

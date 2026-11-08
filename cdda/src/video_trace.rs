@@ -329,11 +329,11 @@ struct NativeHost {
     surface:usize,
     first_frame_cover:usize, // smooth test only; opaque sibling above video
     first_frame_cover_started:Option<Instant>,
-    native_fr_last_active:Option<bool>,
+    video_last_active:Option<bool>,
     game_switcher_original_exstyle:Option<u32>, // temporarily hide only the black game entry on native Windows
-    us_wine_game_minimized_for_avi:bool,
-    us_wine_minimize_attempts:u8,
-    us_wine_minimize_last:Option<Instant>,
+    wine_game_minimized_for_avi:bool,
+    wine_minimize_attempts:u8,
+    wine_minimize_last:Option<Instant>,
     game:usize,
     owner_thread:u32,
     video_width:i32,
@@ -428,14 +428,16 @@ unsafe extern "system" fn black_host_proc(
 // field-validated there. Both explicit US virtual-DirectDraw A/B profiles
 // (Wine and native Windows) use THIS EXACT SAME implementation; normal
 // launch paths remain unchanged.
-fn virtual_mci_profile(native_fr:bool,us_wine_virtual:bool)->bool{
-    native_fr||us_wine_virtual
+// One video renderer and repaint strategy for both verified US/FR retail
+// editions on Windows and Wine. Only the compositor focus adapter differs.
+fn virtual_mci_profile(requested:bool,verified_edition:bool)->bool{
+    requested&&verified_edition
 }
 fn owned_virtual_ddraw_requested()->bool{
     std::env::var("CYBER_VIRTUAL_DDRAW").as_deref()==Ok("1")
 }
-fn us_wine_virtual_mci_profile()->bool{
-    std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
+fn wine_virtual_mci_profile()->bool{
+    matches!(std::env::var("CYBER_GAME_EDITION").as_deref(),Ok("US"|"FR"))
         && owned_virtual_ddraw_requested()
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1")
 }
@@ -445,15 +447,18 @@ fn us_native_virtual_mci_profile()->bool{
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
 }
 fn virtual_mci_log_prefix()->&'static str{
-    if us_wine_virtual_mci_profile(){"US_WINE_VIRTUAL_VIDEO"}
-    else if us_native_virtual_mci_profile(){"US_NATIVE_VIRTUAL_VIDEO"}
-    else{"FR_VIRTUAL_VIDEO"}
+    match (std::env::var("CYBER_GAME_EDITION").as_deref(),
+           std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()){
+        (Ok("US"),Ok("1"))=>"US_NATIVE_VIRTUAL_VIDEO",
+        (Ok("US"),_)=>"US_WINE_VIRTUAL_VIDEO",
+        (Ok("FR"),Ok("1"))=>"FR_VIRTUAL_VIDEO",
+        (Ok("FR"),_)=>"FR_WINE_VIRTUAL_VIDEO",
+        _=>"VIRTUAL_VIDEO",
+    }
 }
 fn virtual_mci_surface_enabled()->bool{
-    let fr=owned_virtual_ddraw_requested()
-        && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
-        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
-    smooth_enabled() && virtual_mci_profile(fr||us_native_virtual_mci_profile(),us_wine_virtual_mci_profile())
+    let verified=matches!(std::env::var("CYBER_GAME_EDITION").as_deref(),Ok("US"|"FR"));
+    smooth_enabled() && virtual_mci_profile(owned_virtual_ddraw_requested(),verified)
 }
 unsafe extern "system" fn virtual_video_surface_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
@@ -919,10 +924,10 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         info.monitor.left,info.monitor.top,screen_w,screen_h,u8::from(smooth)));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,
-        first_frame_cover,first_frame_cover_started:None,native_fr_last_active:None,
+        first_frame_cover,first_frame_cover_started:None,video_last_active:None,
         game_switcher_original_exstyle,
-        us_wine_game_minimized_for_avi:false,
-        us_wine_minimize_attempts:0,us_wine_minimize_last:None,
+        wine_game_minimized_for_avi:false,
+        wine_minimize_attempts:0,wine_minimize_last:None,
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,
         keyboard_hook:0,mouse_hook:0,
@@ -1393,17 +1398,17 @@ fn should_arm_curtain(smooth:bool,mci_close_result:u32)->bool{
 // The optional US/Wine background-minimize experiment must not remap the
 // black transition curtain over another Linux window if the AVI finishes
 // during Alt+Tab; native Windows FR behavior remains unchanged.
-fn should_promote_curtain_for_focus(us_wine_virtual:bool,game_active:bool)->bool{
-    !us_wine_virtual||game_active
+fn should_promote_curtain_for_focus(wine_virtual:bool,game_active:bool)->bool{
+    !wine_virtual||game_active
 }
 unsafe fn promote_curtain(h:&mut NativeHost)->i32 {
     if IsWindow(h.host as *mut c_void)==0{return 0;}
-    if us_wine_virtual_mci_profile(){
+    if wine_virtual_mci_profile(){
         let foreground=GetForegroundWindow();
         let active=foreground==h.game as *mut c_void
             || foreground==h.host as *mut c_void;
         if !should_promote_curtain_for_focus(true,active){
-            video_log("US_WINE_CURTAIN_BACKGROUND skipped_raise=1 foreground_external=1 host_remains_hidden=1");
+            video_log("WINE_CURTAIN_BACKGROUND skipped_raise=1 foreground_external=1 host_remains_hidden=1");
             return 0;
         }
     }
@@ -1927,8 +1932,8 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
 /// Called after the original "status movie mode" on the game's UI thread;
 /// neither route activates/minimizes windows or changes a display mode.
 /// Only native FR may return an updated native MCI destination string.
-fn experimental_movie_focus_profiles(native_fr:bool,us_wine_virtual:bool)->bool{
-    native_fr||us_wine_virtual
+fn experimental_movie_focus_profiles(native_fr:bool,wine_virtual:bool)->bool{
+    native_fr||wine_virtual
 }
 // The managed Wine/EWMH fullscreen popup can remain above the active Linux
 // application even after SetWindowPos(HWND_NOTOPMOST/HWND_BOTTOM) succeeds.
@@ -1936,8 +1941,8 @@ fn experimental_movie_focus_profiles(native_fr:bool,us_wine_virtual:bool)->bool{
 // real game's Win32 input window accessible in the normal Alt+Tab list.
 // The video device keeps playing; the native-MCI WM_PAINT surface redraws
 // the current frame immediately when the host is remapped on focus return.
-fn expected_virtual_avi_host_visibility(us_wine_virtual:bool,active:bool)->Option<bool>{
-    us_wine_virtual.then_some(active)
+fn expected_virtual_avi_host_visibility(wine_virtual:bool,active:bool)->Option<bool>{
+    wine_virtual.then_some(active)
 }
 // The separate EWMH fullscreen AVI host is not the only possible visible
 // surface. The game HWND can continue showing an opaque black frame behind
@@ -1946,14 +1951,14 @@ fn expected_virtual_avi_host_visibility(us_wine_virtual:bool,active:bool)->Optio
 // original game window is tested when the player switches away during MCI.
 // Retain this as a distinct A/B policy: native FR and normal US/Wine must
 // never minimize the game through this path.
-fn should_minimize_us_wine_game(
-    us_wine_virtual:bool,active:bool,iconic:bool,
+fn should_minimize_wine_game(
+    wine_virtual:bool,active:bool,iconic:bool,
     attempts:u8,elapsed:Option<Duration>
 )->bool{
     // Some Wine window managers reject or immediately undo minimization.
     // A bounded, throttled experiment must not issue 100 ShowWindow calls
     // per second while the game busy-polls MCI status.
-    us_wine_virtual && !active && !iconic && attempts<3
+    wine_virtual && !active && !iconic && attempts<3
         && elapsed.is_none_or(|d|d>=Duration::from_millis(500))
 }
 pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString>{
@@ -1965,8 +1970,8 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
     // Wine US alone applies extra fullscreen unmap/minimize adaptations.
     let us_native_virtual=us_native_virtual_mci_profile();
     let native_focus=native_fr || us_native_virtual;
-    let us_wine_virtual=us_wine_virtual_mci_profile();
-    if !experimental_movie_focus_profiles(native_focus,us_wine_virtual){return None;}
+    let wine_virtual=wine_virtual_mci_profile();
+    if !experimental_movie_focus_profiles(native_focus,wine_virtual){return None;}
     // Snapshot under the mutex and release it BEFORE synchronous Win32
     // SetWindowPos: native window messages can reenter the WinMM bridge.
     let h=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
@@ -1985,35 +1990,35 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
             || foreground==h.host as *mut c_void;
         let host=h.host as *mut c_void;
         let game=h.game as *mut c_void;
-        let expected_visibility=expected_virtual_avi_host_visibility(us_wine_virtual,active);
+        let expected_visibility=expected_virtual_avi_host_visibility(wine_virtual,active);
         // If Wine silently remaps the popup or the underlying game window,
         // correct it on the next MCI poll without modifying the MCI clock.
         let visibility_wrong=expected_visibility
             .is_some_and(|wanted|(IsWindowVisible(host)!=0)!=wanted);
         let game_is_iconic=IsIconic(game)!=0;
-        let game_background_wrong=should_minimize_us_wine_game(
-            us_wine_virtual,active,game_is_iconic,
-            h.us_wine_minimize_attempts,
-            h.us_wine_minimize_last.map(|at|at.elapsed())
+        let game_background_wrong=should_minimize_wine_game(
+            wine_virtual,active,game_is_iconic,
+            h.wine_minimize_attempts,
+            h.wine_minimize_last.map(|at|at.elapsed())
         );
-        if h.native_fr_last_active!=Some(active)||visibility_wrong||game_background_wrong{
+        if h.video_last_active!=Some(active)||visibility_wrong||game_background_wrong{
             const NO_MOVE_SIZE_ACTIVATE:u32=SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE;
             let previous_visible=IsWindowVisible(host)!=0;
             let (host_result,game_result)=if active{
                 // Remap the same host and video-surface HWNDs; no new
                 // renderer, no alternative decoder and no focus stealing.
-                if us_wine_virtual {
+                if wine_virtual {
                     // The Linux window manager normally remaps the game
                     // when its task-switcher entry is selected. A guarded
                     // restore below handles the case where it does not.
-                    if h.us_wine_game_minimized_for_avi && IsIconic(game)!=0{
+                    if h.wine_game_minimized_for_avi && IsIconic(game)!=0{
                         let _=ShowWindow(game,SW_SHOWNOACTIVATE);
                     }
                     let _=ShowWindow(host,SW_SHOWNOACTIVATE);
                 }
                 (SetWindowPos(host,(-1isize) as *mut c_void,
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE|
-                    if us_wine_virtual{SWP_SHOWWINDOW}else{0}),-1)
+                    if wine_virtual{SWP_SHOWWINDOW}else{0}),-1)
             }else{
                 let _=SetWindowPos(host,(-2isize) as *mut c_void,
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
@@ -2023,7 +2028,7 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
                 let game_result=SetWindowPos(game,1usize as *mut c_void,
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
-                if us_wine_virtual {
+                if wine_virtual {
                     // The original game HWND remains the task-switcher
                     // return target: minimize, do not hide or destroy it.
                     // This also removes the black passthrough GL window
@@ -2039,19 +2044,19 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
             let game_iconic_after=IsIconic(game)!=0;
             video_log(&format!(
                 "{} active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1 no_minimize=1 topmost_when_active=1",
-                if us_wine_virtual{"US_WINE_VIDEO_FOCUS"}
+                if wine_virtual{"WINE_VIDEO_FOCUS"}
                 else if us_native_virtual{"US_NATIVE_VIDEO_FOCUS"}
                 else{"FR_NATIVE_VIDEO_FOCUS"},
                 u8::from(active),foreground as usize,host_result,game_result
             ));
-            if us_wine_virtual{
+            if wine_virtual{
                 video_log(&format!(
-                    "US_WINE_AVI_HOST_VISIBILITY foreground_game={} visible_before={} visible_after={} expected_visible={} operation={} EWMH_fullscreen_unmap=1 game_window_kept_for_alt_tab=1 MCI_remains_open=1",
+                    "WINE_AVI_HOST_VISIBILITY foreground_game={} visible_before={} visible_after={} expected_visible={} operation={} EWMH_fullscreen_unmap=1 game_window_kept_for_alt_tab=1 MCI_remains_open=1",
                     u8::from(active),u8::from(previous_visible),u8::from(now_visible),
                     u8::from(active),if active{"remap"}else{"unmap"}
                 ));
                 video_log(&format!(
-                    "US_WINE_AVI_GAME_WINDOW active={} iconic_before={} iconic_after={} requested={} restore_on_focus=1 game_hidden=0 game_destroyed=0 native_FR_untouched=1",
+                    "WINE_AVI_GAME_WINDOW active={} iconic_before={} iconic_after={} requested={} restore_on_focus=1 game_hidden=0 game_destroyed=0 native_windows_unchanged=1",
                     u8::from(active),u8::from(game_is_iconic),u8::from(game_iconic_after),
                     if active{"restore_if_owned"}else{"minimize_if_visible"}
                 ));
@@ -2070,29 +2075,29 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
             }else{true};
             if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
                 if current.host==h.host{
-                    if us_wine_virtual {
+                    if wine_virtual {
                         if !active && game_background_wrong{
-                            current.us_wine_minimize_attempts=
-                                current.us_wine_minimize_attempts.saturating_add(1);
-                            current.us_wine_minimize_last=Some(Instant::now());
+                            current.wine_minimize_attempts=
+                                current.wine_minimize_attempts.saturating_add(1);
+                            current.wine_minimize_last=Some(Instant::now());
                         }
                         if !active && !game_is_iconic && game_iconic_after {
-                            current.us_wine_game_minimized_for_avi=true;
+                            current.wine_game_minimized_for_avi=true;
                         }else if active{
-                            current.us_wine_minimize_attempts=0;
-                            current.us_wine_minimize_last=None;
+                            current.wine_minimize_attempts=0;
+                            current.wine_minimize_last=None;
                             if !game_iconic_after {
-                                current.us_wine_game_minimized_for_avi=false;
+                                current.wine_game_minimized_for_avi=false;
                             }
                         }
                     }
-                    if accepted{current.native_fr_last_active=Some(active);}
+                    if accepted{current.video_last_active=Some(active);}
                 }
             }
         }
-        // The Wine US A/B path has already captured stable fullscreen
+        // The Wine path has already captured stable fullscreen
         // geometry; do not touch its MCI destination, overlay or 3D HWND size.
-        if us_wine_virtual {return None;}
+        if wine_virtual {return None;}
         let (width,height)=(GetSystemMetrics(0),GetSystemMetrics(1));
         let Some((x,y,w,vh))=fit_4_3(width,height) else{return None;};
         let mut previous=WinRect::default();
@@ -2240,7 +2245,7 @@ mod fullscreen_tests {
             "limit deferral to the proven transition");
     }
     #[test]
-    fn us_wine_virtual_focus_is_its_own_profile_and_other_paths_remain_unmodified(){
+    fn wine_virtual_focus_is_its_own_profile_and_other_paths_remain_unmodified(){
         assert!(experimental_movie_focus_profiles(true,false));
         assert!(experimental_movie_focus_profiles(false,true));
         assert!(!experimental_movie_focus_profiles(false,false));
@@ -2255,16 +2260,16 @@ mod fullscreen_tests {
     }
     #[test]
     fn us_wine_minimizes_game_only_while_inactive_for_mci_video(){
-        assert!(should_minimize_us_wine_game(true,false,false,0,None));
-        assert!(!should_minimize_us_wine_game(true,false,true,0,None));
-        assert!(!should_minimize_us_wine_game(true,true,false,0,None));
-        assert!(!should_minimize_us_wine_game(false,false,false,0,None),
+        assert!(should_minimize_wine_game(true,false,false,0,None));
+        assert!(!should_minimize_wine_game(true,false,true,0,None));
+        assert!(!should_minimize_wine_game(true,true,false,0,None));
+        assert!(!should_minimize_wine_game(false,false,false,0,None),
             "native FR and ordinary US/Wine must never be minimized here");
-        assert!(!should_minimize_us_wine_game(true,false,false,1,
+        assert!(!should_minimize_wine_game(true,false,false,1,
             Some(Duration::from_millis(499))),"retry must be throttled");
-        assert!(should_minimize_us_wine_game(true,false,false,1,
+        assert!(should_minimize_wine_game(true,false,false,1,
             Some(Duration::from_millis(500))));
-        assert!(!should_minimize_us_wine_game(true,false,false,3,
+        assert!(!should_minimize_wine_game(true,false,false,3,
             Some(Duration::from_secs(5))),"never retry indefinitely");
     }
     #[test]
@@ -2485,11 +2490,11 @@ mod tests {
             &mut last,Duration::from_millis(500)));
     }
     #[test]
-    fn virtual_mci_host_reuses_native_fr_painter_for_both_us_ab_profiles(){
-        assert!(virtual_mci_profile(true,false));
-        assert!(virtual_mci_profile(false,true));
-        assert!(!virtual_mci_profile(false,false),
-            "ordinary US/Wine must retain its field-validated video class");
+    fn shared_video_painter_serves_all_authenticated_editions(){
+        assert!(virtual_mci_profile(true,true));
+        assert!(!virtual_mci_profile(true,false));
+        assert!(!virtual_mci_profile(false,true));
+        assert!(!virtual_mci_profile(false,false));
         assert_eq!(video_surface_class_for(true,true),VIRTUAL_VIDEO_CLASS);
         assert_eq!(video_surface_class_for(true,false),HOST_CLASS);
         assert_eq!(video_surface_class_for(false,true),b"STATIC\0");

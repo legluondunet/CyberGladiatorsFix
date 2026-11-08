@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! DirectDraw v1 compatibility: field-validated native FR owned COM
-//! virtualization, now with opt-in US A/B on Wine and native Windows
-//! using that exact same adapter. Ordinary launches are unchanged.
+//! DirectDraw v1 compatibility: one project-owned COM adapter by default
+//! for authenticated US/FR retail games on Windows and Wine/Proton.
+//! Host-specific focus is handled in the WinMM video window layer.
 //!
 //! The verified Cyber Gladiators retail game requests fullscreen exclusive
 //! DirectDraw 640x480x16 twice before opening its native MCI AVI. Wine changes
@@ -181,10 +181,10 @@ unsafe fn hook_ddraw_create()->bool{
 #[link_section=".CRT$XCU"]
 static EARLY_FORWARD_INIT:unsafe extern "C" fn()=initialize;
 
-// Pure classifier shared by the early CRT loader and its unit tests.
-// Never enables the FR virtualization on Wine before a dedicated FR test.
+// One COM implementation in all profiles; the tuple determines only the
+// edition/host diagnostic counters, not separate DirectDraw code.
 fn owned_virtual_profiles(requested:bool,fr:bool,us:bool,wine:bool)->(bool,bool,bool){
-    (requested && fr && !wine,
+    (requested && fr,
      requested && us && wine,
      requested && us && !wine)
 }
@@ -194,13 +194,13 @@ unsafe extern "C" fn initialize(){
     let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
     let wine=!ntdll.is_null()
         &&!GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null();
-    let (native_fr_virtual,us_wine_virtual,us_native_virtual)=owned_virtual_profiles(
+    let (fr_virtual,us_wine_virtual,us_native_virtual)=owned_virtual_profiles(
         env_is_one(b"CYBER_VIRTUAL_DDRAW\0"),env_is_fr(),env_is_us(),wine
     );
-    if native_fr_virtual || us_wine_virtual || us_native_virtual {
-        // All experimental profiles use the same project-owned COM
-        // implementation, without mutating DirectDraw system vtables or
-        // forwarding physical SetDisplayMode. Legacy Wine path is bypassed.
+    if fr_virtual || us_wine_virtual || us_native_virtual {
+        // All verified profiles use this project-owned COM implementation,
+        // with no system vtable mutation or physical SetDisplayMode calls.
+        // The legacy Wine native-mode forwarding path is bypassed.
         US_WINE_VIRTUAL.store(us_wine_virtual,Ordering::Release);
         US_NATIVE_VIRTUAL.store(us_native_virtual,Ordering::Release);
         NATIVE_VIRTUAL.store(true,Ordering::Release);
@@ -339,7 +339,7 @@ mod tests{
         assert_eq!(owned_virtual_profiles(true,true,false,false),(true,false,false));
         assert_eq!(owned_virtual_profiles(true,false,true,false),(false,false,true));
         assert_eq!(owned_virtual_profiles(true,false,true,true),(false,true,false));
-        assert_eq!(owned_virtual_profiles(true,true,false,true),(false,false,false));
+        assert_eq!(owned_virtual_profiles(true,true,false,true),(true,false,false));
         assert_eq!(owned_virtual_profiles(false,false,true,true),(false,false,false));
         assert_eq!(owned_virtual_profiles(true,false,false,false),(false,false,false));
     }

@@ -158,7 +158,10 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// GameFrame's verified native AVI -> first real OpenGL-present launch.
 /// The original nGlide setup is never changed; the selected Apache-2.0
 /// Glide DLL was temporarily installed by gameframe::Session.
-pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:bool)->Result<Child,String>{
+fn default_owned_virtual_for_edition(edition:&str)->bool{
+    matches!(edition,"US"|"FR")
+}
+pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     let skip_intro=settings::read(&game)?;
@@ -194,55 +197,30 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
     // Child profile is derived from a verified original EXE backup, never
     // from an inherited caller variable or a filename alone.
     cmd.env("CYBER_GAME_EDITION",edition);
-    // Do not change the already-validated US or Wine/Proton window handling.
-    // Scope Alt+Tab focus/z-order recovery to the reported native-Windows FR
-    // case. Always override inherited environment variables.
-    let native_fr_alt_tab=edition=="FR" && diagnostics::is_native_windows();
-    if fr_borderless_test && !native_fr_alt_tab{
-        return Err("--fr-borderless-test is restricted to the verified French edition on native Windows".into());
-    }
-    // Compare the same project-owned COM / MCI virtualizer on both
-    // Windows native and Wine. The EXE must match the verified US profile:
-    // the normal US launch and both FR launch paths remain unaffected.
-    if us_wine_virtual_test && edition!="US"{
-        return Err("--us-virtual-ddraw-test requires the verified US retail game".into());
-    }
-    let us_native_virtual_test=us_wine_virtual_test && diagnostics::is_native_windows();
-    let us_wine_virtual_test=us_wine_virtual_test && !diagnostics::is_native_windows();
-    let native_virtual_focus=native_fr_alt_tab || us_native_virtual_test;
-    cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_virtual_focus{"1"}else{"0"});
-    // A diagnostic child flag is always explicitly set, never inherited
-    // from the caller. The normal user launch takes the validated #168 path.
-    // A single owned-COM/MCI switch is used for every verified edition
-    // and host OS. Edition and native/Wine focus policies remain separate.
-    let virtual_ddraw=fr_borderless_test || us_wine_virtual_test || us_native_virtual_test;
-    cmd.env("CYBER_VIRTUAL_DDRAW",if virtual_ddraw{"1"}else{"0"});
-    // Do not allow stale edition-specific A/B flags from the parent process.
+    // The one-click launcher selects the SAME project-owned DirectDraw COM
+    // adapter and MCI video surface for both verified US and FR retail
+    // editions, on native Windows and Wine/Proton. Inherited variables
+    // cannot select an unverified system-wide DirectDraw implementation.
+    // Windows and Wine adapt the *window manager* focus policy only.
+    let native_windows=diagnostics::is_native_windows();
+    let native_fr=edition=="FR" && native_windows;
+    cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_windows{"1"}else{"0"});
+    let virtual_ddraw=default_owned_virtual_for_edition(edition);
+    if !virtual_ddraw{return Err("Unrecognized retail edition for shared DirectDraw".into());}
+    cmd.env("CYBER_VIRTUAL_DDRAW","1");
     for key in ["CYBER_FR_VIRTUAL_DDRAW","CYBER_US_WINE_VIRTUAL_DDRAW",
         "CYBER_US_NATIVE_VIRTUAL_DDRAW"] {cmd.env_remove(key);}
     crate::show(&format!(
-        "VIRTUAL_DDRAW_RUNTIME enabled={} edition={edition} wine={} shared_owned_COM=1 shared_MCI=1 experimental=1",
-        u8::from(virtual_ddraw),u8::from(!diagnostics::is_native_windows())
+        "VIRTUAL_DDRAW_RUNTIME enabled=1 default=1 edition={edition} wine={} shared_owned_COM=1 shared_MCI=1 single_codepath=1",
+        u8::from(!native_windows)
     ),root);
     crate::show(&format!(
-        "FR_VIRTUAL_DDRAW enabled={} native_FR={} opt_in=1 system_ddraw_vtable_unchanged=1 no_external_wrapper=1",
-        u8::from(fr_borderless_test),u8::from(native_fr_alt_tab)
+        "VIDEO_FOCUS_RUNTIME selected={} edition={edition} automatic=1 common_video_core=1",
+        if native_windows{"native_windows"}else{"wine"}
     ),root);
-    crate::show(&format!(
-        "US_WINE_VIRTUAL_DDRAW enabled={} edition={edition} wine={}          alternative_to_wine_native_forward=1 inherited_env_overridden=1          virtual_surfaces=1 physical_mode_request=0 experimental=1",
-        u8::from(us_wine_virtual_test),u8::from(!diagnostics::is_native_windows())
-    ),root);
-    crate::show(&format!(
-        "US_NATIVE_VIRTUAL_DDRAW enabled={} edition={edition} native_windows={} owned_COM_and_MCI=1 same_as_native_FR=1 native_forward=0 physical_mode_request=0 experimental=1",
-        u8::from(us_native_virtual_test),u8::from(diagnostics::is_native_windows())
-    ),root);
-    crate::show(&format!(
-        "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
-        u8::from(native_virtual_focus)
-    ),root);
-    if native_virtual_focus {
+    if native_windows {
         crate::show(&format!(
-            "FR_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn {}",
+            "DISPLAY_MODE_SNAPSHOT stage=before_game_spawn edition={edition} {}",
             diagnostics::prelaunch_display_modes()
         ),root);
     }
@@ -263,18 +241,10 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
     cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
-    // Only the SHA-256-verified retail game on Wine and the dedicated
-    // GameFrame build may forward its 640x480x16 DirectDraw request to the
-    // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
-    // The native Windows loader always leaves this interception inactive.
-    // The historical Wine forwarding must remain disabled for either
-    // experimental US COM-owned profile; on native Windows it is inert.
-    let wine_forward=!virtual_ddraw;
-    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD",if wine_forward{"1"}else{"0"});
-    crate::show(&format!(
-        "WINE_DDRAW_NATIVE_FORWARD requested={} activation=wine_only forwarding=real_DirectDraw_when_intercepted game_only=1 disabled_for_us_virtual_ab={}",
-        u8::from(wine_forward),u8::from(!wine_forward)
-    ),root);
+    // The former Wine mode-forwarding fallback remains in diagnostic code,
+    // but is off for ALL normal US/FR Windows/Wine launches.
+    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD","0");
+    crate::show("WINE_DDRAW_NATIVE_FORWARD requested=0 shared_owned_com_default=1 physical_mode_request=0",root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
         // Pass the 1920x1080 (or user's actual desktop) recorded BEFORE
@@ -294,7 +264,7 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
     // The original FR backup's SHA-256 and PE32 structure have been pinned.
     // Inspect plausible x86 COM vtable callsites before spawning the game,
     // without modifying any file, display mode or COM object.
-    if native_fr_alt_tab {crate::fr_ddraw_static::inspect(root,&exe);}
+    if native_fr {crate::fr_ddraw_static::inspect(root,&exe);}
     cmd.spawn().map_err(|e|format!("Unable to start Cyber Gladiators through GameFrame: {e}"))
 }
 
@@ -605,18 +575,17 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
 }
 
 #[cfg(test)]
-mod us_virtual_ddraw_tests {
-    use super::*;
+mod shared_default_ddraw_tests {
+    use super::default_owned_virtual_for_edition;
     #[test]
-    fn us_virtual_proxy_is_not_an_implicit_default(){
-        // An exact US edition + Wine/Proton runtime is mandatory before
-        // setting the child flag; normal launches set it to "0".
-        for (edition,native,enabled) in [
-            ("US",false,true),("US",true,false),
-            ("FR",false,false),("FR",true,false),
-        ]{
-            assert_eq!(edition=="US"&&!native,enabled);
+    fn one_owned_com_profile_is_default_for_both_retail_editions(){
+        for edition in ["US","FR"]{
+            assert!(default_owned_virtual_for_edition(edition));
         }
+        for unverified in ["","unknown","us","FR-DEMO","DE"]{
+            assert!(!default_owned_virtual_for_edition(unverified));
+        }
+        // Edition, not an OS-specific command, controls the common engine.
     }
 }
 #[cfg(test)]

@@ -71,16 +71,14 @@ the desktop resolution and limited to 60 FPS. The original Cinepak AVI
 plays in native Wine/Windows MCI. Its temporary GDI video host stays
 black after AVI close until the FIRST REAL successful GameFrame OpenGL
 SwapBuffers, which releases the host on the original game UI thread.
-A bounded timeout prevents indefinite black. The native-size
-DirectDraw forwarding fix was validated on build #85 (2026-11-06)
-under Wine-staging 11.17 with and without a Wine virtual desktop
-and under Proton reporting Wine 11.0 with uninterrupted full AVI.
-The real IDirectDraw::SetDisplayMode method is called at the
-prelaunch width and height with the game's original 16-bit depth.
-The game continues to render internally at 640x480. The reported
-desktop dimensions did not change; a physical monitor mode/color
-depth transition has not been independently ruled out.
-Native Windows never enables this Wine-only interception.
+A bounded timeout prevents indefinite black. In PR #6 the standard
+launcher automatically enables one owned DirectDraw v1 COM and MCI
+video implementation for authenticated US and FR retail editions on
+both native Windows and Wine/Proton. The original logical 640x480x16
+DirectDraw surfaces do not request a physical display-mode change.
+Only the window-manager-specific Alt+Tab/focus adapter is selected
+automatically. The former Wine native-size DirectDraw forwarding
+experiment remains in diagnostic code, not in normal launch.
 
 VALIDATION BEFORE PUBLIC RELEASE
 --------------------------------
@@ -88,11 +86,11 @@ Start from your own CUE/BIN next to the EXE, not from an installed game.
 Let the full intro AVI play, verify music, input, focus and 4:3 scene;
 then exit normally. Start the EXE a second time without the CD files
 to verify installed-game detection, and check that glide.dll persists.
-Review the ONE CyberGladiatorsFix.log next to the launcher. The explicit
-shared DirectDraw/MCI profiles have been field-tested on Windows (FR and
-US) and Wine-staging 11.17 (US); compatibility with other systems is
-not guaranteed. The opt-in modes remain in PR #6, not in the normal
-one-click launch.
+Review the ONE CyberGladiatorsFix.log next to the launcher. No special
+command, environment variable or INI option is needed for the shared
+DirectDraw/MCI engine. The formerly opt-in Windows FR, Windows US and
+Wine US configurations have been field-tested. FR/Wine is newly enabled
+and requires its own acceptance test; other systems are not guaranteed.
 
 Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
@@ -106,12 +104,11 @@ Useful commands:
 
 This is a pre-release testing artifact, NOT a public release.
 The baseline implementation and audit were merged into main on 2026-11-06.
-PR #6 (not yet merged) adds the shared COM DirectDraw/MCI test paths
-and read-only original-US-CUE pregap support. The FR/Windows, US/Windows,
-US/Wine test profiles and original US image compatibility have now been
-validated by the user, with CI passing at commit f7df3bb5.
-A public release must still distinguish these opt-in test paths from
-normal startup and must not claim universal hardware compatibility.
+PR #6 (not yet merged) selects the common owned-COM DirectDraw/MCI engine
+automatically on normal launch and supports the verified original US CUE
+pregap. Earlier optional FR/Windows, US/Windows and US/Wine profiles
+were field-validated; the new all-host default and FR/Wine still require
+testing. A public release must not claim universal compatibility.
 A green CI workflow checks compilation, PE exports and loading,
 but DOES NOT verify actual video or gameplay on a player's machine.
 
