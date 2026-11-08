@@ -243,7 +243,7 @@ mod tests{
         };
         assert_eq!(at(0,0),&[0,0,0,0]);
         assert_eq!(at(w-1,h-1),&[0,0,0,0]);
-        assert_eq!(at(1,0)[3],255);
+        assert_eq!(at(2,0)[3],255); // A's first lit 5x7 pixel
         assert!(pixels.chunks_exact(4).any(|p|p[3]==180));
     }
     #[test]
