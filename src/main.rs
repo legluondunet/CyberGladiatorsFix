@@ -32,7 +32,7 @@ Usage:
   CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
   CyberGladiatorsFix.exe --verify      Strict original retail manifest and patches
-  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only CD fingerprint and FR discovery (no installation)
+  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only US/FR CD fingerprint (no installation)
   CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
   CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
   CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
@@ -41,8 +41,8 @@ Usage:
 
 No launch argument is required. On first use, keep the original .cue
 and its .bin track files next to this EXE. CYBER.EXE and retail data are
-extracted only from a SHA-256-verified supported US CD image. Subsequent
-launches check the installation and start automatically.
+extracted only from an authenticated, SHA-256-verified US or French retail
+CUE/BIN image. Subsequent launches verify the installation and start automatically.
 
 One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
 (Apache-2.0) and the project's CyberGladiatorsFix.dll WinMM/CDDA bridge
@@ -55,8 +55,12 @@ No original game data is distributed. IQ data is never silently changed.
 A fresh, single CyberGladiatorsFix.log appears beside the launcher.
 --verify always applies strict SHA-256 checks. The optional INI setting
 AllowModifiedIQ=1 permits only same-size IQ modifications during launch.
-The FR executable is recognized for read-only disc inspection only;
-FR patching and launching remain disabled until its disc is authenticated.
+Both US and French retail discs are authenticated by exact EXE and resource
+hashes before installing or patching. A single-BIN raw disc with a verified
+150-sector zero pause before the first AUDIO INDEX 01 is accepted even when
+its original CUE omits INDEX 00; the source CUE/BIN are never rewritten.
+Shared owned-COM DirectDraw/MCI profiles are opt-in tests only; the French
+Wine virtual-DirectDraw profile is not yet enabled or field-validated.
 Existing nGlide/developer commands are retained internally for forensic
 regression tests but are not needed for normal use.
 ";
