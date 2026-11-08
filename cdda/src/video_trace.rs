@@ -330,6 +330,8 @@ struct NativeHost {
     first_frame_cover_started:Option<Instant>,
     native_fr_last_active:Option<bool>,
     us_wine_game_minimized_for_avi:bool,
+    us_wine_minimize_attempts:u8,
+    us_wine_minimize_last:Option<Instant>,
     game:usize,
     owner_thread:u32,
     video_width:i32,
@@ -844,6 +846,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         host:host as usize,surface:surface as usize,
         first_frame_cover,first_frame_cover_started:None,native_fr_last_active:None,
         us_wine_game_minimized_for_avi:false,
+        us_wine_minimize_attempts:0,us_wine_minimize_last:None,
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,
         keyboard_hook:0,mouse_hook:0,
@@ -1848,8 +1851,15 @@ fn expected_virtual_avi_host_visibility(us_wine_virtual:bool,active:bool)->Optio
 // original game window is tested when the player switches away during MCI.
 // Retain this as a distinct A/B policy: native FR and normal US/Wine must
 // never minimize the game through this path.
-fn should_minimize_us_wine_game(us_wine_virtual:bool,active:bool,iconic:bool)->bool{
-    us_wine_virtual && !active && !iconic
+fn should_minimize_us_wine_game(
+    us_wine_virtual:bool,active:bool,iconic:bool,
+    attempts:u8,elapsed:Option<Duration>
+)->bool{
+    // Some Wine window managers reject or immediately undo minimization.
+    // A bounded, throttled experiment must not issue 100 ShowWindow calls
+    // per second while the game busy-polls MCI status.
+    us_wine_virtual && !active && !iconic && attempts<3
+        && elapsed.is_none_or(|d|d>=Duration::from_millis(500))
 }
 pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString>{
     if result!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
@@ -1888,7 +1898,9 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
             .is_some_and(|wanted|(IsWindowVisible(host)!=0)!=wanted);
         let game_is_iconic=IsIconic(game)!=0;
         let game_background_wrong=should_minimize_us_wine_game(
-            us_wine_virtual,active,game_is_iconic
+            us_wine_virtual,active,game_is_iconic,
+            h.us_wine_minimize_attempts,
+            h.us_wine_minimize_last.map(|at|at.elapsed())
         );
         if h.native_fr_last_active!=Some(active)||visibility_wrong||game_background_wrong{
             const NO_MOVE_SIZE_ACTIVATE:u32=SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE;
@@ -1923,7 +1935,7 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
                     // This also removes the black passthrough GL window
                     // behind the already-hidden MCI host from the screen.
                     let _=ShowWindow(host,SW_HIDE);
-                    if should_minimize_us_wine_game(true,false,IsIconic(game)!=0){
+                    if game_background_wrong{
                         let _=ShowWindow(game,SW_MINIMIZE);
                     }
                 }
@@ -1959,15 +1971,23 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
             let accepted=if let Some(wanted)=expected_visibility{
                 host_result!=0 && (active||game_result!=0)
                     && now_visible==wanted
-                    && (active || game_iconic_after)
             }else{true};
             if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
                 if current.host==h.host{
                     if us_wine_virtual {
+                        if !active && game_background_wrong{
+                            current.us_wine_minimize_attempts=
+                                current.us_wine_minimize_attempts.saturating_add(1);
+                            current.us_wine_minimize_last=Some(Instant::now());
+                        }
                         if !active && !game_is_iconic && game_iconic_after {
                             current.us_wine_game_minimized_for_avi=true;
-                        }else if active && !game_iconic_after{
-                            current.us_wine_game_minimized_for_avi=false;
+                        }else if active{
+                            current.us_wine_minimize_attempts=0;
+                            current.us_wine_minimize_last=None;
+                            if !game_iconic_after {
+                                current.us_wine_game_minimized_for_avi=false;
+                            }
                         }
                     }
                     if accepted{current.native_fr_last_active=Some(active);}
@@ -2132,11 +2152,17 @@ mod fullscreen_tests {
     }
     #[test]
     fn us_wine_minimizes_game_only_while_inactive_for_mci_video(){
-        assert!(should_minimize_us_wine_game(true,false,false));
-        assert!(!should_minimize_us_wine_game(true,false,true));
-        assert!(!should_minimize_us_wine_game(true,true,false));
-        assert!(!should_minimize_us_wine_game(false,false,false),
+        assert!(should_minimize_us_wine_game(true,false,false,0,None));
+        assert!(!should_minimize_us_wine_game(true,false,true,0,None));
+        assert!(!should_minimize_us_wine_game(true,true,false,0,None));
+        assert!(!should_minimize_us_wine_game(false,false,false,0,None),
             "native FR and ordinary US/Wine must never be minimized here");
+        assert!(!should_minimize_us_wine_game(true,false,false,1,
+            Some(Duration::from_millis(499))),"retry must be throttled");
+        assert!(should_minimize_us_wine_game(true,false,false,1,
+            Some(Duration::from_millis(500))));
+        assert!(!should_minimize_us_wine_game(true,false,false,3,
+            Some(Duration::from_secs(5))),"never retry indefinitely");
     }
     #[test]
     fn us_wine_avi_host_is_unmapped_only_when_another_app_has_focus(){
