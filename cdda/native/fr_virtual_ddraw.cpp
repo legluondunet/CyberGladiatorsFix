@@ -341,3 +341,28 @@ extern "C" HRESULT __cdecl cyber_wrap_existing_ddraw(void **out) {
     trace("DDRAW_VIRTUAL object_created=1 physical_display_mode_unchanged=1");
     return S_OK;
 }
+
+// The original 1996 UI thread polls "status movie mode" continuously and
+// doesn't ordinarily service GetMessage/PeekMessage during the ~40-second AVI.
+// Under non-exclusive desktop composition Windows can ghost that HWND as
+// "Not responding". Pump bounded messages on the original MCI/game thread;
+// never create a competing GUI thread, and never touch the physical display.
+extern "C" DWORD __cdecl cyber_virtual_avi_pump_messages() {
+    static volatile LONG inside_pump=0;
+    if(InterlockedCompareExchange(&inside_pump,1,0)!=0)return 0;
+    DWORD processed=0;
+    MSG msg={};
+    for(DWORD i=0;i<16;i++){
+        if(!PeekMessageA(&msg,nullptr,0,0,PM_REMOVE))break;
+        if(msg.message==WM_QUIT){
+            // Preserve the requested thread quit: never discard it.
+            PostQuitMessage(static_cast<int>(msg.wParam));
+            break;
+        }
+        TranslateMessage(&msg);
+        DispatchMessageA(&msg);
+        processed++;
+    }
+    InterlockedExchange(&inside_pump,0);
+    return processed;
+}
