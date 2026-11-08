@@ -1800,21 +1800,31 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
     None
 }
 
-/// Native Windows FR switches the desktop out of the game's 640x480 mode
-/// during Alt+Tab. The initial host was correctly sized to 640x480, but
-/// without adapting it and the MCI destination on mode restoration the
-/// movie remains a small window. Run only after the ORIGINAL MCI status
-/// request has returned on the owner's thread; never hook DirectDraw or
-/// change the display mode ourselves.
-/// Returns a native MCI destination command to forward through the real
-/// system WinMM export, without recursively entering our own interceptor.
+/// The no-activate, always-on-top MCI AVI host must leave the foreground
+/// when the player Alt+Tabs away. Native Windows FR already uses the focus
+/// transition below, additionally resizing the destination after any actual
+/// desktop mode restoration. US + Wine's *owned* DirectDraw A/B mode needs
+/// ONLY that focus/z-order repair: the desktop and MCI dimensions stay stable
+/// and changing its already-working MCI rendering/resize is undesirable.
+///
+/// Called after the original "status movie mode" on the game's UI thread;
+/// neither route activates/minimizes windows or changes a display mode.
+/// Only native FR may return an updated native MCI destination string.
+fn experimental_movie_focus_profiles(native_fr:bool,us_wine_virtual:bool)->bool{
+    native_fr||us_wine_virtual
+}
 pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
     if result!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
-        || !gameframe_first_present_handoff()
-        || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
-        || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1"){
-        return None;
-    }
+        || !gameframe_first_present_handoff(){return None;}
+    let native_fr=std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
+        &&std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
+    // Explicit Wine US A/B flag is set exclusively by the verified launcher.
+    // The native-FR branch above preserves its tested unconditional gate.
+    let us_wine_virtual=std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
+        &&std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1")
+        &&std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1")
+        &&std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1");
+    if !experimental_movie_focus_profiles(native_fr,us_wine_virtual){return None;}
     // Snapshot under the mutex and release it BEFORE synchronous Win32
     // SetWindowPos: native window messages can reenter the WinMM bridge.
     let h=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
@@ -1850,14 +1860,23 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
                 (host_result,game_result)
             };
             video_log(&format!(
-                "FR_NATIVE_VIDEO_FOCUS active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1",
+                "{} active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1 no_minimize=1 topmost_when_active=1",
+                if us_wine_virtual{"US_WINE_VIDEO_FOCUS"}else{"FR_NATIVE_VIDEO_FOCUS"},
                 u8::from(active),foreground as usize,host_result,game_result
             ));
-            trace_fr_mode("movie_focus_transition");
-            if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
-                if current.host==h.host {current.native_fr_last_active=Some(active);}
+            if native_fr{trace_fr_mode("movie_focus_transition");}
+            // Do not treat a failed Wine z-order transition as done. Retry
+            // next MCI status query, with no changes to native FR semantics.
+            let accepted=native_fr || host_result!=0 && (active || game_result!=0);
+            if accepted {
+                if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
+                    if current.host==h.host {current.native_fr_last_active=Some(active);}
+                }
             }
         }
+        // The Wine US A/B path has already captured stable fullscreen
+        // geometry; do not touch its MCI destination, overlay or 3D HWND size.
+        if us_wine_virtual {return None;}
         let (width,height)=(GetSystemMetrics(0),GetSystemMetrics(1));
         let Some((x,y,w,vh))=fit_4_3(width,height) else{return None;};
         let mut previous=WinRect::default();
@@ -2003,6 +2022,13 @@ mod fullscreen_tests {
             "if Windows is already back at desktop resolution, keep old behavior");
         assert!(!should_defer_native_fr_handoff_resize("before_mci",true,true,640,480),
             "limit deferral to the proven transition");
+    }
+    #[test]
+    fn us_wine_virtual_focus_is_its_own_profile_and_other_paths_remain_unmodified(){
+        assert!(experimental_movie_focus_profiles(true,false));
+        assert!(experimental_movie_focus_profiles(false,true));
+        assert!(!experimental_movie_focus_profiles(false,false));
+        assert!(experimental_movie_focus_profiles(true,true));
     }
     #[test]
     fn native_fr_read_only_display_mode_uses_win32_devmode_abi(){
