@@ -208,6 +208,21 @@ struct WndClassA {
     instance:*mut c_void,icon:*mut c_void,cursor:*mut c_void,
     background:*mut c_void,menu_name:*const u8,class_name:*const u8,
 }
+// Standard Win32 DEVMODEW; matching the launcher's ABI declaration.
+// EnumDisplaySettingsW is a read-only query (never a mode request).
+#[repr(C)]
+struct DevModeW {
+    name:[u16;32],
+    spec_version:u16,driver_version:u16,size:u16,driver_extra:u16,
+    fields:u32,
+    position_x:i32,position_y:i32,orientation:u32,fixed_output:u32,
+    color:u16,duplex:u16,y_resolution:u16,tt_option:u16,collate:u16,
+    form_name:[u16;32],log_pixels:u16,
+    bits_per_pel:u32,pels_width:u32,pels_height:u32,
+    display_flags:u32,frequency:u32,
+    icm_method:u32,icm_intent:u32,media_type:u32,dither_type:u32,
+    reserved1:u32,reserved2:u32,panning_width:u32,panning_height:u32,
+}
 #[repr(C)]
 struct PaintStruct {
     dc:*mut c_void,erase:i32,paint:WinRect,
@@ -263,6 +278,7 @@ extern "system" {
     fn SetWindowLongA(hwnd:*mut c_void,index:i32,value:i32)->i32;
     fn GetForegroundWindow()->*mut c_void;
     fn GetSystemMetrics(index:i32)->i32;
+    fn EnumDisplaySettingsW(device:*const u16,mode:i32,out:*mut DevModeW)->i32;
     fn IsIconic(hwnd:*mut c_void)->i32;
     fn SendInput(count:u32,inputs:*const WinInput,input_size:i32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
@@ -1300,6 +1316,34 @@ fn early_black_host() {
 /// Called before the native 'open avivideo': the earliest verified moment
 /// in the game's video sequence, before the WinMM backend can display an
 /// initial gray surface. This is only enabled for --smooth-video-test.
+// Distinguish the currently active Windows display mode from the user's
+// saved desktop mode. This is pure telemetry: no ChangeDisplaySettings,
+// DirectDraw COM hooks, GetDC ownership, focus changes, or SetWindowPos.
+fn fr_read_display_mode(which:i32)->String {
+    unsafe {
+        let mut mode:DevModeW=std::mem::zeroed();
+        mode.size=std::mem::size_of::<DevModeW>() as u16;
+        if EnumDisplaySettingsW(std::ptr::null(),which,&mut mode)==0 {
+            "unavailable".to_owned()
+        } else {
+            format!("{}x{}x{}@{}Hz",
+                mode.pels_width,mode.pels_height,mode.bits_per_pel,mode.frequency)
+        }
+    }
+}
+fn trace_fr_mode(stage:&str){
+    if std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
+        || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1"){
+        return;
+    }
+    unsafe {
+        video_log(&format!(
+            "FR_DISPLAY_MODE stage={stage} metrics={}x{} current={} registry={} read_only=1",
+            GetSystemMetrics(0),GetSystemMetrics(1),
+            fr_read_display_mode(-1),fr_read_display_mode(-2)
+        ));
+    }
+}
 // Passive geometry-only telemetry for the French native-Windows scenario.
 // Never changes the display or hooks the DirectDraw COM object.
 fn trace_fr_screen(stage:&str){
@@ -1314,6 +1358,7 @@ fn trace_fr_screen(stage:&str){
             std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").as_deref().unwrap_or("missing")
         ));
     }
+    trace_fr_mode(stage);
 }
 pub fn before_mci_open(command:&str){
     if smooth_enabled() && command.trim().eq_ignore_ascii_case("open avivideo"){
@@ -1523,6 +1568,7 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
                 "FR_NATIVE_VIDEO_FOCUS active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1",
                 u8::from(active),foreground as usize,host_result,game_result
             ));
+            trace_fr_mode("movie_focus_transition");
             if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
                 if current.host==h.host {current.native_fr_last_active=Some(active);}
             }
@@ -1560,6 +1606,7 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
             "FR_NATIVE_VIDEO_RESIZED old_host={}x{} new_host={}x{} video_4_3=({x},{y} {w}x{vh}) active={} mode_change=none no_activate=1",
             current_width,current_height,width,height,u8::from(active)
         ));
+        trace_fr_mode("movie_resize");
         if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
             if current.host==h.host {
                 current.video_width=w;
@@ -1607,6 +1654,7 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     }
     if command.eq_ignore_ascii_case("close avivideo"){
         timing("MCI_AVIVIDEO_CLOSED");
+        trace_fr_mode("after_avivideo_close");
         // An isolated Vulkan-only A/B experiment: leave all native AVI
         // operations and pre-video black cover intact, but destroy the
         // temporary host immediately after the original MCI driver closed.
@@ -1656,6 +1704,10 @@ mod fullscreen_tests {
         assert_eq!(gameframe_prelaunch_desktop(None),None);
         assert_eq!(gameframe_popup_style(0x14ce0000),0x940a0000);
         assert_eq!(gameframe_popup_style(0x940a0000),0x940a0000);
+    }
+    #[test]
+    fn native_fr_read_only_display_mode_uses_win32_devmode_abi(){
+        assert_eq!(std::mem::size_of::<DevModeW>(),220);
     }
     #[test]
     fn native_fr_avi_geometry_adapts_from_exclusive_mode_to_desktop(){
