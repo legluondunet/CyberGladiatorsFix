@@ -54,7 +54,8 @@ fn known_project_gameframe(hash:&str)->bool{
         "0698a6dfd07e1381b7c3b884c97cc81096ee8d4f56c50ddb851bc013bb1e5455" | // FR CI build 138, measured in native Windows user log
         "258a04192e04e4f02463fd2e671f0111253efc5925d460e93a025892535569ee" | // FR CI build 140, measured in native Windows user log
         "4bcc60e02b23b3db28e39d976cec1d6e78517dd8ae421b67b8b9d281a745836c" | // FR CI build 144, measured in native Windows user log
-        "f64d7d5b92e73f778245bf2e2f3a626be306ba585a04ae64d2eca6034389859b"   // FR CI build 146, measured in native Windows user log
+        "f64d7d5b92e73f778245bf2e2f3a626be306ba585a04ae64d2eca6034389859b" | // FR CI build 146, measured in native Windows user log
+        "0626c6fa366c8410ff9d96f18c00ce5e5597f8a1d0d2f355981a2686d165f1db"   // failed native 32-bit experiment build 158 (recovery ONLY)
     )
 }
 /// A published project-built wrapper with no older user DLL to restore
