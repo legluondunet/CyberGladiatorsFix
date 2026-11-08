@@ -224,6 +224,12 @@ fn user_gameframe_launch(root:&Path,fr_borderless_test:bool,us_wine_virtual_test
     }else{
         None
     };
+    if us_wine_virtual_test && diagnostics::is_native_windows() {
+        show(&format!(
+            "US_NATIVE_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn {}",
+            diagnostics::prelaunch_display_modes()
+        ),root);
+    }
     let child=verify::launch_gameframe(root,fr_borderless_test,us_wine_virtual_test)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
@@ -233,6 +239,12 @@ fn user_gameframe_launch(root:&Path,fr_borderless_test:bool,us_wine_virtual_test
     // Stop/join the read-only sampler before the final launcher snapshot.
     // It has no authority to restore or modify the user's desktop mode.
     drop(display_watch);
+    if us_wine_virtual_test && diagnostics::is_native_windows() {
+        show(&format!(
+            "US_NATIVE_DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
+            diagnostics::prelaunch_display_modes()
+        ),root);
+    }
     // Native FR's retail game switches Windows to 640x480x16 during its AVI.
     // Alt+Tab restores geometry but can leave the current mode at 16 bpp.
     // Observe the mode *after the process exits* before considering any
