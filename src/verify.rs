@@ -201,17 +201,21 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
     if fr_borderless_test && !native_fr_alt_tab{
         return Err("--fr-borderless-test is restricted to the verified French edition on native Windows".into());
     }
-    // Exact profile gate: this US DirectDraw COM-proxy experiment must not
-    // affect native Windows, unrecognized EXEs, or the French Wine path.
-    // It is deliberately independent of the native-FR A/B test.
-    if us_wine_virtual_test && (edition!="US" || diagnostics::is_native_windows()){
-        return Err("--us-virtual-ddraw-test requires the verified US game under Wine/Proton".into());
+    // Compare the same project-owned COM / MCI virtualizer on both
+    // Windows native and Wine. The EXE must match the verified US profile:
+    // the normal US launch and both FR launch paths remain unaffected.
+    if us_wine_virtual_test && edition!="US"{
+        return Err("--us-virtual-ddraw-test requires the verified US retail game".into());
     }
-    cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_fr_alt_tab{"1"}else{"0"});
+    let us_native_virtual_test=us_wine_virtual_test && diagnostics::is_native_windows();
+    let us_wine_virtual_test=us_wine_virtual_test && !diagnostics::is_native_windows();
+    let native_virtual_focus=native_fr_alt_tab || us_native_virtual_test;
+    cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_virtual_focus{"1"}else{"0"});
     // A diagnostic child flag is always explicitly set, never inherited
     // from the caller. The normal user launch takes the validated #168 path.
     cmd.env("CYBER_FR_VIRTUAL_DDRAW",if fr_borderless_test{"1"}else{"0"});
     cmd.env("CYBER_US_WINE_VIRTUAL_DDRAW",if us_wine_virtual_test{"1"}else{"0"});
+    cmd.env("CYBER_US_NATIVE_VIRTUAL_DDRAW",if us_native_virtual_test{"1"}else{"0"});
     crate::show(&format!(
         "FR_VIRTUAL_DDRAW enabled={} native_FR={} opt_in=1 system_ddraw_vtable_unchanged=1 no_external_wrapper=1",
         u8::from(fr_borderless_test),u8::from(native_fr_alt_tab)
@@ -221,10 +225,14 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
         u8::from(us_wine_virtual_test),u8::from(!diagnostics::is_native_windows())
     ),root);
     crate::show(&format!(
-        "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
-        u8::from(native_fr_alt_tab)
+        "US_NATIVE_VIRTUAL_DDRAW enabled={} edition={edition} native_windows={} owned_COM_and_MCI=1 same_as_native_FR=1 native_forward=0 physical_mode_request=0 experimental=1",
+        u8::from(us_native_virtual_test),u8::from(diagnostics::is_native_windows())
     ),root);
-    if native_fr_alt_tab {
+    crate::show(&format!(
+        "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
+        u8::from(native_virtual_focus)
+    ),root);
+    if native_virtual_focus {
         crate::show(&format!(
             "FR_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn {}",
             diagnostics::prelaunch_display_modes()
@@ -251,10 +259,13 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
     // GameFrame build may forward its 640x480x16 DirectDraw request to the
     // prelaunch desktop size. The real DirectDraw SetDisplayMode is called.
     // The native Windows loader always leaves this interception inactive.
-    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD",if us_wine_virtual_test{"0"}else{"1"});
+    // The historical Wine forwarding must remain disabled for either
+    // experimental US COM-owned profile; on native Windows it is inert.
+    let wine_forward=!us_wine_virtual_test && !us_native_virtual_test;
+    cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD",if wine_forward{"1"}else{"0"});
     crate::show(&format!(
-        "WINE_DDRAW_NATIVE_FORWARD requested={} activation=wine_only          forwarding=real_DirectDraw_when_intercepted game_only=1          disabled_for_us_virtual_ab={}",
-        u8::from(!us_wine_virtual_test),u8::from(us_wine_virtual_test)
+        "WINE_DDRAW_NATIVE_FORWARD requested={} activation=wine_only forwarding=real_DirectDraw_when_intercepted game_only=1 disabled_for_us_virtual_ab={}",
+        u8::from(wine_forward),u8::from(!wine_forward)
     ),root);
     crate::show("GAMEFRAME_AVI_FIRST_PRESENT enabled=1 decoder=native_MCI_GDI first_GL_SwapBuffers_handoff=1 native_video_4x3=1 timeout_ms=3500",root);
     if let Some((w,h))=diagnostics::primary_desktop_size(){
