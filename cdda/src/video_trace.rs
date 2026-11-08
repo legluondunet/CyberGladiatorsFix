@@ -163,6 +163,13 @@ const VK_SPACE:usize=0x20;
 const HOST_CLASS:&[u8]=b"CyberGladiatorsFix_AVI_4x3_Host_v2\0";
 static HOST_CLASS_REGISTERED:OnceLock<bool>=OnceLock::new();
 static KEY_FILTER_ACTIVE:AtomicBool=AtomicBool::new(false);
+static VIRTUAL_AVI_PUMP_POLLS:AtomicU32=AtomicU32::new(0);
+static VIRTUAL_AVI_PUMP_MESSAGES:AtomicU32=AtomicU32::new(0);
+unsafe extern "C" {
+    // The canonical Win32 MSG ABI is compiled in the project-owned
+    // C++ bridge; this Rust module never guesses MSG structure alignment.
+    fn cyber_virtual_avi_pump_messages()->u32;
+}
 static KEY_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 static KEY_FILTER_ALLOWED:AtomicU32=AtomicU32::new(0);
 static MOUSE_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
@@ -1001,6 +1008,39 @@ fn close_host(reason:&str){
 /// visible with a synchronous hold AFTER the guarded WndProc repair. This
 /// prevents the game from reaching the next nGlide/3D phase until the hold
 /// ends, rather than repeatedly raising a competing fullscreen window.
+fn should_pump_virtual_avi(status_ok:bool,is_status:bool,virtual_fr:bool,keys_active:bool)->bool{
+    status_ok&&is_status&&virtual_fr&&keys_active
+}
+/// The legacy game busy-polls WinMM throughout its roughly 40-second AVI
+/// without processing ordinary window messages. This can make a genuine
+/// NON-exclusive borderless HWND appear hung to Windows even while the
+/// movie continues playing. The experiment pumps up to 16 queued messages
+/// on the same UI thread at each MCI status poll, instead of synthesizing
+/// a second window loop. The C++ adapter preserves WM_QUIT and guards
+/// against nested pumps, without editing the real display mode.
+pub fn pump_virtual_avi_messages(command:&str,result:u32){
+    let virtual_fr=std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
+        &&std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
+        &&gameframe_first_present_handoff();
+    if !should_pump_virtual_avi(
+        result==0,command.trim().eq_ignore_ascii_case("status movie mode"),
+        virtual_fr,KEY_FILTER_ACTIVE.load(Ordering::Acquire)
+    ){return;}
+    let owner={
+        let guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+        guard.as_ref().map(|h|h.owner_thread)
+    };
+    if owner!=Some(unsafe{GetCurrentThreadId()}){return;}
+    let count=unsafe{cyber_virtual_avi_pump_messages()};
+    let polls=VIRTUAL_AVI_PUMP_POLLS.fetch_add(1,Ordering::Relaxed)+1;
+    VIRTUAL_AVI_PUMP_MESSAGES.fetch_add(count,Ordering::Relaxed);
+    if polls==1 || polls%400==0 {
+        video_log(&format!(
+            "FR_VIRTUAL_AVI_MESSAGE_PUMP polls={polls} dispatched_total={} last_batch={count}             max_per_status=16 normal_mode=disabled win32_msg_queue_serviced=1",
+            VIRTUAL_AVI_PUMP_MESSAGES.load(Ordering::Relaxed)
+        ));
+    }
+}
 // The original game polls mciSendStringA("status movie mode") many times
 // per second while its UI thread is NOT pumping ordinary Win32 WM_TIMER
 // messages. Unlike the after-video curtain, a Win32 timer cannot reliably
@@ -1920,6 +1960,16 @@ mod fullscreen_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn virtual_avi_message_pump_only_during_successful_status_poll(){
+        assert!(should_pump_virtual_avi(true,true,true,true));
+        for cond in [
+            (false,true,true,true),(true,false,true,true),
+            (true,true,false,true),(true,true,true,false)
+        ] {
+            assert!(!should_pump_virtual_avi(cond.0,cond.1,cond.2,cond.3));
+        }
+    }
     #[test]
     fn only_movie_mci_commands_are_traced(){
         assert!(before("open avivideo").is_some());
