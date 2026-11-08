@@ -165,6 +165,17 @@ static HOST_CLASS_REGISTERED:OnceLock<bool>=OnceLock::new();
 static KEY_FILTER_ACTIVE:AtomicBool=AtomicBool::new(false);
 static VIRTUAL_AVI_PUMP_POLLS:AtomicU32=AtomicU32::new(0);
 static VIRTUAL_AVI_PUMP_MESSAGES:AtomicU32=AtomicU32::new(0);
+static VIRTUAL_AVI_MCI_REFRESH:OnceLock<Mutex<VirtualMciRefresh>>=OnceLock::new();
+#[derive(Default)]
+struct VirtualMciRefresh {
+    last:Option<Instant>,
+    requests:u32,
+    failures:u32,
+    disabled:bool,
+}
+fn virtual_mci_refresh()->&'static Mutex<VirtualMciRefresh>{
+    VIRTUAL_AVI_MCI_REFRESH.get_or_init(||Mutex::new(VirtualMciRefresh::default()))
+}
 unsafe extern "C" {
     // The canonical Win32 MSG ABI is compiled in the project-owned
     // C++ bridge; this Rust module never guesses MSG structure alignment.
@@ -1038,6 +1049,71 @@ pub fn pump_virtual_avi_messages(command:&str,result:u32){
         video_log(&format!(
             "FR_VIRTUAL_AVI_MESSAGE_PUMP polls={polls} dispatched_total={} last_batch={count}             max_per_status=16 normal_mode=disabled win32_msg_queue_serviced=1",
             VIRTUAL_AVI_PUMP_MESSAGES.load(Ordering::Relaxed)
+        ));
+    }
+}
+/// MCIAVI is still playing after a frozen frame, and Alt+Tab temporarily
+/// makes the image advance. Window-message pumping alone did not fix the
+/// renderer. In this *experimental FR non-exclusive mode only*, periodically
+/// ask the **native MCI driver** to repaint the current frame to a valid DC.
+/// Do not invalidate our black-painted host: painting the parent would erase
+/// the video rather than refreshing it.
+///
+/// The returned HWND is owned by the same MCI/game UI thread. The WinMM
+/// caller must release the DC, perform the native MCI update without holding
+/// any host mutex, and report the return code. An unsupported update is
+/// disabled after the first failure to preserve ordinary playback.
+fn mci_refresh_is_due(now:Instant,last:&mut Option<Instant>,interval:Duration)->bool{
+    match *last {
+        Some(previous) if now.saturating_duration_since(previous)<interval=>false,
+        _=>{
+            *last=Some(now);
+            true
+        }
+    }
+}
+pub fn virtual_fr_movie_repaint_target(command:&str,code:u32,reply:&str)->Option<usize>{
+    if code!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
+        || !reply.trim().eq_ignore_ascii_case("playing")
+        || std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
+        || !gameframe_first_present_handoff()
+        || !KEY_FILTER_ACTIVE.load(Ordering::Acquire){
+        return None;
+    }
+    let host=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
+    unsafe {
+        if host.owner_thread!=GetCurrentThreadId()
+            || IsWindow(host.surface as *mut c_void)==0
+            || IsWindowVisible(host.surface as *mut c_void)==0 {
+            return None;
+        }
+    }
+    let mut guard=virtual_mci_refresh().lock().unwrap_or_else(|e|e.into_inner());
+    if guard.disabled{return None;}
+    // Avoid any repaint while the original AVI pre-roll cover is active.
+    // Initial call starts the clock without issuing MCI commands.
+    let now=Instant::now();
+    if guard.last.is_none(){
+        guard.last=Some(now);
+        return None;
+    }
+    if !mci_refresh_is_due(now,&mut guard.last,Duration::from_millis(500)){
+        return None;
+    }
+    guard.requests=guard.requests.saturating_add(1);
+    Some(host.surface)
+}
+pub fn virtual_fr_movie_repaint_result(code:u32,has_dc:bool){
+    let mut guard=virtual_mci_refresh().lock().unwrap_or_else(|e|e.into_inner());
+    if !has_dc||code!=0 {
+        guard.failures=guard.failures.saturating_add(1);
+        guard.disabled=true; // fail closed; do not repeat unsupported updates
+    }
+    if guard.requests<=3 || guard.requests%20==0 || guard.disabled {
+        video_log(&format!(
+            "FR_VIRTUAL_MCI_FRAME_REFRESH requests={} result={code} hdc_acquired={}              disabled={} failures={} interval_ms=500 paint_method=native_MCI_UPDATE              physical_resolution_unchanged=1",
+            guard.requests,u8::from(has_dc),u8::from(guard.disabled),guard.failures
         ));
     }
 }
@@ -1960,6 +2036,20 @@ mod fullscreen_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn mci_repaint_throttle_never_repaints_faster_than_interval(){
+        let now=Instant::now();
+        let mut last=None;
+        assert!(mci_refresh_is_due(now,&mut last,Duration::from_millis(500)));
+        assert!(!mci_refresh_is_due(now+Duration::from_millis(499),
+            &mut last,Duration::from_millis(500)));
+        assert!(mci_refresh_is_due(now+Duration::from_millis(500),
+            &mut last,Duration::from_millis(500)));
+        assert!(!mci_refresh_is_due(now+Duration::from_millis(600),
+            &mut last,Duration::from_millis(500)));
+        assert!(mci_refresh_is_due(now+Duration::from_millis(1000),
+            &mut last,Duration::from_millis(500)));
+    }
     #[test]
     fn virtual_avi_message_pump_only_during_successful_status_poll(){
         assert!(should_pump_virtual_avi(true,true,true,true));
