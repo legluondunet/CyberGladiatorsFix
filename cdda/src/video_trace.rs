@@ -91,6 +91,7 @@ fn game_class_proc_rva()->usize{
 const GCL_WNDPROC:i32=-24;
 const GWL_WNDPROC:i32=-4;
 const GWL_STYLE:i32=-16;
+const GWL_EXSTYLE:i32=-20;
 const SWP_NOZORDER:u32=0x0004;
 const FROM_ADDRESS:u32=0x0000_0004;
 const UNCHANGED_REFCOUNT:u32=0x0000_0002;
@@ -329,6 +330,7 @@ struct NativeHost {
     first_frame_cover:usize, // smooth test only; opaque sibling above video
     first_frame_cover_started:Option<Instant>,
     native_fr_last_active:Option<bool>,
+    game_switcher_original_exstyle:Option<u32>, // temporarily hide only the black game entry on native Windows
     us_wine_game_minimized_for_avi:bool,
     us_wine_minimize_attempts:u8,
     us_wine_minimize_last:Option<Instant>,
@@ -690,6 +692,65 @@ fn host_exstyle(smooth:bool)->u32 {
     WS_EX_NOACTIVATE|WS_EX_TOPMOST|
         if smooth{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
 }
+// With the independently managed AVI host in the Windows task switcher,
+// exposing the underlying black GameFrame/Glide HWND produces two Alt+Tab
+// thumbnails. Temporarily mark ONLY that original game HWND as a tool window
+// while native Windows plays the owned-COM/MCI AVI. Keep the AVI host as the
+// one normal application entry so returning to the video still works.
+// Wine keeps its separately validated focus/unmap/minimize policy unchanged.
+fn hide_game_switcher_entry(virtual_video:bool,native_focus:bool)->bool{
+    virtual_video && native_focus
+}
+fn game_avi_toolwindow_exstyle(previous:u32)->u32{
+    (previous & !WS_EX_APPWINDOW)|WS_EX_TOOLWINDOW
+}
+unsafe fn apply_native_avi_switcher_policy(game:*mut c_void,enabled:bool)->Option<u32>{
+    if !enabled{return None;}
+    if IsWindow(game)==0{
+        video_log("AVI_SWITCHER game_window_invalid=1 action=skip");
+        return None;
+    }
+    let previous=GetWindowLongA(game,GWL_EXSTYLE) as u32;
+    let temporary=game_avi_toolwindow_exstyle(previous);
+    if previous==temporary {
+        video_log(&format!("AVI_SWITCHER game_already_toolwindow=1 original_exstyle={previous:#010x} action=unchanged"));
+        return None;
+    }
+    let _=SetWindowLongA(game,GWL_EXSTYLE,temporary as i32);
+    let framed=SetWindowPos(game,std::ptr::null_mut(),0,0,0,0,
+        SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+    let readback=GetWindowLongA(game,GWL_EXSTYLE) as u32;
+    if framed==0 || readback!=temporary {
+        // Do not leave the game stuck as a tool window when setup fails.
+        let _=SetWindowLongA(game,GWL_EXSTYLE,previous as i32);
+        let _=SetWindowPos(game,std::ptr::null_mut(),0,0,0,0,
+            SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+        video_log(&format!(
+            "AVI_SWITCHER game_hide_failed=1 original_exstyle={previous:#010x} requested_exstyle={temporary:#010x} observed_exstyle={readback:#010x} framed={framed} rollback=attempted"
+        ));
+        return None;
+    }
+    video_log(&format!(
+        "AVI_SWITCHER native_video=1 visible_alt_tab_entries_target=1 game_hidden_from_switcher=1 avi_host_kept=1 original_exstyle={previous:#010x} temporary_exstyle={temporary:#010x} framed={framed} no_minimize=1 no_activation=1"
+    ));
+    Some(previous)
+}
+unsafe fn restore_native_avi_switcher_policy(h:&NativeHost){
+    let Some(original)=h.game_switcher_original_exstyle else{return;};
+    let game=h.game as *mut c_void;
+    if IsWindow(game)==0{
+        video_log("AVI_SWITCHER restore_skipped=1 reason=game_window_destroyed");
+        return;
+    }
+    let _=SetWindowLongA(game,GWL_EXSTYLE,original as i32);
+    let framed=SetWindowPos(game,std::ptr::null_mut(),0,0,0,0,
+        SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);
+    let readback=GetWindowLongA(game,GWL_EXSTYLE) as u32;
+    video_log(&format!(
+        "AVI_SWITCHER game_restored_to_alt_tab={} original_exstyle={original:#010x} observed_exstyle={readback:#010x} framed={framed} game_hwnd_preserved=1",
+        u8::from(framed!=0 && readback==original)
+    ));
+}
 fn video_surface_style(smooth:bool)->u32 {
     // The ordinary validated launch retains STATIC/SS_BLACKRECT. The opt-in
     // path paints with a genuinely black stock brush instead of Wine's
@@ -843,6 +904,12 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
             info.monitor.left,info.monitor.top,screen_w,screen_h
         ));
     }
+    // Apply only after all host/child creations have succeeded. Restore the
+    // exact original game extended style when the AVI host is destroyed.
+    let native_focus=std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
+    let game_switcher_original_exstyle=apply_native_avi_switcher_policy(
+        hwnd,hide_game_switcher_entry(virtual_video,native_focus)
+    );
     // Force a fresh black paint before Wine's MCI window becomes visible.
     let _=InvalidateRect(host,std::ptr::null(),1);
     let _=UpdateWindow(host);
@@ -853,6 +920,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     Some(NativeHost{
         host:host as usize,surface:surface as usize,
         first_frame_cover,first_frame_cover_started:None,native_fr_last_active:None,
+        game_switcher_original_exstyle,
         us_wine_game_minimized_for_avi:false,
         us_wine_minimize_attempts:0,us_wine_minimize_last:None,
         game,owner_thread:GetCurrentThreadId(),
@@ -1167,6 +1235,10 @@ fn close_host(reason:&str){
                 ));
             }
             let destroyed=DestroyWindow(h.host as *mut c_void);
+            // Only the owned-MCI host was the Alt+Tab entry during the AVI.
+            // Re-enable the game's original task-switcher style as GameFrame
+            // becomes the sole visible top-level window after first GL Swap.
+            restore_native_avi_switcher_policy(&h);
             video_log(&format!("HOST_CLOSED reason={reason} destroy_result={destroyed}"));
             timing("HOST_DESTROYED");
         }
@@ -2302,6 +2374,23 @@ mod fullscreen_tests {
         assert_eq!(host_exstyle(false)&WS_EX_APPWINDOW,0);
         assert_ne!(host_exstyle(false)&WS_EX_TOOLWINDOW,0);
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
+    }
+    #[test]
+    fn native_virtual_video_is_one_alt_tab_entry_and_restores_original_style(){
+        assert!(hide_game_switcher_entry(true,true));
+        assert!(!hide_game_switcher_entry(false,true));
+        assert!(!hide_game_switcher_entry(true,false),
+            "US/Wine must keep its validated independent application windows");
+        for previous in [0,WS_EX_APPWINDOW,WS_EX_TOPMOST|WS_EX_APPWINDOW,
+            WS_EX_NOACTIVATE|WS_EX_APPWINDOW] {
+            let temporary=game_avi_toolwindow_exstyle(previous);
+            assert_ne!(temporary & WS_EX_TOOLWINDOW,0);
+            assert_eq!(temporary & WS_EX_APPWINDOW,0);
+            assert_eq!(temporary & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW),
+                previous & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW));
+        }
+        assert_ne!(host_exstyle(true)&WS_EX_APPWINDOW,0,
+            "video host must remain selectable from native Alt+Tab");
     }
     #[test]
     fn handoff_3d_has_readiness_grace_and_bounded_fallback(){
