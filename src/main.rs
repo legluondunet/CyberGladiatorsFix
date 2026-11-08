@@ -60,8 +60,8 @@ hashes before installing or patching. A single-BIN raw disc with a verified
 150-sector zero pause before the first AUDIO INDEX 01 is accepted even when
 its original CUE omits INDEX 00; the source CUE/BIN are never rewritten.
 The same owned DirectDraw/MCI adapter is selected automatically for US/FR
-under Windows and Wine/Proton. No special --launch/test flag is necessary;
-the French edition under Wine still requires a field validation.
+under Windows and Wine/Proton. No special launch mode is necessary;
+the French edition under Wine still requires field validation.
 Existing nGlide/developer commands are retained internally for forensic
 regression tests but are not needed for normal use.
 ";
