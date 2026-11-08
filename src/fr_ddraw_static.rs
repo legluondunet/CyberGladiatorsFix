@@ -172,6 +172,48 @@ fn display_path_evidence(data:&[u8])->DisplayPathEvidence{
         exclusive_cooperation,primary_mode,alternate_mode,secondary_mode
     }
 }
+/// Recognize the DirectDraw v1 primary flip-chain descriptor, not merely
+/// SetDisplayMode. In retail x86 code, four consecutive MOV [abs],imm32
+/// fill DDSURFACEDESC: dwSize=108, dwFlags=CAPS|BACKBUFFERCOUNT (0x21),
+/// dwBackBufferCount=1, ddscaps.dwCaps=PRIMARY|FLIP|COMPLEX (0x218).
+///
+/// The addresses must point into a *single* descriptor: +0, +4, +20,
+/// +104. Refuse partial matches, unrelated instructions and raw byte spans
+/// crossing a PE executable section. A candidate remains static evidence;
+/// this is not a proof that the call executed.
+fn primary_flip_chain_candidates(data:&[u8],sections:&[CodeSection])->Vec<Candidate>{
+    let mut found=Vec::new();
+    for sec in sections{
+        let Some(code)=data.get(sec.raw..sec.raw+sec.size)else{continue;};
+        for off in 0..code.len().saturating_sub(39){
+            let Some(run)=code.get(off..off+40)else{continue;};
+            let Some(base)=dword(run,2)else{continue;};
+            let expected=[
+                (0u32,108u32),(4,0x21),(20,1),(104,0x218)
+            ];
+            let valid=expected.iter().enumerate().all(|(idx,(disp,value))|{
+                let at=idx*10;
+                run.get(at..at+2)==Some(&[0xc7,0x05][..])
+                    &&dword(run,at+2)==base.checked_add(*disp)
+                    &&dword(run,at+6)==Some(*value)
+            });
+            if !valid{continue;}
+            // Only a verified call through COM slot 6 (+0x18) near the
+            // descriptor writes can strengthen this candidate.
+            let near_end=off.saturating_add(88).min(code.len());
+            let Some(tail)=code.get(off+40..near_end)else{continue;};
+            if !tail.windows(3).any(|w|w==[0xff,0x50,0x18]
+                 ||w==[0xff,0x51,0x18]||w==[0xff,0x52,0x18]){
+                continue;
+            }
+            let Some(va)=sec.image_base.checked_add(sec.rva)
+                .and_then(|x|x.checked_add(off as u32))else{continue;};
+            found.push(Candidate{raw:sec.raw+off,va,
+                kind:"create_surface_primary_flip_chain"});
+        }
+    }
+    found
+}
 fn hex_window(data:&[u8],raw:usize,before:usize,after:usize)->String{
     // Small, bounded instruction-adjacent excerpt. Never log the game EXE.
     let start=raw.saturating_sub(before);
@@ -224,6 +266,17 @@ pub fn inspect(root:&Path,game_exe:&Path){
     if evidence.exclusive_cooperation&&evidence.primary_mode&&evidence.alternate_mode&&evidence.secondary_mode{
         report(root,
             "virtualization_requirements cooperative_level=nonexclusive logical_mode=640x480x16 physical_desktop_mode=preserved need_consistent_DirectDraw_surfaces=1 simple_bpp_or_mode_substitution=unsafe render_target=desktop_sized_borderless");
+    }
+    let primary_flip=primary_flip_chain_candidates(&data,&sections);
+    report(root,&format!(
+        "primary_flip_chain_candidates={} flags=0x21(DDSD_CAPS|DDSD_BACKBUFFERCOUNT) caps=0x218(DDSCAPS_PRIMARYSURFACE|DDSCAPS_FLIP|DDSCAPS_COMPLEX) backbuffers=1 surfaces_require_virtualization=1 static_scan=1 read_only=1",
+        primary_flip.len()
+    ));
+    for candidate in primary_flip.iter().take(8){
+        report(root,&format!(
+            "primary_flip_chain_candidate={:#010x} raw={:#08x} COM_CreateSurface_slot=6 context_bytes={}",
+            candidate.va,candidate.raw,hex_window(&data,candidate.raw,8,96)
+        ));
     }
     let sites=candidates(&data,&sections);
     let calls:Vec<_>=sites.iter().filter(|site|site.kind=="call_vtable_slot21").collect();
@@ -317,6 +370,31 @@ mod tests{
         assert!(likely_mode_wrapper(&data));
         data[0x54c7]=0x90;
         assert!(!likely_mode_wrapper(&data));
+    }
+    #[test]
+    fn recognizes_primary_backbuffer_flip_chain_but_rejects_partial_descriptors(){
+        let mut data=vec![0u8;0x300];
+        let sec=CodeSection{raw:0x100,size:0xc0,rva:0x1000,image_base:0x400000};
+        let at=0x130;
+        let base=0x0044_efa8u32;
+        let fields=[(0u32,108u32),(4,0x21),(20,1),(104,0x218)];
+        for (i,(offset,value)) in fields.iter().enumerate(){
+            let pos=at+i*10;
+            data[pos..pos+2].copy_from_slice(&[0xc7,0x05]);
+            data[pos+2..pos+6].copy_from_slice(&(base+offset).to_le_bytes());
+            data[pos+6..pos+10].copy_from_slice(&value.to_le_bytes());
+        }
+        // A 16-bpp primary *with flip-chain* is invalid in native
+        // DirectDraw windowed cooperation without a virtualized surface.
+        data[at+55..at+58].copy_from_slice(&[0xff,0x50,0x18]);
+        let expected=vec![Candidate{raw:at,va:0x401030,
+            kind:"create_surface_primary_flip_chain"}];
+        assert_eq!(primary_flip_chain_candidates(&data,&[sec]),expected);
+        data[at+36]=0x00; // corrupt DDSCAPS_PRIMARYSURFACE|FLIP|COMPLEX.
+        assert!(primary_flip_chain_candidates(&data,&[sec]).is_empty());
+        data[at+36]=0x18;
+        data[at+55..at+58].copy_from_slice(&[0x90,0x90,0x90]);
+        assert!(primary_flip_chain_candidates(&data,&[sec]).is_empty());
     }
     #[test]
     fn display_dependency_requires_exact_independent_original_sequences(){
