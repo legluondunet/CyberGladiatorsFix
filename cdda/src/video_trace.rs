@@ -1828,6 +1828,15 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
 fn experimental_movie_focus_profiles(native_fr:bool,us_wine_virtual:bool)->bool{
     native_fr||us_wine_virtual
 }
+// The managed Wine/EWMH fullscreen popup can remain above the active Linux
+// application even after SetWindowPos(HWND_NOTOPMOST/HWND_BOTTOM) succeeds.
+// Unmapping the *temporary AVI host only* is definitive, and leaves the
+// real game's Win32 input window accessible in the normal Alt+Tab list.
+// The video device keeps playing; the native-MCI WM_PAINT surface redraws
+// the current frame immediately when the host is remapped on focus return.
+fn expected_virtual_avi_host_visibility(us_wine_virtual:bool,active:bool)->Option<bool>{
+    us_wine_virtual.then_some(active)
+}
 pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString>{
     if result!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
         || !gameframe_first_present_handoff(){return None;}
@@ -1856,13 +1865,25 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
         let foreground=GetForegroundWindow();
         let active=foreground==h.game as *mut c_void
             || foreground==h.host as *mut c_void;
-        if h.native_fr_last_active!=Some(active){
+        let host=h.host as *mut c_void;
+        let game=h.game as *mut c_void;
+        let expected_visibility=expected_virtual_avi_host_visibility(us_wine_virtual,active);
+        // If Wine silently remaps the popup, correct it on the next MCI
+        // poll even if the foreground HWND itself has not changed.
+        let visibility_wrong=expected_visibility
+            .is_some_and(|wanted|(IsWindowVisible(host)!=0)!=wanted);
+        if h.native_fr_last_active!=Some(active)||visibility_wrong{
             const NO_MOVE_SIZE_ACTIVATE:u32=SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE;
-            let host=h.host as *mut c_void;
-            let game=h.game as *mut c_void;
+            let previous_visible=IsWindowVisible(host)!=0;
             let (host_result,game_result)=if active{
+                // Remap the same host and video-surface HWNDs; no new
+                // renderer, no alternative decoder and no focus stealing.
+                if us_wine_virtual {
+                    let _=ShowWindow(host,4); // SW_SHOWNOACTIVATE
+                }
                 (SetWindowPos(host,(-1isize) as *mut c_void,
-                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE),-1)
+                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE|
+                    if us_wine_virtual{SWP_SHOWWINDOW}else{0}),-1)
             }else{
                 let _=SetWindowPos(host,(-2isize) as *mut c_void,
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
@@ -1872,18 +1893,40 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
                 let game_result=SetWindowPos(game,1usize as *mut c_void,
                     0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
+                if us_wine_virtual {
+                    // Wine's managed full-screen host may carry an EWMH
+                    // fullscreen state that overrides normal Win32 z-order.
+                    // Hide only this separate temporary host, NOT the game:
+                    // hiding the game removes its Alt+Tab return target.
+                    let _=ShowWindow(host,SW_HIDE);
+                }
                 (host_result,game_result)
             };
+            let now_visible=IsWindowVisible(host)!=0;
             video_log(&format!(
                 "{} active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1 no_minimize=1 topmost_when_active=1",
                 if us_wine_virtual{"US_WINE_VIDEO_FOCUS"}else{"FR_NATIVE_VIDEO_FOCUS"},
                 u8::from(active),foreground as usize,host_result,game_result
             ));
+            if us_wine_virtual{
+                video_log(&format!(
+                    "US_WINE_AVI_HOST_VISIBILITY foreground_game={} visible_before={} visible_after={} expected_visible={} operation={} EWMH_fullscreen_unmap=1 game_window_kept_for_alt_tab=1 MCI_remains_open=1",
+                    u8::from(active),u8::from(previous_visible),u8::from(now_visible),
+                    u8::from(active),if active{"remap"}else{"unmap"}
+                ));
+                if active && now_visible{
+                    // Trigger the FR-derived native MCI WM_PAINT redraw
+                    // after reappearing; preserves the current movie time.
+                    let surface=h.surface as *mut c_void;
+                    let _=InvalidateRect(surface,std::ptr::null(),0);
+                    let _=UpdateWindow(surface);
+                }
+            }
             if native_fr{trace_fr_mode("movie_focus_transition");}
-            // Do not treat a failed Wine z-order transition as done. Retry
-            // next MCI status query, with no changes to native FR semantics.
-            let accepted=native_fr || host_result!=0 && (active || game_result!=0);
-            if accepted {
+            let accepted=if let Some(wanted)=expected_visibility{
+                host_result!=0 && (active||game_result!=0) && now_visible==wanted
+            }else{true};
+            if accepted{
                 if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
                     if current.host==h.host {current.native_fr_last_active=Some(active);}
                 }
@@ -2044,6 +2087,13 @@ mod fullscreen_tests {
         assert!(experimental_movie_focus_profiles(false,true));
         assert!(!experimental_movie_focus_profiles(false,false));
         assert!(experimental_movie_focus_profiles(true,true));
+    }
+    #[test]
+    fn us_wine_avi_host_is_unmapped_only_when_another_app_has_focus(){
+        assert_eq!(expected_virtual_avi_host_visibility(true,true),Some(true));
+        assert_eq!(expected_virtual_avi_host_visibility(true,false),Some(false));
+        assert_eq!(expected_virtual_avi_host_visibility(false,true),None);
+        assert_eq!(expected_virtual_avi_host_visibility(false,false),None);
     }
     #[test]
     fn native_fr_read_only_display_mode_uses_win32_devmode_abi(){
