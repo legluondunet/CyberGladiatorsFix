@@ -218,6 +218,17 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
         child.id(),u8::from(enable_cdda)
     ),root);
     let result=wait_game(child,root);
+    // Native FR's retail game switches Windows to 640x480x16 during its AVI.
+    // Alt+Tab restores geometry but can leave the current mode at 16 bpp.
+    // Observe the mode *after the process exits* before considering any
+    // corrective action. This is a read-only Windows query, not a restore.
+    if diagnostics::is_native_windows()
+        && crate::fr_patch::owns(&game.join("cyber.exe")).unwrap_or(false) {
+        show(&format!(
+            "FR_DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
+            diagnostics::prelaunch_display_modes()
+        ),root);
+    }
     let restored=previous_glide.restore();
     match (result,restored){
         (Err(game),Err(dll))=>Err(format!("{game}; original Glide restoration failed: {dll}")),
