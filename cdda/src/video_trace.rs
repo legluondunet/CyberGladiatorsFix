@@ -71,7 +71,7 @@ fn after_in(state:&mut MovieState,command:&str,code:u32,reply:&str)->Option<Stri
 // A fullscreen host is used only when the launcher verified the game,
 // SkipIntro=0 and the in-process WinMM/CDDA bridge.
 use std::ffi::{c_void,CString};
-use std::sync::atomic::{AtomicBool,AtomicU32,Ordering};
+use std::sync::atomic::{AtomicBool,AtomicU32,AtomicUsize,Ordering};
 
 const EXPECTED_GAME_BASE:usize=0x0040_0000;
 // Per-retail-edition addresses validated from the original PE32 code.
@@ -115,8 +115,6 @@ const SWP_FRAMECHANGED:u32=0x0020;
 const SWP_SHOWWINDOW:u32=0x0040;
 const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
-const WM_KEYDOWN:u32=0x0100;
-const WM_KEYUP:u32=0x0101;
 const WM_TIMER:u32=0x0113;
 const WM_GAMEFRAME_FIRST_GL_PRESENT:u32=0x8000+0x4c;
 const GAMEFRAME_FIRST_GL_PROP:&[u8]=b"CyberGladiators_GameFrame_GlPresentedPending\0";
@@ -196,6 +194,8 @@ unsafe extern "C" {
 }
 static KEY_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 static KEY_FILTER_ALLOWED:AtomicU32=AtomicU32::new(0);
+static KEY_FILTER_LAST_ALLOWED_DOWN:AtomicU32=AtomicU32::new(0);
+static KEY_FILTER_LAST_ALLOWED_FG:AtomicUsize=AtomicUsize::new(0);
 static MOUSE_FILTER_BLOCKED:AtomicU32=AtomicU32::new(0);
 #[derive(Default)]
 struct Timing {
@@ -308,7 +308,7 @@ extern "system" {
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
     fn SetWindowLongA(hwnd:*mut c_void,index:i32,value:i32)->i32;
     fn GetForegroundWindow()->*mut c_void;
-    fn PostMessageA(hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize)->i32;
+    fn SetForegroundWindow(hwnd:*mut c_void)->i32;
     fn GetSystemMetrics(index:i32)->i32;
     fn EnumDisplaySettingsW(device:*const u16,mode:i32,out:*mut DevModeW)->i32;
     fn IsIconic(hwnd:*mut c_void)->i32;
@@ -335,6 +335,7 @@ struct NativeHost {
     video_last_active:Option<bool>,
     game_switcher_original_exstyle:Option<u32>, // temporarily hide only the black game entry on native Windows
     wine_game_minimized_for_avi:bool,
+    wine_initial_focus_attempted:bool,
     wine_minimize_attempts:u8,
     wine_minimize_last:Option<Instant>,
     game:usize,
@@ -367,52 +368,6 @@ fn gameframe_first_present_handoff()->bool{
 }
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
 
-// The managed MCI host may become Wine/XFCE's foreground HWND even though
-// WS_EX_NOACTIVATE was requested. While that happens, physical keypresses
-// reach the host (or its MCI child) rather than the original game HWND.
-// Alt+Tab can accidentally fix this by making the original game foreground.
-// Relay *only* the three pre-approved movie-skip keys to the original game
-// UI thread; never steal focus, synthesize global input, or affect Alt+Tab.
-// PostMessage stays asynchronous: the already-bounded MCI status message
-// pump delivers the event to the original game WndProc.
-fn should_relay_video_skip_key(
-    msg:u32,key:usize,filter_active:bool,host_owns_message:bool,
-    video_is_foreground:bool
-)->bool{
-    matches!(msg,WM_KEYDOWN|WM_KEYUP)
-        && allowed_movie_skip_key(key)
-        && filter_active
-        && host_owns_message
-        && video_is_foreground
-}
-unsafe fn relay_video_skip_key(
-    receiver:*mut c_void,msg:u32,key:usize,lparam:isize
-)->bool{
-    if !matches!(msg,WM_KEYDOWN|WM_KEYUP)
-        || !KEY_FILTER_ACTIVE.load(Ordering::Acquire)
-        || !allowed_movie_skip_key(key){return false;}
-    // Snapshot and release the lock BEFORE making any Win32 call: window
-    // messages can re-enter the WinMM hook synchronously.
-    let h=*video_host().lock().unwrap_or_else(|e|e.into_inner());
-    let Some(h)=h else{return false};
-    if h.owner_thread!=GetCurrentThreadId(){return false;}
-    let foreground=GetForegroundWindow();
-    let own=receiver as usize==h.host || receiver as usize==h.surface;
-    let video_active=foreground as usize==h.host
-        || foreground as usize==h.surface;
-    if !should_relay_video_skip_key(
-        msg,key,true,own,video_active){return false;}
-    if IsWindow(h.game as *mut c_void)==0{return false;}
-    let posted=PostMessageA(h.game as *mut c_void,msg,key,lparam);
-    if msg==WM_KEYDOWN{
-        video_log(&format!(
-            "VIDEO_SKIP_KEY_RELAY key={key:#x} from={:#x} game={:#x} foreground={:#x} posted={posted} no_focus_change=1",
-            receiver as usize,h.game,foreground as usize
-        ));
-    }
-    posted!=0
-}
-
 // A top-level STATIC SS_BLACKRECT window can leave its uncovered client area
 // white in Wine. Give the 4:3 host its own black-background Win32 class and
 // explicitly paint on both erase and paint messages. This is a *separate*
@@ -421,7 +376,6 @@ unsafe extern "system" fn black_host_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg{
-        WM_KEYDOWN|WM_KEYUP if relay_video_skip_key(hwnd,msg,wparam,lparam)=>0,
         WM_TIMER if wparam==HANDOFF_TIMER_ID=>{
             if gameframe_first_present_handoff() {
                 if GAMEFRAME_FIRST_GL_ARMED.load(Ordering::Acquire) {
@@ -514,7 +468,6 @@ unsafe extern "system" fn virtual_video_surface_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg {
-        WM_KEYDOWN|WM_KEYUP if relay_video_skip_key(hwnd,msg,wparam,lparam)=>0,
         WM_ERASEBKGND=>1, // never black-out an already decoded MCI frame
         WM_TIMER if wparam==VIRTUAL_MCI_TIMER_ID=>{
             if VIRTUAL_MCI_SURFACE_PLAYING.load(Ordering::Acquire){
@@ -635,6 +588,14 @@ unsafe extern "system" fn movie_keyboard_filter(
     if code>=0 && KEY_FILTER_ACTIVE.load(Ordering::Relaxed){
         if allowed_movie_skip_key(key){
             KEY_FILTER_ALLOWED.fetch_add(1,Ordering::Relaxed);
+            // Capture the last allowed key-down without doing I/O inside
+            // the keyboard hook. No new input is synthesized.
+            if (flags as usize & 0x8000_0000)==0 {
+                KEY_FILTER_LAST_ALLOWED_DOWN.store(key as u32,Ordering::Relaxed);
+                KEY_FILTER_LAST_ALLOWED_FG.store(
+                    GetForegroundWindow() as usize,Ordering::Relaxed
+                );
+            }
         }else{
             KEY_FILTER_BLOCKED.fetch_add(1,Ordering::Relaxed);
             return 1;
@@ -675,6 +636,8 @@ fn enable_movie_keys(){
         if host.keyboard_hook!=0{return;}
         KEY_FILTER_BLOCKED.store(0,Ordering::Relaxed);
         KEY_FILTER_ALLOWED.store(0,Ordering::Relaxed);
+        KEY_FILTER_LAST_ALLOWED_DOWN.store(0,Ordering::Relaxed);
+        KEY_FILTER_LAST_ALLOWED_FG.store(0,Ordering::Relaxed);
         MOUSE_FILTER_BLOCKED.store(0,Ordering::Relaxed);
         let hook=SetWindowsHookExA(WH_KEYBOARD,Some(movie_keyboard_filter),
             std::ptr::null_mut(),host.owner_thread);
@@ -977,7 +940,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         host:host as usize,surface:surface as usize,
         first_frame_cover,first_frame_cover_started:None,video_last_active:None,
         game_switcher_original_exstyle,
-        wine_game_minimized_for_avi:false,
+        wine_game_minimized_for_avi:false,wine_initial_focus_attempted:false,
         wine_minimize_attempts:0,wine_minimize_last:None,
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,
@@ -997,9 +960,11 @@ unsafe fn stop_movie_input(h:&mut NativeHost){
     if h.keyboard_hook!=0{
         let unhooked=UnhookWindowsHookEx(h.keyboard_hook as *mut c_void);
         video_log(&format!(
-            "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={}",
+            "KEY_FILTER_STOPPED unhooked={unhooked} allowed_events={} blocked_events={} last_allowed_keydown={:#x} last_allowed_foreground={:#x}",
             KEY_FILTER_ALLOWED.load(Ordering::Relaxed),
-            KEY_FILTER_BLOCKED.load(Ordering::Relaxed)
+            KEY_FILTER_BLOCKED.load(Ordering::Relaxed),
+            KEY_FILTER_LAST_ALLOWED_DOWN.load(Ordering::Relaxed),
+            KEY_FILTER_LAST_ALLOWED_FG.load(Ordering::Relaxed)
         ));
         h.keyboard_hook=0;
     }
@@ -1992,6 +1957,13 @@ fn experimental_movie_focus_profiles(native_fr:bool,wine_virtual:bool)->bool{
 // real game's Win32 input window accessible in the normal Alt+Tab list.
 // The video device keeps playing; the native-MCI WM_PAINT surface redraws
 // the current frame immediately when the host is remapped on focus return.
+fn should_transfer_initial_avi_keyboard_focus(
+    wine_virtual:bool,first_status:bool,already_attempted:bool,
+    foreground_is_video_host:bool,same_game_ui_thread:bool
+)->bool{
+    wine_virtual && first_status && !already_attempted
+        && foreground_is_video_host && same_game_ui_thread
+}
 fn expected_virtual_avi_host_visibility(wine_virtual:bool,active:bool)->Option<bool>{
     wine_virtual.then_some(active)
 }
@@ -2032,10 +2004,36 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
             || IsWindow(h.surface as *mut c_void)==0 {
             return None;
         }
-        // The host is a NOACTIVATE topmost window, while the actual
-        // foreground belongs to the original game. On focus loss, lower
-        // BOTH windows so neither covers the selected application. Do not
-        // activate or minimize either window.
+        // The host may be foreground on Xfwm despite WS_EX_NOACTIVATE.
+        // Give initial keyboard ownership back to the verified original game,
+        // only if OUR temporary video host is itself currently foreground.
+        // One attempt per movie; never steal focus after user Alt+Tab.
+        let foreground_before=GetForegroundWindow();
+        if wine_virtual && h.video_last_active.is_none()
+            && !h.wine_initial_focus_attempted {
+            let host_is_foreground=foreground_before==h.host as *mut c_void;
+            let game=h.game as *mut c_void;
+            let mut game_pid=0;
+            let game_tid=GetWindowThreadProcessId(game,&mut game_pid);
+            let same_ui_thread=game_tid==h.owner_thread && game_pid==GetCurrentProcessId();
+            let attempted=should_transfer_initial_avi_keyboard_focus(
+                wine_virtual,h.video_last_active.is_none(),
+                h.wine_initial_focus_attempted,host_is_foreground,
+                same_ui_thread && IsWindow(game)!=0
+            );
+            let (result,foreground_after)=if attempted{
+                let result=SetForegroundWindow(game);
+                (result,GetForegroundWindow())
+            }else{(0,foreground_before)};
+            video_log(&format!(
+                "WINE_AVI_INITIAL_INPUT_FOCUS attempted={} result={} before={:#x} after={:#x} target_game={:#x} same_ui_thread={} external_focus_untouched=1 once=1",
+                u8::from(attempted),result,foreground_before as usize,
+                foreground_after as usize,h.game,u8::from(same_ui_thread)
+            ));
+            if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
+                if current.host==h.host{current.wine_initial_focus_attempted=true;}
+            }
+        }
         let foreground=GetForegroundWindow();
         let active=foreground==h.game as *mut c_void
             || foreground==h.host as *mut c_void;
@@ -2496,21 +2494,13 @@ mod fullscreen_tests {
         assert!(!blocked_movie_mouse_message(WM_PAINT));
     }
     #[test]
-    fn skip_key_relay_only_when_the_video_window_owns_initial_focus(){
-        for key in [VK_ESCAPE,VK_RETURN,VK_SPACE]{
-            for msg in [WM_KEYDOWN,WM_KEYUP]{
-                assert!(should_relay_video_skip_key(msg,key,true,true,true));
-                assert!(!should_relay_video_skip_key(msg,key,false,true,true));
-                assert!(!should_relay_video_skip_key(msg,key,true,false,true));
-                assert!(!should_relay_video_skip_key(msg,key,true,true,false));
-            }
-        }
-        for key in [0x41,0x09,0x12,0x10,0x25,0] {
-            assert!(!should_relay_video_skip_key(WM_KEYDOWN,key,true,true,true));
-        }
-        assert!(!should_relay_video_skip_key(WM_TIMER,VK_SPACE,true,true,true));
-        // A direct key event on the game is never forwarded recursively.
-        assert!(!should_relay_video_skip_key(WM_KEYDOWN,VK_SPACE,true,false,true));
+    fn wine_initial_keyboard_focus_transfer_never_steals_from_other_apps(){
+        assert!(should_transfer_initial_avi_keyboard_focus(true,true,false,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(false,true,false,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,false,false,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,true,true,true,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,true,false,false,true));
+        assert!(!should_transfer_initial_avi_keyboard_focus(true,true,false,true,false));
     }
     #[test]
     fn skip_filter_accepts_only_three_virtual_keys(){
