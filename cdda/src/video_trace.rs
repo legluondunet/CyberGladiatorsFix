@@ -115,6 +115,8 @@ const SWP_FRAMECHANGED:u32=0x0020;
 const SWP_SHOWWINDOW:u32=0x0040;
 const WS_EX_NOACTIVATE:u32=0x0800_0000;
 const WS_EX_TOPMOST:u32=0x0000_0008;
+const WM_KEYDOWN:u32=0x0100;
+const WM_KEYUP:u32=0x0101;
 const WM_TIMER:u32=0x0113;
 const WM_GAMEFRAME_FIRST_GL_PRESENT:u32=0x8000+0x4c;
 const GAMEFRAME_FIRST_GL_PROP:&[u8]=b"CyberGladiators_GameFrame_GlPresentedPending\0";
@@ -306,6 +308,7 @@ extern "system" {
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
     fn SetWindowLongA(hwnd:*mut c_void,index:i32,value:i32)->i32;
     fn GetForegroundWindow()->*mut c_void;
+    fn PostMessageA(hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize)->i32;
     fn GetSystemMetrics(index:i32)->i32;
     fn EnumDisplaySettingsW(device:*const u16,mode:i32,out:*mut DevModeW)->i32;
     fn IsIconic(hwnd:*mut c_void)->i32;
@@ -364,6 +367,52 @@ fn gameframe_first_present_handoff()->bool{
 }
 fn video_log(message:&str){crate::log(&format!("AVI_4X3 {message}"));}
 
+// The managed MCI host may become Wine/XFCE's foreground HWND even though
+// WS_EX_NOACTIVATE was requested. While that happens, physical keypresses
+// reach the host (or its MCI child) rather than the original game HWND.
+// Alt+Tab can accidentally fix this by making the original game foreground.
+// Relay *only* the three pre-approved movie-skip keys to the original game
+// UI thread; never steal focus, synthesize global input, or affect Alt+Tab.
+// PostMessage stays asynchronous: the already-bounded MCI status message
+// pump delivers the event to the original game WndProc.
+fn should_relay_video_skip_key(
+    msg:u32,key:usize,filter_active:bool,host_owns_message:bool,
+    video_is_foreground:bool
+)->bool{
+    matches!(msg,WM_KEYDOWN|WM_KEYUP)
+        && allowed_movie_skip_key(key)
+        && filter_active
+        && host_owns_message
+        && video_is_foreground
+}
+unsafe fn relay_video_skip_key(
+    receiver:*mut c_void,msg:u32,key:usize,lparam:isize
+)->bool{
+    if !matches!(msg,WM_KEYDOWN|WM_KEYUP)
+        || !KEY_FILTER_ACTIVE.load(Ordering::Acquire)
+        || !allowed_movie_skip_key(key){return false;}
+    // Snapshot and release the lock BEFORE making any Win32 call: window
+    // messages can re-enter the WinMM hook synchronously.
+    let h=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let Some(h)=h else{return false};
+    if h.owner_thread!=GetCurrentThreadId(){return false;}
+    let foreground=GetForegroundWindow();
+    let own=receiver as usize==h.host || receiver as usize==h.surface;
+    let video_active=foreground as usize==h.host
+        || foreground as usize==h.surface;
+    if !should_relay_video_skip_key(
+        msg,key,true,own,video_active){return false;}
+    if IsWindow(h.game as *mut c_void)==0{return false;}
+    let posted=PostMessageA(h.game as *mut c_void,msg,key,lparam);
+    if msg==WM_KEYDOWN{
+        video_log(&format!(
+            "VIDEO_SKIP_KEY_RELAY key={key:#x} from={:#x} game={:#x} foreground={:#x} posted={posted} no_focus_change=1",
+            receiver as usize,h.game,foreground as usize
+        ));
+    }
+    posted!=0
+}
+
 // A top-level STATIC SS_BLACKRECT window can leave its uncovered client area
 // white in Wine. Give the 4:3 host its own black-background Win32 class and
 // explicitly paint on both erase and paint messages. This is a *separate*
@@ -372,6 +421,7 @@ unsafe extern "system" fn black_host_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg{
+        WM_KEYDOWN|WM_KEYUP if relay_video_skip_key(hwnd,msg,wparam,lparam)=>0,
         WM_TIMER if wparam==HANDOFF_TIMER_ID=>{
             if gameframe_first_present_handoff() {
                 if GAMEFRAME_FIRST_GL_ARMED.load(Ordering::Acquire) {
@@ -464,6 +514,7 @@ unsafe extern "system" fn virtual_video_surface_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
 )->isize{
     match msg {
+        WM_KEYDOWN|WM_KEYUP if relay_video_skip_key(hwnd,msg,wparam,lparam)=>0,
         WM_ERASEBKGND=>1, // never black-out an already decoded MCI frame
         WM_TIMER if wparam==VIRTUAL_MCI_TIMER_ID=>{
             if VIRTUAL_MCI_SURFACE_PLAYING.load(Ordering::Acquire){
@@ -2443,6 +2494,23 @@ mod fullscreen_tests {
         }
         assert!(!blocked_movie_mouse_message(WM_MOUSEMOVE));
         assert!(!blocked_movie_mouse_message(WM_PAINT));
+    }
+    #[test]
+    fn skip_key_relay_only_when_the_video_window_owns_initial_focus(){
+        for key in [VK_ESCAPE,VK_RETURN,VK_SPACE]{
+            for msg in [WM_KEYDOWN,WM_KEYUP]{
+                assert!(should_relay_video_skip_key(msg,key,true,true,true));
+                assert!(!should_relay_video_skip_key(msg,key,false,true,true));
+                assert!(!should_relay_video_skip_key(msg,key,true,false,true));
+                assert!(!should_relay_video_skip_key(msg,key,true,true,false));
+            }
+        }
+        for key in [0x41,0x09,0x12,0x10,0x25,0] {
+            assert!(!should_relay_video_skip_key(WM_KEYDOWN,key,true,true,true));
+        }
+        assert!(!should_relay_video_skip_key(WM_TIMER,VK_SPACE,true,true,true));
+        // A direct key event on the game is never forwarded recursively.
+        assert!(!should_relay_video_skip_key(WM_KEYDOWN,VK_SPACE,true,false,true));
     }
     #[test]
     fn skip_filter_accepts_only_three_virtual_keys(){
