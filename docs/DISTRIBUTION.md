@@ -1,7 +1,7 @@
-CyberGladiatorsFix — Windows x64 pre-release testing guide
+CyberGladiatorsFix — Windows x64 distribution / release-candidate guide
 ==========================================================
 
-The testing artifact contains the Windows x64 launcher, LICENSE-GPL-3.0,
+The package contains the Windows x64 launcher, LICENSE-GPL-3.0,
 LICENSE-APACHE and this README. The EXE embeds BOTH 32-bit Windows DLLs:
   1. CyberGladiatorsFix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
   2. glide.dll — Apache-2.0 GameFrame Glide-to-OpenGL wrapper
@@ -80,8 +80,8 @@ Only the window-manager-specific Alt+Tab/focus adapter is selected
 automatically. The former Wine native-size DirectDraw forwarding
 experiment remains in diagnostic code, not in normal launch.
 
-VALIDATION BEFORE PUBLIC RELEASE
---------------------------------
+FIELD VALIDATION AND PACKAGE CHECKS
+-----------------------------------
 Start from your own CUE/BIN next to the EXE, not from an installed game.
 Let the full intro AVI play, verify music, input, focus and 4:3 scene;
 then exit normally. Start the EXE a second time without the CD files
@@ -103,8 +103,8 @@ Useful commands:
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-This is a pre-release testing artifact, NOT a public release.
-The baseline implementation and audit were merged into main on 2026-11-06.
+GitHub Actions artifacts are temporary pre-release test packages. Only the matching tag-built assets attached to a PUBLISHED GitHub Release constitute the public release. The CI workflow itself does not publish one.
+The baseline installer/audit were merged into main on 2026-11-06; the shared US/FR Windows/Wine runtime and menu signature were subsequently merged as PR #6–#9.
 Merged PR #6 introduced the common owned-COM DirectDraw/MCI engine,
 selected automatically on normal launch, plus the verified original US
 CUE pregap compatibility. The default all-host selection has now been field-validated for both
@@ -113,6 +113,26 @@ fresh install, first-key skip and complete movie playback. A public
 release must not claim universal hardware or window-manager compatibility.
 A green CI workflow checks compilation, PE exports and loading,
 but DOES NOT verify actual video or gameplay on a player's machine.
+
+The in-game build signature appears at the upper-right of the game's
+original centered 4:3 fighter-selection image, with a 4-pixel edge margin,
+and disappears outside that screen. It reports the exact source revision as
+CyberGladiatorsFix v<package version>-<8-character source commit>.
+The latest position was visually accepted on both US and FR editions.
+The violet-grey font approximates the original menu typography; no
+proprietary game font texture is bundled.
+
+Before distributing, independently validate SHA256SUMS.txt against the EXE,
+both license notices and README.txt, and confirm exactly five files exist.
+After extracting on Linux:
+
+  sha256sum -c SHA256SUMS.txt
+
+See docs/RELEASE_PROCESS.md in the source repository for tag, final test,
+and GitHub Release instructions. Tag CI checks that the version matches
+Cargo.toml but DOES NOT publish anything. Source provenance is recorded;
+byte-for-byte reproducibility of the complete dependencies/toolchain is
+not yet claimed.
 
 HISTORICAL TEST REFERENCES
 --------------------------
