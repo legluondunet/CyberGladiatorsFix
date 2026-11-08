@@ -142,7 +142,7 @@ fn cyber_wine_sync_fullscreen_hint(hwnd: HWND) {
         }
         // Only after MCI -> real OpenGL first-present handoff: do not
         // change the stacking of the video window or early black cover.
-        if !FindWindowA(b"CyberGladiatorsFix_AVI_4x3_Host_v2\0".as_ptr(),
+        if !FindWindowA(b"CyberGladiatorsFix_AVI_4x3_Host_v2\\0".as_ptr(),
             std::ptr::null()).is_null(){return;}
         if SYNCED_THIS_FOCUS.swap(true,Ordering::Relaxed){return;}
         let Some(target)=target_monitor(hwnd) else{return};
