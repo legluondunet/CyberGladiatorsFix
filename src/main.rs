@@ -34,7 +34,6 @@ Usage:
   CyberGladiatorsFix.exe --verify      Strict original retail manifest and patches
   CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only CD fingerprint and FR discovery (no installation)
   CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
-  CyberGladiatorsFix.exe --fr-native-mode-test  Experimental native Windows FR RAM-only display request test
   CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
   CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
   CyberGladiatorsFix.exe --version
@@ -209,12 +208,12 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
 /// renderer. Legacy nGlide diagnostics are kept separately for developers.
-fn user_gameframe_launch(root:&Path,native_mode_test:bool)->Result<(),String>{
+fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let mut previous_glide=gameframe::Session::begin(root,&game)?;
-    let child=verify::launch_gameframe(root,native_mode_test)?;
+    let child=verify::launch_gameframe(root)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
@@ -287,7 +286,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         []=>{
             let _lock=autostart::lock(root)?;
             autostart::prepare(root,None)?;
-            return user_gameframe_launch(root,false);
+            return user_gameframe_launch(root);
         },
         [one] if one.to_str()==Some("--install-only")=>{
             let _lock=autostart::lock(root)?;
@@ -302,7 +301,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let _lock=autostart::lock(root)?;
             let source=PathBuf::from(one);
             autostart::prepare(root,Some(&source))?;
-            return user_gameframe_launch(root,false);
+            return user_gameframe_launch(root);
         },
         [one] if one.to_str()==Some("--inspect-disc")=>{
             let cue=install::find_cue(root)?;
@@ -313,27 +312,6 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         },
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
-        [one] if one.to_str()==Some("--fr-native-mode-test")=>{
-            // Opt-in only, existing verified French game on native Windows.
-            // Refuse missing installs before Session::begin touches Glide.
-            let _lock=autostart::lock(root)?;
-            if !diagnostics::is_native_windows(){
-                return Err("Native FR mode experiment unavailable on Wine/Proton".into());
-            }
-            let game_exe=root.join(install::DIR).join("cyber.exe");
-            if !game_exe.is_file(){
-                return Err("Native FR mode experiment requires an existing installed game".into());
-            }
-            // Refuse US/unknown/corrupt executables and invalid FR backup
-            // before even staging the GameFrame DLL or other game resources.
-            fr_patch::verify_exe(&game_exe).map_err(|e|
-                format!("Native FR mode experiment requires a verified FR game: {e}")
-            )?;
-            if diagnostics::physical_primary_mode().is_none(){
-                return Err("Native FR mode experiment requires an active Windows desktop at 32 bits".into());
-            }
-            return user_gameframe_launch(root,true);
-        },
         [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
         [one] if one.to_str()==Some("--dxvk-wndproc-repair-test")=>return diagnose_dxvk(root,true),
         [one] if one.to_str()==Some("--check-bundle")=>{
@@ -349,12 +327,12 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
         [one,two] if one.to_str()==Some("--launch")
             && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root,false),
+            return user_gameframe_launch(root),
         // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-first-present-handoff")=>
-            return user_gameframe_launch(root,false),
+            return user_gameframe_launch(root),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
