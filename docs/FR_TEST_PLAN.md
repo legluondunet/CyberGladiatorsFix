@@ -86,6 +86,45 @@ resolution request. They narrow down when the mode changes so that a later
 native-Windows-specific remedy can be designed and tested without disrupting
 the validated Wine/Proton and US paths.
 
+## Experimental Windows FR — avoid 640×480×16 requests (explicit opt-in)
+
+**Never confuse this experimental build with the validated default launch.**
+A fresh one-click launch still uses the unchanged original DirectDraw mode
+sequence. The experimental command is intentionally separate:
+
+```powershell
+.\CyberGladiatorsFix.exe --fr-native-mode-test
+```
+
+Run it **only** against a previously SHA-256-verified, installed FR game on
+native Windows. It refuses Wine/Proton, the US executable, missing game
+installations, anything other than a currently active 32-bit desktop mode,
+and unexpected game-memory signatures.
+
+This experiment replaces the *immediate width/height/bpp arguments in
+CYBER.EXE's loaded RAM only* at three original 640×480×16 setup sites
+(`0x004050AF`, `0x00406A68`, `0x00436411`) with the original physical
+Windows display width, height, and 32 bpp. It still calls the real
+`IDirectDraw::SetDisplayMode`: no fake success result, IAT/COM vtable
+interception, disabled graphics initialization, or retail-file replacement.
+A normal launch and Wine/US modes do not activate the experiment.
+
+**Compatibility is unproven.** Legacy DirectDraw may reject modern native
+32-bit modes; the test can fail to display video or exit with an error.
+If it fails, quit, restart normally **without the flag** and provide the
+single `CyberGladiatorsFix.log` from the failed test. Process-memory edits
+vanish when the game exits. Preserve the previous stable package until
+validated.
+
+Record `FR_NATIVE_MODE_TEST` in the launcher and
+`glide: CYBER_FR_NATIVE_MODE_TEST status=applied` (or `refused`).
+Then check whether `FR_DISPLAY_MODE stage=before_avivideo_open` stays at
+the original physical resolution and 32 bpp, whether the full AVI keeps
+its 4:3 ratio, whether gameplay runs near 60 FPS, and whether Windows
+restores its exact original mode after exit. Do not merge or enable
+by default until a native Windows A/B trial and Wine/US regressions
+succeed.
+
 ## Group D — unchanged US edition
 
 Repeat a quick verified install/launch and video/FLAC/exit test with the known US retail edition in a separate directory. The US code path must continue to use its original file hashes, offsets, HWND and WndProc.
