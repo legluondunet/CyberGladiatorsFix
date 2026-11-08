@@ -110,8 +110,10 @@ fn cyber_fr_native_mode_test_apply() {
     let mut applied=0usize;
     for (index, &(address,original)) in CYBER_MODE_SITES.iter().enumerate() {
         if !unsafe{cyber_replace_process_bytes(address,original,replacements[index])}{
-            // Best-effort complete rollback, in reverse order.
-            for j in (0..applied).rev(){
+            // Include the failing site: its bytes may already have been
+            // written even when the instruction-cache flush/protection reset
+            // reported an error. Roll back in reverse order.
+            for j in (0..=index).rev(){
                 let (old_address, old_bytes)=CYBER_MODE_SITES[j];
                 let _=unsafe{cyber_replace_process_bytes(
                     old_address,replacements[j],old_bytes
