@@ -53,6 +53,32 @@ GameFrame renders the original **640×480** Glide game at the current display re
 
 The one EXE embeds and validates both x86 DLLs before writing them. The GameFrame DLL remains installed after a fresh first run. If the player had a different valid glide.dll, it is backed up byte-for-byte and restored at the end of gameplay.
 
+## Experimental US virtual DirectDraw A/B test under Wine/Proton
+
+The field-validated US Wine path replaces the two original DirectDraw
+`640x480x16` mode requests with calls to Wine's **real DirectDraw** using
+the prelaunch desktop dimensions. To compare it with the **project-owned**
+DirectDraw v1 COM implementation originally tested on native Windows FR,
+use the exact supported US retail installation with Wine/Proton:
+
+```bash
+WINEDEBUG=-all wine CyberGladiatorsFix.exe --launch --us-virtual-ddraw-test
+```
+
+This flag is **experimental and restricted to the verified US edition
+on Wine/Proton**; it does not enable the French MCI surface modifications,
+does not affect the normal one-click launch and refuses native Windows.
+The test still uses the same WinMM/MCI 4:3 intro, GameFrame 60 FPS
+rendering and CDDA FLAC support. The expected unified session log
+contains `US_WINE_VIRTUAL_DDRAW enabled=1`,
+`DDRAW_VIRTUAL_CREATE edition=US wine=1`, virtual `SetDisplayMode`
+and `DDRAW_NATIVE_SUMMARY ... us_wine_virtual=1 ... native_mode_forwarded=0`.
+
+Compare full AVI playback, the first Glide frame, menu, inputs, Alt+Tab,
+CDDA, clean exit and desktop geometry with the normal known-good US Wine
+launch. A successful automated build does **not** constitute a field
+validation. Leave the test disabled by default pending real results.
+
 ## Commands
 
 ~~~text
