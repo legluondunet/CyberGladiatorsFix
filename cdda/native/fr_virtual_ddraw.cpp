@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Experimental, native-Windows, FR-only DirectDraw v1 device owned by this
-// project. Never modifies the system's COM vtables or the physical display.
-// Compiled into the existing WinMM bridge; only a CLI-gated IAT entry can
-// instantiate it. This is deliberately not enabled by normal launches.
+// Project-owned DirectDraw v1 COM virtualization first validated with the
+// French retail game on native Windows. The verified US retail game can now
+// test the same adapter under Wine via an explicit CLI A/B opt-in.
+// Never modifies the system's COM vtables or the physical display.
+// Compiled into the existing WinMM bridge; normal launches use the
+// already-tested OS/edition-specific implementation.
 #define WIN32_LEAN_AND_MEAN
 #define DIRECTDRAW_VERSION 0x0700
 #include <windows.h>
