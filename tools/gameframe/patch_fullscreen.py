@@ -110,65 +110,68 @@ fn cyber_native_fr_alt_tab_zorder(hwnd: HWND) {
     }
 }
 
-/// Under Wine/XFCE the game can occupy the full desktop rect but the
-/// dock panel still stays above it. On X11, a Win32 HWND_TOPMOST transition
-/// requests the compositing/window-manager ABOVE layer for the *game only*.
-/// Never use a system-specific helper or call X11 directly: Wine maps this
-/// Win32 window state to its active display driver.
-///
-/// Apply only to the game HWND, only while it is foreground and only AFTER
-/// the independent MCI video host was destroyed at the first GL present.
-/// Reverse this immediately when focus leaves the game so Alt+Tab works.
-/// No ChangeDisplaySettings, activation, resizing, busy retry or permanent
-/// always-on-top override. Native Windows paths remain identical.
-fn cyber_wine_game_panel_zorder(hwnd: HWND) {
+/// Wine/XFCE must receive an actual fullscreen window-style/geometry
+/// synchronization, not WS_EX_TOPMOST (_NET_WM_STATE_ABOVE). TOPMOST covers
+/// the XFCE panel on click but also traps Alt+Tab behind the game.
+/// Reassert the original HWND's Win32 POPUP fullscreen contract ONCE after
+/// the independent MCI host is destroyed and the game is foreground.
+/// Wine's X11/Wayland driver then translates the window state to its WM.
+/// Never activate, raise, minimize, or alter the physical display mode.
+/// The ordinary native Windows path is untouched.
+fn cyber_wine_sync_fullscreen_hint(hwnd: HWND) {
     if std::env::var("CYBER_GAMEFRAME_TEST").as_deref() != Ok("1")
         || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref() == Ok("1") {
         return;
     }
-    static RAISED:std::sync::atomic::AtomicBool=
-        std::sync::atomic::AtomicBool::new(false);
-    // A broken window-manager bridge must not trigger one Win32 request
-    // on every 60 FPS frame. At most three attempts per focus interval.
-    static ATTEMPTS:std::sync::atomic::AtomicU32=
-        std::sync::atomic::AtomicU32::new(0);
     use std::sync::atomic::Ordering;
+    static SYNCED_THIS_FOCUS:std::sync::atomic::AtomicBool=
+        std::sync::atomic::AtomicBool::new(false);
     unsafe {
-        if IsWindowVisible(hwnd)==0 || IsIconic(hwnd)!=0 {return;}
+        if IsWindowVisible(hwnd)==0 || IsIconic(hwnd)!=0 {
+            SYNCED_THIS_FOCUS.store(false,Ordering::Relaxed);
+            return;
+        }
         let mut owner_pid=0;
         let owner_tid=GetWindowThreadProcessId(hwnd,&mut owner_pid);
         if owner_tid==0 || owner_pid!=GetCurrentProcessId()
             || owner_tid!=GetCurrentThreadId(){return;}
-        let foreground=GetForegroundWindow();
-        if foreground.is_null(){return;}
-        let active=foreground==hwnd;
-        let already=RAISED.load(Ordering::Relaxed);
-        let topmost=GetWindowLongA(hwnd,-20) as u32 & 0x0000_0008 != 0;
-        if active && (!already || !topmost) && ATTEMPTS.load(Ordering::Relaxed)<3 {
-            // Do not expose an unpainted game HWND above the temporary
-            // black video curtain. The host disappears after a real swap.
-            if !FindWindowA(b"CyberGladiatorsFix_AVI_4x3_Host_v2\\0".as_ptr(),
-                std::ptr::null()).is_null(){return;}
-            // HWND_TOPMOST (-1), NOMOVE|NOSIZE|NOACTIVATE|NOOWNERZORDER.
-            let attempt=ATTEMPTS.fetch_add(1,Ordering::Relaxed)+1;
-            let ok=SetWindowPos(hwnd,(-1isize) as HWND,0,0,0,0,0x0213);
-            let exstyle=GetWindowLongA(hwnd,-20) as u32;
-            let confirmed=ok!=0 && (exstyle & 0x0000_0008)!=0;
-            if confirmed {RAISED.store(true,Ordering::Relaxed);}
-            log!("GAMEFRAME_WINE_PANEL_ZORDER action=TOPMOST active=1 attempt={attempt} result={ok} confirmed={} exstyle={exstyle:#010x} no_activate=1 video_host_closed=1",
-                u8::from(confirmed));
-        }else if !active && already {
-            let lowered=SetWindowPos(hwnd,(-2isize) as HWND,0,0,0,0,0x0213);
-            let bottom=SetWindowPos(hwnd,1usize as HWND,0,0,0,0,0x0213);
-            let exstyle=GetWindowLongA(hwnd,-20) as u32;
-            let confirmed=lowered!=0 && (exstyle & 0x0000_0008)==0;
-            // Re-arm the bounded promotion counter on the next foreground
-            // interval; never impose an always-on-top policy in background.
-            ATTEMPTS.store(0,Ordering::Relaxed);
-            RAISED.store(false,Ordering::Relaxed);
-            log!("GAMEFRAME_WINE_PANEL_ZORDER action=NOTOPMOST active=0 result={lowered} background_zorder={bottom} confirmed={} exstyle={exstyle:#010x} no_activate=1",
-                u8::from(confirmed));
+        let active=GetForegroundWindow()==hwnd;
+        if !active {
+            SYNCED_THIS_FOCUS.store(false,Ordering::Relaxed);
+            return;
         }
+        // Only after MCI -> real OpenGL first-present handoff: do not
+        // change the stacking of the video window or early black cover.
+        if !FindWindowA(b"CyberGladiatorsFix_AVI_4x3_Host_v2\0".as_ptr(),
+            std::ptr::null()).is_null(){return;}
+        if SYNCED_THIS_FOCUS.swap(true,Ordering::Relaxed){return;}
+        let Some(target)=target_monitor(hwnd) else{return};
+        let old_style=GetWindowLongA(hwnd,GWL_STYLE) as u32;
+        let original_exstyle=GetWindowLongA(hwnd,-20) as u32;
+        // WS_MAXIMIZE=0x01000000 asks Xfwm for the WORKAREA (1920x1043),
+        // unlike a full-monitor WS_POPUP. The game sometimes restores
+        // this bit on focus return; clear it only for this Wine game HWND.
+        let new_style=(old_style & !(0x00c4_0000u32|0x0100_0000u32))
+            |0x8000_0000u32|WS_VISIBLE;
+        let mut before=RECT::default();
+        let _=GetWindowRect(hwnd,&mut before);
+        if old_style!=new_style{
+            SetWindowLongA(hwnd,GWL_STYLE,new_style as i32);
+        }
+        // SWP_FRAMECHANGED is deliberate even if geometry already equals
+        // the monitor: request Win32/Wine to re-evaluate fullscreen WM
+        // hints. NOZORDER and NOACTIVATE preserve Alt+Tab switching.
+        let ok=SetWindowPos(hwnd,null_mut(),target.left,target.top,
+            target.right-target.left,target.bottom-target.top,
+            SWP_NOZORDER|0x10|0x20);
+        let mut after=RECT::default();
+        let readback=GetWindowRect(hwnd,&mut after);
+        let exstyle=GetWindowLongA(hwnd,-20) as u32;
+        log!("GAMEFRAME_WINE_FULLSCREEN_HINT requested=1 hwnd={hwnd:?} old_style={old_style:#010x} new_style={new_style:#010x} cleared_maximized={} original_exstyle={original_exstyle:#010x} exstyle={exstyle:#010x} old_rect=({},{},{},{}) target=({},{},{},{}) after=({},{},{},{}) setpos={ok} readback={readback} no_topmost_request=1 no_activate=1 framechanged=1",
+            u8::from(old_style&0x0100_0000!=0),
+            before.left,before.top,before.right,before.bottom,
+            target.left,target.top,target.right,target.bottom,
+            after.left,after.top,after.right,after.bottom);
     }
 }
 
@@ -239,10 +242,10 @@ pub fn cyber_maintain_fullscreen() {
     static FRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     static BAD_SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let frame = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    // Check Wine's EWMH stacking state on every rendered frame, not only
-    // the 30-frame geometry cadence. Never re-stack the video host itself.
-    if let Some(hwnd)=cyber_game_window() {
-        cyber_wine_game_panel_zorder(hwnd);
+    // Re-synchronize the game's fullscreen state through Win32 once per
+    // foreground interval, after MCI handoff. Never use HWND_TOPMOST.
+    if let Some(hwnd)=cyber_game_window(){
+        cyber_wine_sync_fullscreen_hint(hwnd);
     }
     // Check native FR Alt+Tab on every rendered frame: during/just after
     // video handoff the 30-frame geometry cadence can miss a focus switch.
