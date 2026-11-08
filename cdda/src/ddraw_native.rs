@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! DirectDraw v1 compatibility: field-validated native FR owned COM
-//! virtualization; an isolated US Wine A/B uses that same owned adapter.
-//! Ordinary US Wine launches retain their validated native forwarding.
+//! virtualization, now with opt-in US A/B on Wine and native Windows
+//! using that exact same adapter. Ordinary launches are unchanged.
 //!
 //! The verified Cyber Gladiators retail game requests fullscreen exclusive
 //! DirectDraw 640x480x16 twice before opening its native MCI AVI. Wine changes
@@ -40,6 +40,7 @@ static IMPORT_FOUND:AtomicBool=AtomicBool::new(false);
 static ENABLED:AtomicBool=AtomicBool::new(false);
 static NATIVE_VIRTUAL:AtomicBool=AtomicBool::new(false);
 static US_WINE_VIRTUAL:AtomicBool=AtomicBool::new(false);
+static US_NATIVE_VIRTUAL:AtomicBool=AtomicBool::new(false);
 static VIRTUAL_OBJECTS:AtomicU32=AtomicU32::new(0);
 static NATIVE_W:AtomicU32=AtomicU32::new(0);
 static NATIVE_H:AtomicU32=AtomicU32::new(0);
@@ -192,12 +193,15 @@ unsafe extern "C" fn initialize(){
     let us_wine_virtual=wine
         &&env_is_one(b"CYBER_US_WINE_VIRTUAL_DDRAW\0")
         &&env_is_us();
-    if native_fr_virtual || us_wine_virtual {
-        // Native FR uses the previously validated project-owned COM proxy.
-        // The explicit US Wine experiment reuses that same COM adapter,
-        // bypassing the separate vtable-shadow/native SetDisplayMode
-        // forwarding. Normal US Wine launches remain unchanged.
+    let us_native_virtual=!wine
+        &&env_is_one(b"CYBER_US_NATIVE_VIRTUAL_DDRAW\0")
+        &&env_is_us();
+    if native_fr_virtual || us_wine_virtual || us_native_virtual {
+        // All experimental profiles use the same project-owned COM
+        // implementation, without mutating DirectDraw system vtables or
+        // forwarding physical SetDisplayMode. Legacy Wine path is bypassed.
         US_WINE_VIRTUAL.store(us_wine_virtual,Ordering::Release);
+        US_NATIVE_VIRTUAL.store(us_native_virtual,Ordering::Release);
         NATIVE_VIRTUAL.store(true,Ordering::Release);
         INSTALLED.store(hook_ddraw_create(),Ordering::Release);
         return;
@@ -226,7 +230,8 @@ unsafe extern "system" fn forward_ddraw_create(
         if wrapped==0 {VIRTUAL_OBJECTS.fetch_add(1,Ordering::Relaxed);}
         super::log(&format!(
             "DDRAW_VIRTUAL_CREATE edition={} wine={} native_vtable_modified=0 wrapper_owned=1 original_hr={hr:#010x} wrapped_hr={wrapped:#010x}",
-            if US_WINE_VIRTUAL.load(Ordering::Acquire){"US"}else{"FR"},
+            if US_WINE_VIRTUAL.load(Ordering::Acquire)
+                || US_NATIVE_VIRTUAL.load(Ordering::Acquire){"US"}else{"FR"},
             u8::from(US_WINE_VIRTUAL.load(Ordering::Acquire))
         ));
         return wrapped;
@@ -307,11 +312,12 @@ unsafe extern "system" fn forward_ddraw_setmode(
 pub fn report_once(){
     if REPORTED.swap(true,Ordering::AcqRel){return;}
     super::log(&format!(
-        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} owned_virtual={} us_wine_virtual={} virtual_objects={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
+        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} owned_virtual={} us_wine_virtual={} us_native_virtual={} virtual_objects={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
         u8::from(INITIALIZED.load(Ordering::Acquire)),
         u8::from(ENABLED.load(Ordering::Acquire)),
         u8::from(NATIVE_VIRTUAL.load(Ordering::Acquire)),
         u8::from(US_WINE_VIRTUAL.load(Ordering::Acquire)),
+        u8::from(US_NATIVE_VIRTUAL.load(Ordering::Acquire)),
         VIRTUAL_OBJECTS.load(Ordering::Acquire),
         u8::from(IMPORT_FOUND.load(Ordering::Acquire)),
         u8::from(INSTALLED.load(Ordering::Acquire)),
