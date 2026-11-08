@@ -14,6 +14,7 @@ mod video_trace;
 mod glide_trace;
 mod exception_trace;
 mod ddraw_native;
+mod virtual_ddraw;
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
