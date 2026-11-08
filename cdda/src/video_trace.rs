@@ -416,16 +416,29 @@ unsafe extern "system" fn black_host_proc(
 }
 // Unlike the separate black popup and first-frame curtain, a window
 // supplied by the application via MCI_WINDOW is responsible for WM_PAINT.
-// The previous experimental path reused black_host_proc for the actual AVI
-// destination, overwriting MCI's frames in WM_PAINT. Windows documents that
-// the application-owned video HWND must repaint invalid regions. Keep a
-// dedicated WndProc only for verified Windows-FR DirectDraw virtualization;
-// preserve the known-good original host/cover paths for US and Wine.
+// Reusing black_host_proc on the MCI surface caused video stalls on Windows
+// FR; its dedicated WndProc, 50 ms timer and *BeginPaint* MCI update were
+// field-validated there. The US/Wine virtual-DirectDraw A/B now deliberately
+// exercises THIS EXACT SAME implementation, instead of the historical Wine
+// black-surface video class. No ordinary Wine/US launch is affected.
+fn virtual_mci_profile(native_fr:bool,us_wine_virtual:bool)->bool{
+    native_fr||us_wine_virtual
+}
+fn us_wine_virtual_mci_profile()->bool{
+    std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
+        && std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1")
+        && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1")
+}
+fn virtual_mci_log_prefix()->&'static str{
+    if us_wine_virtual_mci_profile(){"US_WINE_VIRTUAL_VIDEO"}
+    else{"FR_VIRTUAL_VIDEO"}
+}
 fn virtual_mci_surface_enabled()->bool{
-    smooth_enabled()
-        && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
+    let fr=std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
         && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
-        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
+        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
+    smooth_enabled() && virtual_mci_profile(fr,us_wine_virtual_mci_profile())
 }
 unsafe extern "system" fn virtual_video_surface_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
@@ -438,7 +451,7 @@ unsafe extern "system" fn virtual_video_surface_proc(
                 let queued=InvalidateRect(hwnd,std::ptr::null(),0);
                 if tick==1 || tick%300==0{
                     video_log(&format!(
-                        "FR_VIRTUAL_VIDEO_TIMER ticks={tick} invalidate={queued}                          interval_ms={VIRTUAL_MCI_TIMER_MS} repaint_target=video_surface_only"
+                        "{} ticks={tick} invalidate={queued} interval_ms={VIRTUAL_MCI_TIMER_MS} repaint_target=video_surface_only",virtual_mci_log_prefix().to_owned()+"_TIMER"
                     ));
                 }
             }
@@ -461,7 +474,7 @@ unsafe extern "system" fn virtual_video_surface_proc(
                             .fetch_add(1,Ordering::Relaxed)+1;
                         if count<=3 || count%300==0 || code!=Some(0){
                             video_log(&format!(
-                                "FR_VIRTUAL_VIDEO_PAINT calls={count}                                  mci_update_result={code:?} owner_thread=1                                  beginpaint_hdc_valid=1 black_fill=0"
+                                "{} calls={count} mci_update_result={code:?} owner_thread=1 beginpaint_hdc_valid=1 black_fill=0",virtual_mci_log_prefix().to_owned()+"_PAINT"
                             ));
                         }
                         VIRTUAL_MCI_SURFACE_IN_PAINT.store(false,Ordering::Release);
@@ -492,10 +505,10 @@ unsafe fn register_virtual_video_class(instance:*mut c_void)->bool{
         };
         let atom=RegisterClassA(&class);
         if atom==0{
-            video_log(&format!("FR_VIRTUAL_VIDEO_CLASS_FAILED win32={}",GetLastError()));
+            video_log(&format!("{}_CLASS_FAILED win32={}",virtual_mci_log_prefix(),GetLastError()));
             false
         }else{
-            video_log("FR_VIRTUAL_VIDEO_CLASS registered=1 mci_destination_paints=video_frames                 parent_and_cover=black windowed=1 nonexclusive=1");
+            video_log(&format!("{}_CLASS registered=1 mci_destination_paints=video_frames parent_and_cover=black windowed=1 nonexclusive=1",virtual_mci_log_prefix()));
             true
         }
     })
@@ -510,7 +523,8 @@ unsafe fn stop_virtual_mci_video_surface(reason:&str){
         }else{0}
     }else{0};
     video_log(&format!(
-        "FR_VIRTUAL_VIDEO_STOP reason={reason} timer_stopped={timer_stopped}          paint_calls={} timer_ticks={} physical_display_mode_unchanged=1",
+        "{}_STOP reason={reason} timer_stopped={timer_stopped} paint_calls={} timer_ticks={} physical_display_mode_unchanged=1",
+        virtual_mci_log_prefix(),
         VIRTUAL_MCI_SURFACE_PAINT_COUNT.load(Ordering::Relaxed),
         VIRTUAL_MCI_SURFACE_TIMER_COUNT.load(Ordering::Relaxed)
     ));
@@ -742,7 +756,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     let smooth=smooth_enabled();
     let virtual_video=smooth&&virtual_mci_surface_enabled();
     if virtual_video && !register_virtual_video_class(base as *mut c_void){
-        video_log("FR_VIRTUAL_VIDEO_SETUP_FAILED reason=class_registration");
+        video_log(&format!("{}_SETUP_FAILED reason=class_registration",virtual_mci_log_prefix()));
         return None;
     }
     // The smooth experiment requests an independent managed NORMAL fullscreen
@@ -1158,12 +1172,13 @@ fn should_pump_virtual_avi(status_ok:bool,is_status:bool,virtual_fr:bool,keys_ac
 /// a second window loop. The C++ adapter preserves WM_QUIT and guards
 /// against nested pumps, without editing the real display mode.
 pub fn pump_virtual_avi_messages(command:&str,result:u32){
-    let virtual_fr=std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
-        &&std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
-        &&gameframe_first_present_handoff();
+    // Same bounded native Win32 message dispatch as field-validated Windows
+    // FR, now also when the US/Wine COM-owned DirectDraw experiment selects
+    // its exact same custom MCI video-surface implementation.
+    let virtual_mci=virtual_mci_surface_enabled()&&gameframe_first_present_handoff();
     if !should_pump_virtual_avi(
         result==0,command.trim().eq_ignore_ascii_case("status movie mode"),
-        virtual_fr,KEY_FILTER_ACTIVE.load(Ordering::Acquire)
+        virtual_mci,KEY_FILTER_ACTIVE.load(Ordering::Acquire)
     ){return;}
     let owner={
         let guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
@@ -1175,8 +1190,8 @@ pub fn pump_virtual_avi_messages(command:&str,result:u32){
     VIRTUAL_AVI_PUMP_MESSAGES.fetch_add(count,Ordering::Relaxed);
     if polls==1 || polls%400==0 {
         video_log(&format!(
-            "FR_VIRTUAL_AVI_MESSAGE_PUMP polls={polls} dispatched_total={} last_batch={count}             max_per_status=16 normal_mode=disabled win32_msg_queue_serviced=1",
-            VIRTUAL_AVI_PUMP_MESSAGES.load(Ordering::Relaxed)
+            "{}_MESSAGE_PUMP polls={polls} dispatched_total={} last_batch={count} max_per_status=16 normal_mode=disabled win32_msg_queue_serviced=1",
+            virtual_mci_log_prefix(),VIRTUAL_AVI_PUMP_MESSAGES.load(Ordering::Relaxed)
         ));
     }
 }
@@ -1709,8 +1724,8 @@ fn reveal_playing_video() {
             let timer=SetTimer(h.surface as *mut c_void,VIRTUAL_MCI_TIMER_ID,
                 VIRTUAL_MCI_TIMER_MS,std::ptr::null());
             video_log(&format!(
-                "FR_VIRTUAL_VIDEO_RENDER paint_class=separate                  parent_black=1 surface_black_during_play=0                  mci_update_in_wm_paint=1 timer_id={VIRTUAL_MCI_TIMER_ID}                  timer_ms={VIRTUAL_MCI_TIMER_MS} timer_armed={}                  no_desktop_mode_switch=1",
-                u8::from(timer!=0)
+                "{}_RENDER paint_class=separate parent_black=1 surface_black_during_play=0 mci_update_in_wm_paint=1 timer_id={VIRTUAL_MCI_TIMER_ID} timer_ms={VIRTUAL_MCI_TIMER_MS} timer_armed={} no_desktop_mode_switch=1",
+                virtual_mci_log_prefix(),u8::from(timer!=0)
             ));
         }
         video_log(&format!(
@@ -2222,6 +2237,16 @@ mod tests {
             &mut last,Duration::from_millis(500)));
         assert!(mci_refresh_is_due(now+Duration::from_millis(1000),
             &mut last,Duration::from_millis(500)));
+    }
+    #[test]
+    fn virtual_mci_host_reuses_native_fr_painter_only_for_explicit_us_wine_ab(){
+        assert!(virtual_mci_profile(true,false));
+        assert!(virtual_mci_profile(false,true));
+        assert!(!virtual_mci_profile(false,false),
+            "ordinary US/Wine must retain its field-validated video class");
+        assert_eq!(video_surface_class_for(true,true),VIRTUAL_VIDEO_CLASS);
+        assert_eq!(video_surface_class_for(true,false),HOST_CLASS);
+        assert_eq!(video_surface_class_for(false,true),b"STATIC\0");
     }
     #[test]
     fn virtual_avi_message_pump_only_during_successful_status_poll(){
