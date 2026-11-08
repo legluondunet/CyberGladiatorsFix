@@ -36,6 +36,8 @@ static INSTALLED:AtomicBool=AtomicBool::new(false);
 static INITIALIZED:AtomicBool=AtomicBool::new(false);
 static IMPORT_FOUND:AtomicBool=AtomicBool::new(false);
 static ENABLED:AtomicBool=AtomicBool::new(false);
+static NATIVE_VIRTUAL:AtomicBool=AtomicBool::new(false);
+static VIRTUAL_OBJECTS:AtomicU32=AtomicU32::new(0);
 static NATIVE_W:AtomicU32=AtomicU32::new(0);
 static NATIVE_H:AtomicU32=AtomicU32::new(0);
 static CREATE_FN:AtomicUsize=AtomicUsize::new(0);
@@ -46,6 +48,11 @@ static MODE_CALLS:AtomicU32=AtomicU32::new(0);
 static MODES_FORWARDED:AtomicU32=AtomicU32::new(0);
 static REPORTED:AtomicBool=AtomicBool::new(false);
 
+unsafe extern "C" {
+    // Compiled from canonical Microsoft DirectDraw v1 C++ definitions.
+    // This allocates an owned COM object; never edits native vtables.
+    fn cyber_wrap_existing_ddraw(out:*mut *mut c_void)->i32;
+}
 #[link(name="kernel32")]
 unsafe extern "system" {
     fn GetModuleHandleA(name:*const c_char)->*mut c_void;
@@ -77,6 +84,14 @@ unsafe fn env_is_one(key:&[u8])->bool{
     let mut out=[0i8;4];
     GetEnvironmentVariableA(key.as_ptr().cast(),out.as_mut_ptr(),out.len() as u32)==1
         && out[0]==b'1' as i8
+}
+unsafe fn env_is_fr()->bool{
+    let mut buf=[0i8;5];
+    let n=GetEnvironmentVariableA(
+        b"CYBER_GAME_EDITION\0".as_ptr().cast(),
+        buf.as_mut_ptr(),buf.len() as u32
+    );
+    n==2 && buf[0]==b'F' as i8 &&buf[1]==b'R' as i8
 }
 fn parse_native_desktop(input:&str)->Option<(u32,u32)>{
     let (w,h)=input.split_once('x')?;
@@ -156,12 +171,21 @@ static EARLY_FORWARD_INIT:unsafe extern "C" fn()=initialize;
 
 unsafe extern "C" fn initialize(){
     INITIALIZED.store(true,Ordering::Release);
-    if !env_is_one(b"CYBER_WINE_DDRAW_NATIVE_FORWARD\0")
-        ||!env_is_one(b"CYBER_GAMEFRAME_TEST\0"){return;}
-    // Do not intercept native Windows. This symbol is provided by Wine ntdll.
+    if !env_is_one(b"CYBER_GAMEFRAME_TEST\0"){return;}
     let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
-    if ntdll.is_null()||
-        GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null(){return;}
+    let wine=!ntdll.is_null()
+        &&!GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null();
+    let native_fr_virtual=!wine
+        &&env_is_one(b"CYBER_FR_VIRTUAL_DDRAW\0")
+        &&env_is_fr();
+    if native_fr_virtual {
+        // Opt-in and FR only. Without the exact feature flag, native
+        // Windows executes the unchanged, previously validated path.
+        NATIVE_VIRTUAL.store(true,Ordering::Release);
+        INSTALLED.store(hook_ddraw_create(),Ordering::Release);
+        return;
+    }
+    if !wine||!env_is_one(b"CYBER_WINE_DDRAW_NATIVE_FORWARD\0"){return;}
     let Some((w,h))=captured_desktop()else{return;};
     NATIVE_W.store(w,Ordering::Release);
     NATIVE_H.store(h,Ordering::Release);
@@ -178,6 +202,16 @@ unsafe extern "system" fn forward_ddraw_create(
     )->i32=std::mem::transmute(addr);
     let hr=original(guid,out,outer);
     CREATE_CALLS.fetch_add(1,Ordering::Relaxed);
+    if NATIVE_VIRTUAL.load(Ordering::Acquire) {
+        if hr!=0{return hr;}
+        if out.is_null() || out.read().is_null(){return 0x88760000u32 as i32;}
+        let wrapped=cyber_wrap_existing_ddraw(out);
+        if wrapped==0 {VIRTUAL_OBJECTS.fetch_add(1,Ordering::Relaxed);}
+        super::log(&format!(
+            "DDRAW_VIRTUAL_CREATE native_FR=1 native_vtable_modified=0 wrapper_owned=1 original_hr={hr:#010x} wrapped_hr={wrapped:#010x}"
+        ));
+        return wrapped;
+    }
     let mut shadowed=false;
     if hr==0&&!out.is_null(){
         let instance=out.read();
@@ -254,9 +288,11 @@ unsafe extern "system" fn forward_ddraw_setmode(
 pub fn report_once(){
     if REPORTED.swap(true,Ordering::AcqRel){return;}
     super::log(&format!(
-        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
+        "DDRAW_NATIVE_SUMMARY initialized={} enabled={} native_FR_virtual={} virtual_objects={} import_found={} import_hooked={} DirectDrawCreate_calls={} vtables_shadowed={} SetDisplayMode_calls={} native_mode_forwarded={} native_desktop={}x{} shadow_limit_reached={}",
         u8::from(INITIALIZED.load(Ordering::Acquire)),
         u8::from(ENABLED.load(Ordering::Acquire)),
+        u8::from(NATIVE_VIRTUAL.load(Ordering::Acquire)),
+        VIRTUAL_OBJECTS.load(Ordering::Acquire),
         u8::from(IMPORT_FOUND.load(Ordering::Acquire)),
         u8::from(INSTALLED.load(Ordering::Acquire)),
         CREATE_CALLS.load(Ordering::Acquire),
