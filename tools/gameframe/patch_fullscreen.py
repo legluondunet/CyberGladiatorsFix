@@ -177,11 +177,17 @@ pub fn cyber_maintain_fullscreen() {
     static FRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     static BAD_SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let frame = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Check native FR Alt+Tab on every rendered frame: during/just after
+    // video handoff the 30-frame geometry cadence can miss a focus switch.
+    // This only changes z-order when necessary, never steals activation.
+    if std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref() == Ok("1")
+        && std::env::var("CYBER_GAME_EDITION").as_deref() == Ok("FR") {
+        if let Some(hwnd) = cyber_game_window() {
+            cyber_native_fr_alt_tab_zorder(hwnd);
+        }
+    }
     if frame % 30 != 0 { return; }
     let Some(hwnd) = cyber_game_window() else { return };
-    // Observe the actual foreground window before the normal fullscreen
-    // maintenance guard returns. Never forcibly activate the game.
-    cyber_native_fr_alt_tab_zorder(hwnd);
     unsafe {
         // Do not interfere with Alt+Tab or the intro's temporary video host.
         if IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0
