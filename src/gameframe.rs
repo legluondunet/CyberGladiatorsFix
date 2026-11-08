@@ -47,7 +47,9 @@ fn known_project_gameframe(hash:&str)->bool{
         "33fe423a14533379cb88d835d38ddd7f2c17a1f030ee38b5b10621f7caca6f92" | // CI build 93
         "9a702f7c5f8e501fbc9e336d70e1fd96265e0e6e35740e2e00460cab07eeaa21" | // main CI build 94
         "8e42f1395902f2bdc4d3093c4533b34e4de8af97f622aeb60b623b6bd2b88804" | // FR CI build 117, Windows native confirmed
-        "d7965b179dbbcc5261fe912f8ded7536ec32ad8950015d924e12305c2dfca327"   // FR native Alt+Tab CI build 120
+        "d7965b179dbbcc5261fe912f8ded7536ec32ad8950015d924e12305c2dfca327" | // FR native Alt+Tab CI build 120
+        "8d03b4a23ede7719d5d8911b5df492bbfee6e2dc3cba951bcfdac3113b9d24e5" | // FR Alt+Tab user-tested CI build 121
+        "c993729ed697f3ad1b03d6cbb543879f0aaa5efc93e78365ea7fe70bfe8f0d84"   // FR DirectDraw Windows CI build 123
     )
 }
 /// A published project-built wrapper with no older user DLL to restore
@@ -246,6 +248,8 @@ mod tests{
             "9a702f7c5f8e501fbc9e336d70e1fd96265e0e6e35740e2e00460cab07eeaa21",
             "8e42f1395902f2bdc4d3093c4533b34e4de8af97f622aeb60b623b6bd2b88804",
             "d7965b179dbbcc5261fe912f8ded7536ec32ad8950015d924e12305c2dfca327",
+            "8d03b4a23ede7719d5d8911b5df492bbfee6e2dc3cba951bcfdac3113b9d24e5",
+            "c993729ed697f3ad1b03d6cbb543879f0aaa5efc93e78365ea7fe70bfe8f0d84",
         ]{
             assert!(known_project_gameframe(hash),"Published CI GameFrame digest missing: {hash}");
         }
@@ -262,6 +266,11 @@ mod tests{
         assert!(retain_new_project_build(original_fr_build,false));
         assert!(!retain_new_project_build(original_fr_build,true));
         assert!(!retain_new_project_build(&"a".repeat(64),false));
+        // The last user-tested Alt+Tab build #121 must be upgraded without
+        // treating its official GameFrame DLL as a third-party original.
+        assert!(retain_new_project_build(
+            "8d03b4a23ede7719d5d8911b5df492bbfee6e2dc3cba951bcfdac3113b9d24e5",
+            false));
         assert!(retain_new_project_build(
             "d7965b179dbbcc5261fe912f8ded7536ec32ad8950015d924e12305c2dfca327",
             false));
