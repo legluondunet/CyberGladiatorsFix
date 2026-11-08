@@ -102,6 +102,22 @@ pub fn primary_desktop_size()->Option<(u32,u32)>{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     (w>=640 && h>=480 && w<=16384 && h<=16384).then_some((w as u32,h as u32))
 }
+/// Read-only snapshot of the active primary display mode and the mode
+/// configured in Windows' registry. Neither query changes video settings.
+fn mode_details(which:i32)->String {
+    let mut mode:DevModeW=unsafe{std::mem::zeroed()};
+    mode.size=std::mem::size_of::<DevModeW>() as u16;
+    if unsafe{EnumDisplaySettingsW(std::ptr::null(),which,&mut mode)}==0{
+        "unavailable".to_owned()
+    }else{
+        format!("{}x{}x{}@{}Hz",
+            mode.pels_width,mode.pels_height,mode.bits_per_pel,mode.frequency)
+    }
+}
+pub fn prelaunch_display_modes()->String {
+    format!("current={} registry={} read_only=1",
+        mode_details(-1),mode_details(-2))
+}
 fn display_info()->String{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     let mut mode:DevModeW=unsafe{std::mem::zeroed()};
