@@ -23,6 +23,19 @@ static void log_mode(const char *event,DWORD w,DWORD h,DWORD bpp,HRESULT hr) {
     // undocumented C++ stream initialization in DLL startup.
     trace(msg);
 }
+// Low-volume evidence for the next video -> 3D test. This is diagnostic
+// only: never delays a COM call or performs any screen-mode operation.
+static void sample_surface_call(int slot,const char *operation) {
+    static volatile LONG events[6]={};
+    if(slot<0 || slot>=6)return;
+    LONG count=InterlockedIncrement(&events[slot]);
+    if(count<=3 || count%500==0){
+        char msg[132];
+        wsprintfA(msg,"DDRAW_VIRTUAL_SURFACE operation=%s calls=%ld",
+            operation,(long)count);
+        trace(msg);
+    }
+}
 static bool valid_dimensions(DWORD w,DWORD h) {
     return w>0 && h>0 && w<=4096 && h<=4096
         && (static_cast<ULONGLONG>(w)*h)<=4096ULL*4096ULL;
@@ -260,6 +273,7 @@ HRESULT VirtualSurface::GetPixelFormat(LPDDPIXELFORMAT out){
     pixel_format(out);return DD_OK;
 }
 HRESULT VirtualSurface::GetAttachedSurface(LPDDSCAPS wanted,LPDIRECTDRAWSURFACE *out){
+    sample_surface_call(0,"GetAttachedSurface");
     if(!out||!wanted)return DDERR_INVALIDPARAMS;
     *out=nullptr;
     if(!back || (wanted->dwCaps&DDSCAPS_BACKBUFFER)==0)return DDERR_NOTFOUND;
@@ -272,6 +286,7 @@ HRESULT VirtualSurface::EnumAttachedSurfaces(LPVOID ctx,LPDDENUMSURFACESCALLBACK
     return result==DDENUMRET_CANCEL?DD_OK:DD_OK;
 }
 HRESULT VirtualSurface::Flip(LPDIRECTDRAWSURFACE target,DWORD flags){
+    sample_surface_call(1,"Flip");
     if(!back||locked||back->locked||target && target!=back
        ||flags & ~(DDFLIP_WAIT|DDFLIP_NOVSYNC)){
         trace("DDRAW_VIRTUAL Flip unsupported/busy");return DDERR_UNSUPPORTED;
@@ -280,6 +295,7 @@ HRESULT VirtualSurface::Flip(LPDIRECTDRAWSURFACE target,DWORD flags){
     return DD_OK;
 }
 HRESULT VirtualSurface::Lock(LPRECT rect,LPDDSURFACEDESC out,DWORD flags,HANDLE){
+    sample_surface_call(2,"Lock");
     if(rect || flags & ~(DDLOCK_WAIT|DDLOCK_READONLY|DDLOCK_WRITEONLY|DDLOCK_NOSYSLOCK))
         return DDERR_UNSUPPORTED;
     if(locked)return DDERR_SURFACEBUSY;
@@ -288,11 +304,13 @@ HRESULT VirtualSurface::Lock(LPRECT rect,LPDDSURFACEDESC out,DWORD flags,HANDLE)
     return hr;
 }
 HRESULT VirtualSurface::Unlock(LPVOID){
+    sample_surface_call(3,"Unlock");
     if(!locked)return DDERR_NOTLOCKED;
     locked=false;return DD_OK;
 }
 HRESULT VirtualSurface::Blt(LPRECT dst,LPDIRECTDRAWSURFACE source,LPRECT src,
                             DWORD flags,LPDDBLTFX fx){
+    sample_surface_call(4,"Blt");
     if(locked || (back&&back->locked))return DDERR_SURFACEBUSY;
     RECT d={0,0,(LONG)width,(LONG)height};
     if(dst)d=*dst;
@@ -319,6 +337,7 @@ HRESULT VirtualSurface::Blt(LPRECT dst,LPDIRECTDRAWSURFACE source,LPRECT src,
     return DD_OK;
 }
 HRESULT VirtualSurface::BltFast(DWORD x,DWORD y,LPDIRECTDRAWSURFACE src,LPRECT rect,DWORD flags){
+    sample_surface_call(5,"BltFast");
     if(flags & ~(DDBLTFAST_WAIT))return DDERR_UNSUPPORTED;
     if(!src)return DDERR_INVALIDPARAMS;
     auto *other=dynamic_cast<VirtualSurface*>(src);
