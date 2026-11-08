@@ -248,6 +248,10 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=unified",root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (embedded_verified_build)"));
     diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro={} EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(skip_intro),u8::from(enable_cdda)));
+    // The original FR backup's SHA-256 and PE32 structure have been pinned.
+    // Inspect plausible x86 COM vtable callsites before spawning the game,
+    // without modifying any file, display mode or COM object.
+    if native_fr_alt_tab {crate::fr_ddraw_static::inspect(root,&exe);}
     cmd.spawn().map_err(|e|format!("Unable to start Cyber Gladiators through GameFrame: {e}"))
 }
 
