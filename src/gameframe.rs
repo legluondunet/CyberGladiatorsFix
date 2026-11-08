@@ -50,7 +50,11 @@ fn known_project_gameframe(hash:&str)->bool{
         "d7965b179dbbcc5261fe912f8ded7536ec32ad8950015d924e12305c2dfca327" | // FR native Alt+Tab CI build 120
         "8d03b4a23ede7719d5d8911b5df492bbfee6e2dc3cba951bcfdac3113b9d24e5" | // FR Alt+Tab user-tested CI build 121
         "c993729ed697f3ad1b03d6cbb543879f0aaa5efc93e78365ea7fe70bfe8f0d84" | // FR DirectDraw Windows CI build 123
-        "2278040e6cae064cfd7e4a7cbc8236c9e253c92cf21dded19fe363b7d712e7c3"   // FR DirectDraw Windows crash CI build 124 (recognize only for safe recovery)
+        "2278040e6cae064cfd7e4a7cbc8236c9e253c92cf21dded19fe363b7d712e7c3" | // FR DirectDraw Windows crash CI build 124 (safe recovery only)
+        "0698a6dfd07e1381b7c3b884c97cc81096ee8d4f56c50ddb851bc013bb1e5455" | // FR CI build 138, measured in native Windows user log
+        "258a04192e04e4f02463fd2e671f0111253efc5925d460e93a025892535569ee" | // FR CI build 140, measured in native Windows user log
+        "4bcc60e02b23b3db28e39d976cec1d6e78517dd8ae421b67b8b9d281a745836c" | // FR CI build 144, measured in native Windows user log
+        "f64d7d5b92e73f778245bf2e2f3a626be306ba585a04ae64d2eca6034389859b"   // FR CI build 146, measured in native Windows user log
     )
 }
 /// A published project-built wrapper with no older user DLL to restore
