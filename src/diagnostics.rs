@@ -118,15 +118,6 @@ pub fn prelaunch_display_modes()->String {
     format!("current={} registry={} read_only=1",
         mode_details(-1),mode_details(-2))
 }
-pub fn physical_primary_mode()->Option<(u32,u32,u32)> {
-    let mut mode:DevModeW=unsafe{std::mem::zeroed()};
-    mode.size=std::mem::size_of::<DevModeW>() as u16;
-    if unsafe{EnumDisplaySettingsW(std::ptr::null(),-1,&mut mode)}==0{return None;}
-    let (w,h,bpp)=(mode.pels_width,mode.pels_height,mode.bits_per_pel);
-    ((640..=7680).contains(&w)&&(480..=4320).contains(&h)&&bpp==32)
-        .then_some((w,h,bpp))
-}
-
 fn display_info()->String{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     let mut mode:DevModeW=unsafe{std::mem::zeroed()};
