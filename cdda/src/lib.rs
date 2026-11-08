@@ -41,6 +41,11 @@ use std::sync::atomic::{AtomicU32,Ordering};
 type Dword=u32;
 type Ptr=usize;
 type Handle=*mut c_void;
+#[link(name="user32")]
+unsafe extern "system" {
+    fn GetDC(hwnd:Handle)->Handle;
+    fn ReleaseDC(hwnd:Handle,dc:Handle)->i32;
+}
 const MCI_OPEN:Dword=0x803;
 const MCI_CLOSE:Dword=0x804;
 const MCI_PLAY:Dword=0x806;
@@ -430,6 +435,28 @@ pub unsafe extern "system" fn mciSendStringA(
             String::from_utf8_lossy(&bytes[..end]).into_owned()
         }else{String::new()};
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
+        // Periodically ask the real Windows MCIAVI renderer to paint its
+        // *current* video frame into the already-existing 4:3 surface. This
+        // avoids painting the black parent/cover and changing host z-order.
+        // Scope: FR + explicit DirectDraw virtualization test + successful
+        // "status movie mode"=="playing" only. Never recurse through this
+        // WinMM proxy, and always release GetDC before the next game poll.
+        if let Some(surface)=video_trace::virtual_fr_movie_repaint_target(text,result,&reply){
+            let hwnd=surface as Handle;
+            let dc=GetDC(hwnd);
+            if dc.is_null(){
+                video_trace::virtual_fr_movie_repaint_result(0,false);
+            }else{
+                let mut status=0xFFFF_FFFFu32;
+                if let Ok(command)=std::ffi::CString::new(format!(
+                    "update movie hdc {}",dc as usize
+                )){
+                    status=native(command.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut());
+                }
+                let _=ReleaseDC(hwnd,dc);
+                video_trace::virtual_fr_movie_repaint_result(status,true);
+            }
+        }
         if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
             // The normal launch has already removed its video host.
             // Only --smooth-video-test may leave a no-activate black
