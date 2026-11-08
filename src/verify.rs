@@ -158,7 +158,7 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// GameFrame's verified native AVI -> first real OpenGL-present launch.
 /// The original nGlide setup is never changed; the selected Apache-2.0
 /// Glide DLL was temporarily installed by gameframe::Session.
-pub fn launch_gameframe(root:&Path)->Result<Child,String>{
+pub fn launch_gameframe(root:&Path,native_mode_test:bool)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     let skip_intro=settings::read(&game)?;
@@ -199,6 +199,27 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     // case. Always override inherited environment variables.
     let native_fr_alt_tab=edition=="FR" && diagnostics::is_native_windows();
     cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_fr_alt_tab{"1"}else{"0"});
+    // Mode changing experiment is NEVER enabled by normal one-click launch,
+    // Wine/Proton or US edition. The user must invoke a dedicated CLI flag.
+    cmd.env_remove("CYBER_FR_NATIVE_MODE_EXPERIMENT");
+    cmd.env_remove("CYBER_FR_NATIVE_DISPLAY_MODE");
+    if native_mode_test {
+        if !native_fr_alt_tab {
+            return Err("Native display-mode test requires the SHA-256-verified French retail game on native Windows; no game started".into());
+        }
+        let Some((w,h,depth))=diagnostics::physical_primary_mode() else {
+            return Err("Native display-mode test requires a valid 32-bpp Windows desktop; no game started".into());
+        };
+        if w==640 && h==480 {
+            return Err("Native display-mode test refuses an unchanged 640x480 desktop; no game started".into());
+        }
+        cmd.env("CYBER_FR_NATIVE_MODE_EXPERIMENT","1");
+        cmd.env("CYBER_FR_NATIVE_DISPLAY_MODE",format!("{w}x{h}x{depth}"));
+        crate::show(&format!(
+            "FR_NATIVE_MODE_TEST requested=1 game_image=FR_verified target_physical={}x{}x{} patch_scope=game_RAM_only preimages=strict real_DirectDraw_call=1 native_Windows_only=1 opt_in=1",
+            w,h,depth
+        ),root);
+    }
     crate::show(&format!(
         "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
         u8::from(native_fr_alt_tab)
