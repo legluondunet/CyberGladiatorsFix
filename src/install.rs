@@ -18,6 +18,9 @@ const MAX_BYTES:u64=8*1024*1024*1024;
 const USA_EDITION:&str="USA (Track 01, 1996)";
 const USA_SHELL_FNT_SHA256:&str="d0a02e7aebd5104754debdca610bc7e94a2d88c7b97452c64a211fa3fbf477a7";
 const USA_SPLASH_AVI_SHA256:&str="41773e2525a2b7e959e1bcb44ad3cd640df780551a13b110c26ce53b5fdbc936";
+const FR_EDITION:&str="France (CYBERG, 1996)";
+const FR_SHELL_FNT_SHA256:&str="45d2241819d32332d736f01f06b4cff694677edf1fba27588ffa8a9ff0a5d177";
+const FR_SPLASH4_AVI_SHA256:&str="55bec4abb94c1a0a309eb566b8120ff0460ba69a9125f1c9c3e28c101ef05ff0";
 
 #[derive(Clone)]
 struct Asset{node:TreeNode,path:PathBuf,size:u64}
@@ -176,6 +179,112 @@ fn image_file(path:&Path)->Result<File,String>{
     File::open(path).map_err(|e|e.to_string())
 }
 
+/// Stream a selected original ISO asset into a SHA-256 hasher without
+/// extracting it or materializing the asset in memory.
+fn inspect_hash(iso:&mut File,asset:&Asset)->Result<String,String>{
+    struct DigestOnly{sha:Sha256,bytes:u64}
+    impl Write for DigestOnly{
+        fn write(&mut self,buf:&[u8])->std::io::Result<usize>{
+            self.sha.update(buf);
+            self.bytes+=buf.len() as u64;
+            Ok(buf.len())
+        }
+        fn flush(&mut self)->std::io::Result<()>{Ok(())}
+    }
+    let mut sink=DigestOnly{sha:Sha256::new(),bytes:0};
+    cat_node(iso,&asset.node,&mut sink)
+        .map_err(|e|format!("Cannot hash original CD asset {}: {e}",asset.path.display()))?;
+    if sink.bytes!=asset.size{
+        return Err(format!("Truncated original CD asset {}",asset.path.display()));
+    }
+    Ok(format!("{:x}",sink.sha.finalize()))
+}
+
+/// Read-only edition inventory: never installs, patches or writes any retail
+/// asset. The CUE parser creates one temporary normalized ISO view, which its
+/// Drop guard removes. Results go exclusively to the unified launcher log.
+///
+/// Read-only inspection. The separate install function authorizes edition
+/// patches only after verifying the exact original EXE and resource hashes.
+pub fn inspect_disc(cue_path:&Path,root:&Path)->Result<(),String>{
+    if !cue_path.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")){
+        return Err("--inspect-disc requires a .cue sheet, not a BIN or ISO".into());
+    }
+    let tracks=cue::tracks(cue_path)?;
+    let first=tracks.first().ok_or("CUE has no data track")?;
+    let audio=tracks.iter().filter(|t|t.mode=="AUDIO").count();
+    let track_files: BTreeSet<&str>=tracks.iter().map(|t|t.file.as_str()).collect();
+    crate::show(&format!(
+        "DISC_INSPECT CUE={} tracks={} audio_tracks={} bin_files={} first_mode={} first_index_sector={} read_only=1",
+        cue_path.file_name().unwrap_or_default().to_string_lossy(),
+        tracks.len(),audio,track_files.len(),first.mode,first.index01
+    ),root);
+    for track in &tracks{
+        crate::show(&format!(
+            "DISC_TRACK number={:02} mode={} index00_sector={} index01_sector={} bin={}",
+            track.number,track.mode,
+            track.index00.map_or_else(||"none".into(),|v|v.to_string()),
+            track.index01,track.file
+        ),root);
+    }
+    let iso_guard=cue::normalize(cue_path,root)?;
+    let iso_path=iso_guard.0.as_path();
+    let mut iso=image_file(iso_path)?;
+    let len=iso.metadata().map_err(|e|e.to_string())?.len();
+    if len==0||len>MAX_BYTES{return Err("Unsupported normalized disc data size".into());}
+    let tree=detect_and_parse_filesystem(&mut iso,&iso_path.to_string_lossy())
+        .map_err(|e|format!("Cannot inspect original data filesystem: {e}"))?;
+    let mut count=0;
+    for child in &tree.children{bounds(child,len,&mut count,Path::new(""))?;}
+    let names=tree.children.iter().map(|n|n.name.as_str()).take(32).collect::<Vec<_>>();
+    crate::show(&format!(
+        "DISC_ISO normalized_bytes={len} entries={count} root_names={names:?}"
+    ),root);
+    let matches:Vec<_>=tree.children.iter()
+        .filter(|n|n.is_directory&&n.name.eq_ignore_ascii_case("CYBER")).collect();
+    let folder=match matches.as_slice(){
+        [directory]=>directory,
+        _=>return Err("French CD discovery requires one CYBER directory; see DISC_ISO root_names".into())
+    };
+    let mut seen=BTreeSet::new();
+    let mut assets=Vec::new();
+    collect(folder,Path::new(""),&mut assets,&mut seen)?;
+    let files:BTreeMap<String,Asset>=assets.into_iter()
+        .map(|a|(disc_key(&a.path),a)).collect();
+    let bytes: u64=files.values().map(|a|a.size).sum();
+    crate::show(&format!(
+        "DISC_ASSETS files={} bytes={} all_filenames_checked=1",
+        files.len(),bytes
+    ),root);
+    for name in ["cyber.exe","graphics/shell.fnt","splash.avi","splash4.avi"]{
+        if let Some(asset)=files.get(name){
+            let sha=inspect_hash(&mut iso,asset)?;
+            crate::show(&format!(
+                "DISC_ASSET path={name} size={} sha256={sha}",
+                asset.size
+            ),root);
+            if name=="cyber.exe"{
+                let edition=crate::edition::from_original_exe(asset.size,&sha);
+                crate::show(&format!(
+                    "DISC_EDITION original_exe={} install_supported={} fr_patch_enabled={}",
+                    edition.label(),u8::from(edition.is_install_supported()),
+                    u8::from(matches!(edition,crate::edition::OriginalEdition::FrenchRetail))
+                ),root);
+            }
+        }else{
+            crate::show(&format!("DISC_ASSET path={name} missing=1"),root);
+            if name=="cyber.exe"{
+                return Err("Original CD does not contain CYBER/CYBER.EXE".into());
+            }
+        }
+    }
+    crate::show(
+        "DISC_INSPECT_COMPLETE disc_read_only=1 installed_game_unchanged=1 fr_runtime_field_validation_pending=1 normalized_iso_auto_removed=1",
+        root
+    );
+    Ok(())
+}
+
 /// Install only CYBER/*, not Sierra's obsolete Windows 95 installer.
 /// The installed-game path is verified and launched without requiring the
 /// original disc image; the bundled WinMM bridge serves CD audio as FLAC.
@@ -202,19 +311,33 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
     collect(folder,Path::new(""),&mut assets,&mut seen)?;
     let files:BTreeMap<String,Asset>=assets.into_iter().map(|a|(disc_key(&a.path),a)).collect();
     let exe=files.get("cyber.exe").ok_or("Disc not recognized: CYBER/CYBER.EXE missing")?;
-    if exe.size != patch::LEN as u64 {return Err(format!("Unsupported CYBER.EXE size: {}",exe.size));}
+    // First verify the complete original EXE hash, then edition-specific
+    // immutable disc resources. Neither a translated string nor a filename
+    // alone is sufficient for patch authorization.
     let hash=hash_on_disc(&mut iso,exe)?;
-    if hash!=patch::ORIGINAL {
-        return Err(format!("Unsupported CD edition: CYBER.EXE SHA-256 {hash}; expected {}",patch::ORIGINAL));
-    }
-    for (name,expected) in [
-        ("graphics/shell.fnt",USA_SHELL_FNT_SHA256),
-        ("splash.avi",USA_SPLASH_AVI_SHA256),
-    ]{
-        let asset=files.get(name).ok_or_else(||format!("Unsupported USA CD: missing CYBER/{name}"))?;
+    let (edition_name,checks):(&str,&[(&str,&str)])=
+        match crate::edition::from_original_exe(exe.size,&hash){
+            crate::edition::OriginalEdition::UsaRetail=>(USA_EDITION,&[
+                ("graphics/shell.fnt",USA_SHELL_FNT_SHA256),
+                ("splash.avi",USA_SPLASH_AVI_SHA256),
+            ]),
+            crate::edition::OriginalEdition::FrenchRetail=>(FR_EDITION,&[
+                ("graphics/shell.fnt",FR_SHELL_FNT_SHA256),
+                ("splash.avi",USA_SPLASH_AVI_SHA256),
+                ("splash4.avi",FR_SPLASH4_AVI_SHA256),
+            ]),
+            crate::edition::OriginalEdition::Unknown=>{
+                return Err(format!(
+                    "Unsupported CD edition: CYBER.EXE size={} SHA-256 {hash}; accepted only after exact US/FR retail identification",
+                    exe.size
+                ));
+            }
+        };
+    for &(name,expected) in checks{
+        let asset=files.get(name).ok_or_else(||format!("Unsupported {edition_name} CD: missing CYBER/{name}"))?;
         let actual=hash_on_disc(&mut iso,asset)?;
         if actual!=expected{
-            return Err(format!("Unsupported USA CD: CYBER/{name} SHA-256 {actual} (expected {expected})"));
+            return Err(format!("Unsupported {edition_name} CD: CYBER/{name} SHA-256 {actual} (expected {expected})"));
         }
     }
     let staged=destination.with_extension("staging");
@@ -256,7 +379,7 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
         let audio_note=format!("{} lossless FLAC tracks saved in music/TrackNN.flac; {} tracks omitted (missing BIN files)",
             audio_report.extracted,audio_report.missing.len());
-        Ok(format!("Detected edition: {USA_EDITION}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0, EnableCDDA=1), native 4:3 AVI and embedded WinMM bridge selected. Renderer: bundled open-source GameFrame staged at first launch. Audio: {}. Installed to {}.",
+        Ok(format!("Detected edition: {edition_name}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0, EnableCDDA=1), native 4:3 AVI and embedded WinMM bridge selected. Renderer: bundled open-source GameFrame staged at first launch. Audio: {}. Installed to {}.",
             files.len(),outcome,audio_note,destination.display()))
     })();
     if operation.is_err(){let _=fs::remove_dir_all(&staged);}

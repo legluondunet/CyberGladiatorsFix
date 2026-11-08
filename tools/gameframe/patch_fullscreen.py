@@ -57,6 +57,59 @@ fn target_monitor(hwnd: HWND) -> Option<RECT> {
     Some(rect)
 }
 
+/// On native Windows the retail game can leave its borderless fullscreen
+/// HWND above the selected Alt+Tab target. A lost foreground event must lower
+/// the game, never reactivate it, otherwise the user's chosen app stays hidden.
+/// Scoped to the launcher-verified French EXE only. US/Wine remain untouched.
+/// No WndProc subclass, no exclusive-mode switch, no minimization.
+fn cyber_native_fr_alt_tab_zorder(hwnd: HWND) {
+    if std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref() != Ok("1")
+        || std::env::var("CYBER_GAME_EDITION").as_deref() != Ok("FR") {
+        return;
+    }
+    static PREVIOUS_ACTIVE:std::sync::atomic::AtomicU32=
+        std::sync::atomic::AtomicU32::new(2);
+    use std::sync::atomic::Ordering;
+    unsafe {
+        if IsWindowVisible(hwnd)==0 || IsIconic(hwnd)!=0 {return;}
+        let mut owner_pid=0;
+        let owner_tid=GetWindowThreadProcessId(hwnd,&mut owner_pid);
+        if owner_tid==0 || owner_pid!=GetCurrentProcessId() {
+            return;
+        }
+        let foreground=GetForegroundWindow();
+        if foreground.is_null(){return;}
+        let active=foreground==hwnd;
+        let state=u32::from(active);
+        let previous=PREVIOUS_ACTIVE.swap(state,Ordering::Relaxed);
+        // GWL_EXSTYLE = -20, WS_EX_TOPMOST = 0x00000008.
+        let exstyle=GetWindowLongA(hwnd,-20) as u32;
+        let topmost=exstyle & 0x0000_0008 != 0;
+        // Demote a topmost fullscreen game BEFORE focus changes, so that
+        // normal Windows activation can display any selected non-topmost app.
+        // NOTOPMOST cannot be combined with SWP_NOZORDER (that would ignore it).
+        // NOMOVE|NOSIZE|NOACTIVATE|NOOWNERZORDER = 0x0213.
+        if topmost {
+            let result=SetWindowPos(hwnd,(-2isize) as HWND,0,0,0,0,0x0213);
+            log!("GAMEFRAME_ALT_TAB_ZORDER action=NOTOPMOST hwnd={hwnd:?} game_active={} foreground={foreground:?} exstyle={exstyle:#010x} result={result} activate=0 minimize=0",
+                u8::from(active));
+        }
+        if previous!=state {
+            log!("GAMEFRAME_ALT_TAB_FOCUS game_active={} previous={} hwnd={hwnd:?} foreground={foreground:?} topmost={} owner_thread={} calling_thread={}",
+                u8::from(active),previous,u8::from(topmost),
+                owner_tid,GetCurrentThreadId());
+            if previous==1 && !active {
+                // Merely clearing TOPMOST can leave the game ABOVE the new
+                // non-topmost foreground window. Explicitly place it at the
+                // bottom ONCE on deactivation. Windows raises it normally
+                // when the user selects the game again.
+                let result=SetWindowPos(hwnd,1usize as HWND,0,0,0,0,0x0213);
+                log!("GAMEFRAME_ALT_TAB_ZORDER action=HWND_BOTTOM on_focus_loss=1 hwnd={hwnd:?} selected={foreground:?} result={result} activate=0 minimize=0");
+            }
+        }
+    }
+}
+
 /// The native AVI host has closed, and CYBER.EXE can reset its HWND to
 /// 648x513 again BEFORE Glide presents the first menu frame.
 /// Prepare the correct borderless parent BEFORE the first OpenGL Swap,
@@ -124,6 +177,15 @@ pub fn cyber_maintain_fullscreen() {
     static FRAME: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     static BAD_SAMPLES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let frame = FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    // Check native FR Alt+Tab on every rendered frame: during/just after
+    // video handoff the 30-frame geometry cadence can miss a focus switch.
+    // This only changes z-order when necessary, never steals activation.
+    if std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref() == Ok("1")
+        && std::env::var("CYBER_GAME_EDITION").as_deref() == Ok("FR") {
+        if let Some(hwnd) = cyber_game_window() {
+            cyber_native_fr_alt_tab_zorder(hwnd);
+        }
+    }
     if frame % 30 != 0 { return; }
     let Some(hwnd) = cyber_game_window() else { return };
     unsafe {

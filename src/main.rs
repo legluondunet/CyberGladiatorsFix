@@ -6,11 +6,14 @@ mod cue;
 mod cdda;
 mod audio;
 mod install;
+mod edition;
 mod nglide;
 mod gameframe;
 mod graphics;
 mod settings;
 mod patch;
+mod fr_patch;
+mod fr_ddraw_static;
 mod verify;
 mod diagnostics;
 mod bundle;
@@ -29,6 +32,7 @@ Usage:
   CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
   CyberGladiatorsFix.exe --verify      Strict original retail manifest and patches
+  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only CD fingerprint and FR discovery (no installation)
   CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
   CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
   CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
@@ -51,6 +55,8 @@ No original game data is distributed. IQ data is never silently changed.
 A fresh, single CyberGladiatorsFix.log appears beside the launcher.
 --verify always applies strict SHA-256 checks. The optional INI setting
 AllowModifiedIQ=1 permits only same-size IQ modifications during launch.
+The FR executable is recognized for read-only disc inspection only;
+FR patching and launching remain disabled until its disc is authenticated.
 Existing nGlide/developer commands are retained internally for forensic
 regression tests but are not needed for normal use.
 ";
@@ -202,17 +208,42 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
 /// renderer. Legacy nGlide diagnostics are kept separately for developers.
-fn user_gameframe_launch(root:&Path)->Result<(),String>{
+fn user_gameframe_launch(root:&Path,fr_borderless_test:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let mut previous_glide=gameframe::Session::begin(root,&game)?;
-    let child=verify::launch_gameframe(root)?;
+    // Start before spawning CYBER.EXE: its DirectDraw initialization may
+    // switch the physical desktop mode before the first MCI AVI event.
+    // This is passive, native-Windows/FR-only sampling; no hook or graphics
+    // setting changes. A failed worker never prevents the working launch.
+    let native_fr=diagnostics::is_native_windows()
+        && crate::fr_patch::owns(&game.join("cyber.exe")).unwrap_or(false);
+    let display_watch=if native_fr{
+        diagnostics::DisplayModeWatch::start(root)
+    }else{
+        None
+    };
+    let child=verify::launch_gameframe(root,fr_borderless_test)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
     ),root);
     let result=wait_game(child,root);
+    // Stop/join the read-only sampler before the final launcher snapshot.
+    // It has no authority to restore or modify the user's desktop mode.
+    drop(display_watch);
+    // Native FR's retail game switches Windows to 640x480x16 during its AVI.
+    // Alt+Tab restores geometry but can leave the current mode at 16 bpp.
+    // Observe the mode *after the process exits* before considering any
+    // corrective action. This is a read-only Windows query, not a restore.
+    if diagnostics::is_native_windows()
+        && crate::fr_patch::owns(&game.join("cyber.exe")).unwrap_or(false) {
+        show(&format!(
+            "FR_DISPLAY_MODE_SNAPSHOT stage=after_game_exit {}",
+            diagnostics::prelaunch_display_modes()
+        ),root);
+    }
     let restored=previous_glide.restore();
     match (result,restored){
         (Err(game),Err(dll))=>Err(format!("{game}; original Glide restoration failed: {dll}")),
@@ -269,7 +300,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         []=>{
             let _lock=autostart::lock(root)?;
             autostart::prepare(root,None)?;
-            return user_gameframe_launch(root);
+            return user_gameframe_launch(root,false);
         },
         [one] if one.to_str()==Some("--install-only")=>{
             let _lock=autostart::lock(root)?;
@@ -284,7 +315,14 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let _lock=autostart::lock(root)?;
             let source=PathBuf::from(one);
             autostart::prepare(root,Some(&source))?;
-            return user_gameframe_launch(root);
+            return user_gameframe_launch(root,false);
+        },
+        [one] if one.to_str()==Some("--inspect-disc")=>{
+            let cue=install::find_cue(root)?;
+            return install::inspect_disc(&cue,root);
+        },
+        [one,two] if one.to_str()==Some("--inspect-disc")=>{
+            return install::inspect_disc(&PathBuf::from(two),root);
         },
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
@@ -303,12 +341,15 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
         [one,two] if one.to_str()==Some("--launch")
             && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root),
+            return user_gameframe_launch(root,false),
+        [one,two] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--fr-borderless-test")=>
+            return user_gameframe_launch(root,true),
         // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-first-present-handoff")=>
-            return user_gameframe_launch(root),
+            return user_gameframe_launch(root,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
@@ -450,7 +491,7 @@ mod diagnostics_tests {
     #[test]
     fn help_lists_only_one_click_controls(){
         for expected in ["CyberGladiatorsFix.exe               Auto-detect",
-            "--install-only","--verify","--max-graphics",
+            "--install-only","--verify","--inspect-disc","--max-graphics",
             "--check-bundle","--version","--help",
             "music/TrackNN.flac","CyberGladiatorsFix.dll",
             "CyberGladiatorsFix.log","GameFrame"]{

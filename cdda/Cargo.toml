@@ -16,6 +16,9 @@ path = "src/lib.rs"
 [dependencies]
 claxon = "=0.4.3"
 
+[build-dependencies]
+cc = "=1.2.41"
+
 [profile.release]
 opt-level = 2
 lto = "thin"

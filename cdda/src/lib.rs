@@ -14,6 +14,21 @@ mod video_trace;
 mod glide_trace;
 mod exception_trace;
 mod ddraw_native;
+mod virtual_ddraw;
+
+/// Called by the experimental project-owned C++ DirectDraw v1 adapter.
+/// Diagnostic strings are internal fixed literals/formatting, not input from
+/// the game, and are appended to the existing unified session log.
+#[no_mangle]
+pub unsafe extern "C" fn cyber_virtual_ddraw_trace(message:*const c_char){
+    if message.is_null(){return;}
+    if let Ok(value)=CStr::from_ptr(message).to_str(){
+        super_log_virtual(value);
+    }
+}
+fn super_log_virtual(line:&str){
+    log(&format!("FR_VIRTUAL_DDRAW {line}"));
+}
 
 use player::{Command as AudioCommand, Shared as AudioShared};
 use std::ffi::{c_char,c_void,CStr};
@@ -325,6 +340,19 @@ fn system_proc(name:&[u8])->Option<usize>{
         None
     }else{Some(ptr as usize)}
 }
+
+/// Called exclusively from the verified experimental native-FR video
+/// surface WM_PAINT handler while BeginPaint owns the destination HDC.
+/// The real WinMM export is resolved from the System32 path, never our
+/// game's WinMM import bridge (which would recurse).
+pub(crate) unsafe fn native_mci_paint_to_dc(dc:Handle)->Option<u32>{
+    if dc.is_null(){return None;}
+    let address=system_proc(b"mciSendStringA\0")?;
+    let native:unsafe extern "system" fn(*const c_char,*mut c_char,u32,Handle)->u32=
+        std::mem::transmute(address);
+    let cmd=std::ffi::CString::new(format!("update movie hdc {}",dc as usize)).ok()?;
+    Some(native(cmd.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut()))
+}
 macro_rules! forward_winmm {
     ($function:ident($($arg:ident:$typ:ty),*) -> $return:ty, $failure:expr) => {
         #[no_mangle]
@@ -386,6 +414,20 @@ pub unsafe extern "system" fn mciSendStringA(
     let mut result=native(substitute.as_ref().map_or(cmd,|v|v.as_ptr()),out,len,hwnd);
     if let Some(ref text)=command {
         video_trace::on_4_3_command_result(text,substitute.is_some(),result);
+        // During verified native-Windows FR MCI playback, Alt+Tab can
+        // restore the desktop from 640x480 to its prelaunch size. Resize
+        // the temporary host and forward ONE updated movie destination
+        // through the actual system WinMM export, never our wrapper.
+        // The current status reply/result remain untouched.
+        if let Some(destination)=video_trace::native_fr_refresh_during_movie(text,result){
+            let code=native(destination.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut());
+            video_trace::native_fr_resize_mci_result(code);
+        }
+        // During the experimental non-exclusive FR mode only, the legacy
+        // polling loop no longer leaves the original game HWND unresponsive
+        // to Windows for the full MCI movie. Dispatch occurs outside every
+        // WinMM/host mutex, and the normal verified launch is unaffected.
+        video_trace::pump_virtual_avi_messages(text,result);
         if result!=0 && substitute.is_some() && video_trace::movie_open_game_hwnd_for_retry(text){
             // An unsupported child-style MCI driver must not prevent game
             // startup. Revert to the original AVI open and log the fallback.
@@ -401,6 +443,10 @@ pub unsafe extern "system" fn mciSendStringA(
             String::from_utf8_lossy(&bytes[..end]).into_owned()
         }else{String::new()};
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
+        // The status-poll MCI_UPDATE experiment (#192) returned success
+        // but did not advance visible frames. The native FR virtual mode now
+        // repaints from the MCI destination's dedicated WM_PAINT handler,
+        // with a genuine BeginPaint HDC, not a busy-poll/GetDC loop.
         if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
             // The normal launch has already removed its video host.
             // Only --smooth-video-test may leave a no-activate black

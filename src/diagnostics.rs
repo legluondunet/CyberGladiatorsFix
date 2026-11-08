@@ -7,6 +7,9 @@ use std::ffi::{c_char,c_void,CStr};
 use std::fs::{self,OpenOptions};
 use std::io::{self,Write};
 use std::path::{Path,PathBuf};
+use std::sync::{Arc,atomic::{AtomicBool,Ordering}};
+use std::thread::{self,JoinHandle};
+use std::time::Duration;
 
 pub const LOG_NAME:&str="CyberGladiatorsFix.log";
 
@@ -102,6 +105,90 @@ pub fn primary_desktop_size()->Option<(u32,u32)>{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     (w>=640 && h>=480 && w<=16384 && h<=16384).then_some((w as u32,h as u32))
 }
+/// Read-only snapshot of the active primary display mode and the mode
+/// configured in Windows' registry. Neither query changes video settings.
+fn mode_details(which:i32)->String {
+    let mut mode:DevModeW=unsafe{std::mem::zeroed()};
+    mode.size=std::mem::size_of::<DevModeW>() as u16;
+    if unsafe{EnumDisplaySettingsW(std::ptr::null(),which,&mut mode)}==0{
+        "unavailable".to_owned()
+    }else{
+        format!("{}x{}x{}@{}Hz",
+            mode.pels_width,mode.pels_height,mode.bits_per_pel,mode.frequency)
+    }
+}
+pub fn prelaunch_display_modes()->String {
+    format!("current={} registry={} read_only=1",
+        mode_details(-1),mode_details(-2))
+}
+/// Passive monitor of the *actual* physical primary display mode during
+/// native Windows French-edition gameplay. It runs in the **launcher**
+/// process, independently of DPI-virtualized GetSystemMetrics in the game.
+/// It never calls ChangeDisplaySettings or touches the game process.
+pub struct DisplayModeWatch{
+    stop:Arc<AtomicBool>,
+    worker:Option<JoinHandle<()>>,
+}
+impl DisplayModeWatch{
+    pub fn start(root:&Path)->Option<Self>{
+        if !is_native_windows(){return None;}
+        let stop=Arc::new(AtomicBool::new(false));
+        let worker_stop=Arc::clone(&stop);
+        let location=root.to_path_buf();
+        let worker=thread::Builder::new()
+            .name("cyber-fr-display-watch".into())
+            .spawn(move||{
+                let first=mode_details(-1);
+                let mut last=first.clone();
+                let mut events=0u32;
+                log(&location,"FR_MODE_WATCH",&format!(
+                    "start physical_current={first} poll_ms=50 renderer_unchanged=1 read_only=1"
+                ));
+                while !worker_stop.load(Ordering::Acquire){
+                    let mode=mode_details(-1);
+                    if mode!=last{
+                        events=events.saturating_add(1);
+                        if events<=32{
+                            log(&location,"FR_MODE_WATCH",&format!(
+                                "change={events} from={last} to={mode} physical_mode_change_detected=1 read_only=1"
+                            ));
+                        }
+                        last=mode;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+                // A final sample catches a mode transition just before the
+                // launcher signals stop after the child process has exited.
+                let final_mode=mode_details(-1);
+                if final_mode!=last{
+                    events=events.saturating_add(1);
+                    if events<=32{
+                        log(&location,"FR_MODE_WATCH",&format!(
+                            "change={events} from={last} to={final_mode} physical_mode_change_detected=1 final_sample=1 read_only=1"
+                        ));
+                    }
+                }
+                log(&location,"FR_MODE_WATCH",&format!(
+                    "end initial={first} final={final_mode} transitions_seen={events}                      polling_is_best_effort=1 no_resolution_change_performed=1"
+                ));
+            });
+        match worker{
+            Ok(worker)=>Some(Self{stop,worker:Some(worker)}),
+            Err(e)=>{
+                log(root,"FR_MODE_WATCH",&format!(
+                    "start_skipped=1 reason=worker_creation_failed kind={:?} read_only=1",e.kind()
+                ));
+                None
+            }
+        }
+    }
+}
+impl Drop for DisplayModeWatch{
+    fn drop(&mut self){
+        self.stop.store(true,Ordering::Release);
+        if let Some(worker)=self.worker.take(){let _=worker.join();}
+    }
+}
 fn display_info()->String{
     let (w,h)=unsafe{(GetSystemMetrics(0),GetSystemMetrics(1))};
     let mut mode:DevModeW=unsafe{std::mem::zeroed()};
@@ -128,6 +215,12 @@ fn wine_version()->Option<String>{
     let ptr=unsafe{call()};
     if ptr.is_null(){return None;}
     Some(clean(&unsafe{CStr::from_ptr(ptr)}.to_string_lossy()))
+}
+/// The single launcher source of truth for selecting native-Windows-only
+/// compatibility behavior. The x86 child still receives an explicit
+/// edition-scoped flag; inherited caller environment is not trusted.
+pub fn is_native_windows()->bool{
+    wine_version().is_none()
 }
 fn physical_memory()->String{
     let mut m=MemoryStatus{

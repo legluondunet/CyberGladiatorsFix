@@ -158,13 +158,15 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 /// GameFrame's verified native AVI -> first real OpenGL-present launch.
 /// The original nGlide setup is never changed; the selected Apache-2.0
 /// Glide DLL was temporarily installed by gameframe::Session.
-pub fn launch_gameframe(root:&Path)->Result<Child,String>{
+pub fn launch_gameframe(root:&Path,fr_borderless_test:bool)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     let skip_intro=settings::read(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
+    let edition=if crate::fr_patch::owns(&exe)?{"FR"}else{"US"};
+    crate::show(&format!("GAME_EDITION selected={edition} original_backup_sha256_verified=1 runtime_address_profile={edition}"),root);
     cdda::try_install(root,&game)?;
     // Never attribute results to a new DLL if an old bridge stayed installed.
     let actual_bridge=patch::file_hash(&game.join(cdda::DLL_NAME))?;
@@ -189,6 +191,34 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     }
     let mut cmd=Command::new(&exe);
     cmd.current_dir(&game);
+    // Child profile is derived from a verified original EXE backup, never
+    // from an inherited caller variable or a filename alone.
+    cmd.env("CYBER_GAME_EDITION",edition);
+    // Do not change the already-validated US or Wine/Proton window handling.
+    // Scope Alt+Tab focus/z-order recovery to the reported native-Windows FR
+    // case. Always override inherited environment variables.
+    let native_fr_alt_tab=edition=="FR" && diagnostics::is_native_windows();
+    if fr_borderless_test && !native_fr_alt_tab{
+        return Err("--fr-borderless-test is restricted to the verified French edition on native Windows".into());
+    }
+    cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_fr_alt_tab{"1"}else{"0"});
+    // A diagnostic child flag is always explicitly set, never inherited
+    // from the caller. The normal user launch takes the validated #168 path.
+    cmd.env("CYBER_FR_VIRTUAL_DDRAW",if fr_borderless_test{"1"}else{"0"});
+    crate::show(&format!(
+        "FR_VIRTUAL_DDRAW enabled={} native_FR={} opt_in=1 system_ddraw_vtable_unchanged=1 no_external_wrapper=1",
+        u8::from(fr_borderless_test),u8::from(native_fr_alt_tab)
+    ),root);
+    crate::show(&format!(
+        "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
+        u8::from(native_fr_alt_tab)
+    ),root);
+    if native_fr_alt_tab {
+        crate::show(&format!(
+            "FR_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn {}",
+            diagnostics::prelaunch_display_modes()
+        ),root);
+    }
     cmd.env("DXVK_LOG_PATH","none");
     for key in [
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_HOOK_DISABLED","CYBER_GLIDE_PASSTHRU_NOOP",
@@ -228,6 +258,10 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=unified",root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (embedded_verified_build)"));
     diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro={} EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(skip_intro),u8::from(enable_cdda)));
+    // The original FR backup's SHA-256 and PE32 structure have been pinned.
+    // Inspect plausible x86 COM vtable callsites before spawning the game,
+    // without modifying any file, display mode or COM object.
+    if native_fr_alt_tab {crate::fr_ddraw_static::inspect(root,&exe);}
     cmd.spawn().map_err(|e|format!("Unable to start Cyber Gladiators through GameFrame: {e}"))
 }
 
