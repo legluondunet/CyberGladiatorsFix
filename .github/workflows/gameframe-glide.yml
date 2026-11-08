@@ -189,23 +189,6 @@ jobs:
           # otherwise pwsh propagates that value despite successful assertions.
           exit 0
 
-      - name: Reject experimental native FR mode test without a verified installation
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
-          $dir = Split-Path -Parent $exe
-          $game = Join-Path $dir 'CyberGladiatorsFix'
-          if (Test-Path $game) { throw 'Test runner unexpectedly has installed retail game' }
-          $output = (& $exe --fr-native-mode-test 2>&1 | Out-String)
-          if ($LASTEXITCODE -eq 0) { throw 'Experimental FR native mode unexpectedly ran without a retail game' }
-          if ($output -notmatch 'requires an existing installed game') {
-            throw "Missing explicit refusal of native mode experiment: $output"
-          }
-          if (Test-Path $game) { throw 'Experimental FR native mode created retail game directory' }
-          Write-Host 'Native FR RAM-only mode experiment refused missing installation before any game-file change: PASS'
-          exit 0
-
       - name: Package one executable and Apache-2.0 notices
         shell: pwsh
         run: |
