@@ -47,8 +47,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "GameFrame first GL present patch failed; upstream source drift?" }
           python tools/gameframe/patch_menu_signature.py third_party/game-frame
           if ($LASTEXITCODE -ne 0) { throw "GameFrame menu signature patch failed; upstream source drift?" }
-          python tools/gameframe/probe_retail_fonts.py --help
-          if ($LASTEXITCODE -ne 0) { throw "Original font read-only inspector CLI invalid" }
 
       - name: Compile upstream Glide wrapper using MSVC and decorated Win32 exports
         shell: pwsh

@@ -195,6 +195,18 @@ fn is_control_screen(scores:[u32;4])->bool {
     // the two multi-line instructional regions.
     scores.iter().all(|v|*v>=165)
 }
+const SIGNATURE_EDGE_MARGIN:i32=4;
+/// Keep the last signature pixel four screen pixels from the right and top
+/// edges of the *original game viewport*, independent of pillarboxing.
+fn top_right_signature_origin(viewport:(i32,i32,i32,i32),size:(i32,i32))
+    ->Option<(i32,i32)>{
+    let (vx,vy,vw,vh)=viewport;
+    let (w,h)=size;
+    let edge=SIGNATURE_EDGE_MARGIN;
+    if vw<=0||vh<=0||w<=0||h<=0
+        ||w+edge*2>vw||h+edge*2>vh{return None;}
+    Some((vx+vw-w-edge,vy+edge))
+}
 impl MenuSignature {
     pub unsafe fn new(gl:&Gl)->Option<Self>{
         if std::env::var("CYBER_GAMEFRAME_TEST").as_deref()!=Ok("1") ||
@@ -296,7 +308,7 @@ impl MenuSignature {
             (gl.TexSubImage2D)(TEXTURE_2D,0,0,0,tw,th,RGBA,
                 UNSIGNED_BYTE,pixels.as_ptr() as *const c_void);
         }
-        shim::log!("CYBER_MENU_SIGNATURE_STYLE font=angular_mixed_case_7x9 color_source={source} rgb={ink:?} matched_pixels={samples} no_frame=1 top_left=1");
+        shim::log!("CYBER_MENU_SIGNATURE_STYLE font=angular_mixed_case_7x9 color_source={source} rgb={ink:?} matched_pixels={samples} no_frame=1 top_right=1 edge_margin_px=4");
     }
     /// Draw only after the game's complete frame has been copied to the
     /// window framebuffer; never write into the Voodoo color/depth buffers.
@@ -321,14 +333,12 @@ impl MenuSignature {
         if !self.palette_sampled {
             unsafe{self.calibrate_ink(gl,fbo,ow,oh);}
         }
-        let (vx,vy,vw,vh)=viewport;
         let scale=(ch/480).clamp(1,3);
         let (w,h)=(self.pixel_width*scale,self.pixel_height*scale);
-        if w+20>vw||h+20>vh{return;}
-        // Anchored inside the original centered 4:3 game image, not to
-        // the physical monitor edge or black pillarbox/letterbox bars.
-        let left=vx+12;
-        let top=vy+12;
+        // Right-aligned from the original 4:3 border. Do not place the
+        // text inside any black pillarbox on a widescreen desktop.
+        let Some((left,top))=top_right_signature_origin(viewport,(w,h))
+            else{return;};
         unsafe{
             (gl.BindFramebuffer)(FRAMEBUFFER,0);
             (gl.Viewport)(0,0,cw,ch);
@@ -362,6 +372,18 @@ mod tests{
         assert!(!safe_label("CyberGladiatorsFix v0.2.13-abcdef"));
         assert!(!safe_label("OtherFix v0.2.13-1234abcd"));
         assert!(!safe_label("CyberGladiatorsFix v0.2.13-1234abcd\nbad"));
+    }
+    #[test]
+    fn upper_right_alignment_follows_game_border_at_any_resolution(){
+        assert_eq!(top_right_signature_origin((0,0,640,480),(220,20)),
+            Some((416,4)));
+        // A 4:3 game surface centered in a 16:9 desktop.
+        assert_eq!(top_right_signature_origin((240,0,1440,1080),(440,40)),
+            Some((1236,4)));
+        assert_eq!(top_right_signature_origin((0,120,1024,768),(300,30)),
+            Some((720,124)));
+        assert_eq!(top_right_signature_origin((0,0,320,240),(330,20)),
+            None);
     }
     #[test]
     fn signature_sprite_is_transparent_without_any_border_or_panel(){
