@@ -11,8 +11,8 @@ are NOT included. No nGlide, DXVK or standalone video player is shipped.
 
 QUICK START
 -----------
-Place CyberGladiatorsFix.exe beside the CUE/BIN dump of your original,
-supported US retail CD and double-click the EXE. Under Wine/Proton use:
+Place CyberGladiatorsFix.exe beside an authenticated original US or FR
+retail CUE/BIN image and double-click the EXE. Under Wine/Proton use:
 
   wine CyberGladiatorsFix.exe
 
@@ -26,7 +26,11 @@ does not require the CD image again. An absent or ambiguous CD or an
 unverified existing installation triggers a clear error, never a
 silent replacement of the player's files.
 
-Supported retail image: CUE/BIN, including separate CD audio tracks.
+Supported retail images: exact-hash authenticated US and FR CUE/BIN,
+including separate CD audio tracks. A verified two-second (150-sector)
+all-zero pause before the first AUDIO INDEX 01 can be recognized when
+INDEX 00 is omitted in a single raw 2352-byte BIN; source CUE/BIN are
+never altered and strict CD-ROM sector/resource checks remain active.
 Standalone ISO support is a future option, NOT part of this build.
 
 Game installation:
@@ -84,25 +88,30 @@ Start from your own CUE/BIN next to the EXE, not from an installed game.
 Let the full intro AVI play, verify music, input, focus and 4:3 scene;
 then exit normally. Start the EXE a second time without the CD files
 to verify installed-game detection, and check that glide.dll persists.
-Review the ONE CyberGladiatorsFix.log next to the launcher. Native
-Windows 10/11 gameplay remains to be field-tested.
+Review the ONE CyberGladiatorsFix.log next to the launcher. The explicit
+shared DirectDraw/MCI profiles have been field-tested on Windows (FR and
+US) and Wine-staging 11.17 (US); compatibility with other systems is
+not guaranteed. The opt-in modes remain in PR #6, not in the normal
+one-click launch.
 
 Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
   CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
   CyberGladiatorsFix.exe --verify        strict SHA-256 check
+  CyberGladiatorsFix.exe --inspect-disc original.cue   read-only CD inspection
   CyberGladiatorsFix.exe --max-graphics  max game settings
   CyberGladiatorsFix.exe --check-bundle  embedded DLL checks
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
 This is a pre-release testing artifact, NOT a public release.
-The implementation and audit are merged into main (2026-11-06).
-Builds 85 and 90 were validated under Wine-staging and Proton,
-including complete fullscreen introduction on build 85 and normal
-skip/transition on build 90. A new clean CUE/BIN installation,
-native Windows 10/11 gameplay and display-mode/depth behavior still
-require validation before publishing the first release.
+The baseline implementation and audit were merged into main on 2026-11-06.
+PR #6 (not yet merged) adds the shared COM DirectDraw/MCI test paths
+and read-only original-US-CUE pregap support. The FR/Windows, US/Windows,
+US/Wine test profiles and original US image compatibility have now been
+validated by the user, with CI passing at commit f7df3bb5.
+A public release must still distinguish these opt-in test paths from
+normal startup and must not claim universal hardware compatibility.
 A green CI workflow checks compilation, PE exports and loading,
 but DOES NOT verify actual video or gameplay on a player's machine.
 

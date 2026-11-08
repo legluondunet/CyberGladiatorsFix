@@ -1,5 +1,8 @@
 # CyberGladiatorsFix — pre-release code audit
 
+> **Status update — 2026-11-08 (PR #6, unmerged).** This document preserves the historical 2026-11-06 baseline audit below. Since then, user-supplied field logs and CI have validated the *opt-in shared owned-COM DirectDraw and MCI video path* for **FR/Windows, US/Windows and US/Wine 11.17**. Native FR completed its ~40-second AVI and Alt+Tab deduplication; US/Windows and US/Wine completed shorter ~14s and ~12s video/3D smoke tests with repeated Alt+Tab, FLAC and clean shutdown. The US `CYBER.cue`/`CYBER.bin` with an otherwise undeclared **150-sector zero audio pregap** is accepted without modifying original media; this has been field-validated, while exact retail SHA checks remain. Last CI for this correction: [#42496409905](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42496409905), successful. **Remaining release checks:** ordinary/default launch on current build and any desired second-launch/`--verify` coverage; FR/Wine *owned-COM* mode is not enabled/validated; public release and merge are separate decisions. The older statements below that Windows gameplay or first-use CD extraction have never been tested are historical, not current status.
+
+
 Audit date: **2026-11-06**. Baseline: `main` commit `fbe8fb9f5f8d0cc39f2d8bfed2c2d79a6161e35e`, produced by merged PRs #1, #2 and #3. All proposed changes belong to `audit/pre-release-cleanup` until independently reviewed and integrated.
 
 ## What has been verified
