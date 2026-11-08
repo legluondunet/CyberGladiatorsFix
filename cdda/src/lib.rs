@@ -41,11 +41,6 @@ use std::sync::atomic::{AtomicU32,Ordering};
 type Dword=u32;
 type Ptr=usize;
 type Handle=*mut c_void;
-#[link(name="user32")]
-unsafe extern "system" {
-    fn GetDC(hwnd:Handle)->Handle;
-    fn ReleaseDC(hwnd:Handle,dc:Handle)->i32;
-}
 const MCI_OPEN:Dword=0x803;
 const MCI_CLOSE:Dword=0x804;
 const MCI_PLAY:Dword=0x806;
@@ -345,6 +340,19 @@ fn system_proc(name:&[u8])->Option<usize>{
         None
     }else{Some(ptr as usize)}
 }
+
+/// Called exclusively from the verified experimental native-FR video
+/// surface WM_PAINT handler while BeginPaint owns the destination HDC.
+/// The real WinMM export is resolved from the System32 path, never our
+/// game's WinMM import bridge (which would recurse).
+pub(crate) unsafe fn native_mci_paint_to_dc(dc:Handle)->Option<u32>{
+    if dc.is_null(){return None;}
+    let address=system_proc(b"mciSendStringA\0")?;
+    let native:unsafe extern "system" fn(*const c_char,*mut c_char,u32,Handle)->u32=
+        std::mem::transmute(address);
+    let cmd=std::ffi::CString::new(format!("update movie hdc {}",dc as usize)).ok()?;
+    Some(native(cmd.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut()))
+}
 macro_rules! forward_winmm {
     ($function:ident($($arg:ident:$typ:ty),*) -> $return:ty, $failure:expr) => {
         #[no_mangle]
@@ -435,28 +443,10 @@ pub unsafe extern "system" fn mciSendStringA(
             String::from_utf8_lossy(&bytes[..end]).into_owned()
         }else{String::new()};
         if let Some(entry)=video_trace::after(text,result,&reply){log(&entry);}
-        // Periodically ask the real Windows MCIAVI renderer to paint its
-        // *current* video frame into the already-existing 4:3 surface. This
-        // avoids painting the black parent/cover and changing host z-order.
-        // Scope: FR + explicit DirectDraw virtualization test + successful
-        // "status movie mode"=="playing" only. Never recurse through this
-        // WinMM proxy, and always release GetDC before the next game poll.
-        if let Some(surface)=video_trace::virtual_fr_movie_repaint_target(text,result,&reply){
-            let hwnd=surface as Handle;
-            let dc=GetDC(hwnd);
-            if dc.is_null(){
-                video_trace::virtual_fr_movie_repaint_result(0,false);
-            }else{
-                let mut status=0xFFFF_FFFFu32;
-                if let Ok(command)=std::ffi::CString::new(format!(
-                    "update movie hdc {}",dc as usize
-                )){
-                    status=native(command.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut());
-                }
-                let _=ReleaseDC(hwnd,dc);
-                video_trace::virtual_fr_movie_repaint_result(status,true);
-            }
-        }
+        // The status-poll MCI_UPDATE experiment (#192) returned success
+        // but did not advance visible frames. The native FR virtual mode now
+        // repaints from the MCI destination's dedicated WM_PAINT handler,
+        // with a genuine BeginPaint HDC, not a busy-poll/GetDC loop.
         if result==0 && text.trim().eq_ignore_ascii_case("close avivideo"){
             // The normal launch has already removed its video host.
             // Only --smooth-video-test may leave a no-activate black
