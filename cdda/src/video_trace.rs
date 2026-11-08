@@ -161,7 +161,15 @@ const VK_ESCAPE:usize=0x1b;
 const VK_RETURN:usize=0x0d;
 const VK_SPACE:usize=0x20;
 const HOST_CLASS:&[u8]=b"CyberGladiatorsFix_AVI_4x3_Host_v2\0";
+const VIRTUAL_VIDEO_CLASS:&[u8]=b"CyberGladiatorsFix_FR_MCI_VideoSurface_v1\0";
+const VIRTUAL_MCI_TIMER_ID:usize=0x4d34;
+const VIRTUAL_MCI_TIMER_MS:u32=50;
 static HOST_CLASS_REGISTERED:OnceLock<bool>=OnceLock::new();
+static VIRTUAL_VIDEO_CLASS_REGISTERED:OnceLock<bool>=OnceLock::new();
+static VIRTUAL_MCI_SURFACE_PLAYING:AtomicBool=AtomicBool::new(false);
+static VIRTUAL_MCI_SURFACE_IN_PAINT:AtomicBool=AtomicBool::new(false);
+static VIRTUAL_MCI_SURFACE_PAINT_COUNT:AtomicU32=AtomicU32::new(0);
+static VIRTUAL_MCI_SURFACE_TIMER_COUNT:AtomicU32=AtomicU32::new(0);
 static KEY_FILTER_ACTIVE:AtomicBool=AtomicBool::new(false);
 static VIRTUAL_AVI_PUMP_POLLS:AtomicU32=AtomicU32::new(0);
 static VIRTUAL_AVI_PUMP_MESSAGES:AtomicU32=AtomicU32::new(0);
@@ -406,6 +414,107 @@ unsafe extern "system" fn black_host_proc(
         _=>DefWindowProcA(hwnd,msg,wparam,lparam),
     }
 }
+// Unlike the separate black popup and first-frame curtain, a window
+// supplied by the application via MCI_WINDOW is responsible for WM_PAINT.
+// The previous experimental path reused black_host_proc for the actual AVI
+// destination, overwriting MCI's frames in WM_PAINT. Windows documents that
+// the application-owned video HWND must repaint invalid regions. Keep a
+// dedicated WndProc only for verified Windows-FR DirectDraw virtualization;
+// preserve the known-good original host/cover paths for US and Wine.
+fn virtual_mci_surface_enabled()->bool{
+    smooth_enabled()
+        && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
+        && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
+        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
+}
+unsafe extern "system" fn virtual_video_surface_proc(
+    hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
+)->isize{
+    match msg {
+        WM_ERASEBKGND=>1, // never black-out an already decoded MCI frame
+        WM_TIMER if wparam==VIRTUAL_MCI_TIMER_ID=>{
+            if VIRTUAL_MCI_SURFACE_PLAYING.load(Ordering::Acquire){
+                let tick=VIRTUAL_MCI_SURFACE_TIMER_COUNT.fetch_add(1,Ordering::Relaxed)+1;
+                let queued=InvalidateRect(hwnd,std::ptr::null(),0);
+                if tick==1 || tick%300==0{
+                    video_log(&format!(
+                        "FR_VIRTUAL_VIDEO_TIMER ticks={tick} invalidate={queued}                          interval_ms={VIRTUAL_MCI_TIMER_MS} repaint_target=video_surface_only"
+                    ));
+                }
+            }
+            0
+        }
+        WM_PAINT=>{
+            let mut paint=PaintStruct{
+                dc:std::ptr::null_mut(),erase:0,paint:WinRect::default(),
+                restore:0,inc_update:0,reserved:[0;32]
+            };
+            let dc=BeginPaint(hwnd,&mut paint);
+            if !dc.is_null(){
+                if VIRTUAL_MCI_SURFACE_PLAYING.load(Ordering::Acquire) {
+                    // Native WinMM, invoked in the owning UI thread with the
+                    // *BeginPaint* HDC as the MCI_WINDOW documentation requires.
+                    // No host mutex, no HWND reparent, no changing monitor mode.
+                    if !VIRTUAL_MCI_SURFACE_IN_PAINT.swap(true,Ordering::AcqRel){
+                        let code=crate::native_mci_paint_to_dc(dc);
+                        let count=VIRTUAL_MCI_SURFACE_PAINT_COUNT
+                            .fetch_add(1,Ordering::Relaxed)+1;
+                        if count<=3 || count%300==0 || code!=Some(0){
+                            video_log(&format!(
+                                "FR_VIRTUAL_VIDEO_PAINT calls={count}                                  mci_update_result={code:?} owner_thread=1                                  beginpaint_hdc_valid=1 black_fill=0"
+                            ));
+                        }
+                        VIRTUAL_MCI_SURFACE_IN_PAINT.store(false,Ordering::Release);
+                    }
+                }else{
+                    // Before MCI play starts, retain the existing black
+                    // initial surface without drawing over video frames.
+                    let mut rect=WinRect::default();
+                    if GetClientRect(hwnd,&mut rect)!=0{
+                        let _=FillRect(dc,&rect,GetStockObject(BLACK_BRUSH));
+                    }
+                }
+                EndPaint(hwnd,&paint);
+            }
+            0
+        }
+        _=>DefWindowProcA(hwnd,msg,wparam,lparam)
+    }
+}
+unsafe fn register_virtual_video_class(instance:*mut c_void)->bool{
+    *VIRTUAL_VIDEO_CLASS_REGISTERED.get_or_init(||{
+        let class=WndClassA{
+            style:0,wnd_proc:Some(virtual_video_surface_proc),
+            class_extra:0,window_extra:0,instance,
+            icon:std::ptr::null_mut(),cursor:std::ptr::null_mut(),
+            background:std::ptr::null_mut(),
+            menu_name:std::ptr::null(),class_name:VIRTUAL_VIDEO_CLASS.as_ptr()
+        };
+        let atom=RegisterClassA(&class);
+        if atom==0{
+            video_log(&format!("FR_VIRTUAL_VIDEO_CLASS_FAILED win32={}",GetLastError()));
+            false
+        }else{
+            video_log("FR_VIRTUAL_VIDEO_CLASS registered=1 mci_destination_paints=video_frames                 parent_and_cover=black windowed=1 nonexclusive=1");
+            true
+        }
+    })
+}
+unsafe fn stop_virtual_mci_video_surface(reason:&str){
+    if !VIRTUAL_MCI_SURFACE_PLAYING.swap(false,Ordering::AcqRel){return;}
+    let h=*video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let timer_stopped=if let Some(h)=h {
+        if h.owner_thread==GetCurrentThreadId()
+            && IsWindow(h.surface as *mut c_void)!=0{
+            KillTimer(h.surface as *mut c_void,VIRTUAL_MCI_TIMER_ID)
+        }else{0}
+    }else{0};
+    video_log(&format!(
+        "FR_VIRTUAL_VIDEO_STOP reason={reason} timer_stopped={timer_stopped}          paint_calls={} timer_ticks={} physical_display_mode_unchanged=1",
+        VIRTUAL_MCI_SURFACE_PAINT_COUNT.load(Ordering::Relaxed),
+        VIRTUAL_MCI_SURFACE_TIMER_COUNT.load(Ordering::Relaxed)
+    ));
+}
 unsafe fn register_black_host_class(instance:*mut c_void)->bool{
     *HOST_CLASS_REGISTERED.get_or_init(||{
         let class=WndClassA{
@@ -560,8 +669,12 @@ fn video_surface_style(smooth:bool)->u32 {
     // theme-dependent COLOR_3DDKSHADOW (which can look gray).
     WS_CHILD|if smooth{0}else{SS_BLACKRECT|WS_VISIBLE}
 }
+fn video_surface_class_for(smooth:bool,virtual_fr:bool)->&'static [u8]{
+    if smooth && virtual_fr{VIRTUAL_VIDEO_CLASS}
+    else if smooth{HOST_CLASS}else{b"STATIC\0"}
+}
 fn video_surface_class(smooth:bool)->&'static [u8]{
-    if smooth{HOST_CLASS}else{b"STATIC\0"}
+    video_surface_class_for(smooth,virtual_mci_surface_enabled())
 }
 fn first_frame_cover_style()->u32{
     // Our custom black-painted child must not use SS_BLACKRECT: under Wine,
@@ -627,6 +740,11 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // The explicitly black-painted background covers both pillarboxes.
     if !register_black_host_class(base as *mut c_void){return None;}
     let smooth=smooth_enabled();
+    let virtual_video=smooth&&virtual_mci_surface_enabled();
+    if virtual_video && !register_virtual_video_class(base as *mut c_void){
+        video_log("FR_VIRTUAL_VIDEO_SETUP_FAILED reason=class_registration");
+        return None;
+    }
     // The smooth experiment requests an independent managed NORMAL fullscreen
     // popup (rather than an owned tool-window/dialog). This prevents the
     // Linux desktop panel from staying above the video on WMs which honor
@@ -645,7 +763,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // the MCI parent solid RGB(0,0,0), independent of Wine's system theme.
     // Keep it hidden from the very first CreateWindowExA invocation.
     let surface=CreateWindowExA(0,video_surface_class(smooth).as_ptr(),b"\0".as_ptr(),
-        video_surface_style(smooth),
+        video_surface_style(smooth)|if virtual_video{WS_CLIPCHILDREN}else{0},
         x,y,w,h,host,
         std::ptr::null_mut(),std::ptr::null_mut(),std::ptr::null_mut());
     if surface.is_null(){
@@ -986,6 +1104,16 @@ fn close_host(reason:&str){
     let previous=video_host().lock().unwrap_or_else(|e|e.into_inner()).take();
     if let Some(mut h)=previous{
         GAMEFRAME_FIRST_GL_ARMED.store(false,Ordering::Release);
+        // close_host already removed the host from the registry; disable
+        // the timer directly with the saved HWND. Never let it repaint an
+        // MCI device that has already been closed.
+        VIRTUAL_MCI_SURFACE_PLAYING.store(false,Ordering::Release);
+        unsafe{
+            if GetCurrentThreadId()==h.owner_thread
+                && IsWindow(h.surface as *mut c_void)!=0{
+                let _=KillTimer(h.surface as *mut c_void,VIRTUAL_MCI_TIMER_ID);
+            }
+        }
         unsafe{
             KEY_FILTER_ACTIVE.store(false,Ordering::Release);
             if GetCurrentThreadId()!=h.owner_thread{
@@ -1567,8 +1695,24 @@ fn reveal_playing_video() {
         }
         // The MCI surface must be visible to actually produce its initial
         // decoded frames. The sibling cover stays above it while it starts.
+        // A distinct MCI-aware WndProc repaints the real AVI destination:
+        // never share the black parent's WM_PAINT implementation here.
+        if virtual_mci_surface_enabled(){
+            VIRTUAL_MCI_SURFACE_PLAYING.store(true,Ordering::Release);
+            VIRTUAL_MCI_SURFACE_PAINT_COUNT.store(0,Ordering::Release);
+            VIRTUAL_MCI_SURFACE_TIMER_COUNT.store(0,Ordering::Release);
+        }
         let _=ShowWindow(h.surface as *mut c_void,SW_SHOW);
+        let _=InvalidateRect(h.surface as *mut c_void,std::ptr::null(),0);
         let _=UpdateWindow(h.surface as *mut c_void);
+        if virtual_mci_surface_enabled(){
+            let timer=SetTimer(h.surface as *mut c_void,VIRTUAL_MCI_TIMER_ID,
+                VIRTUAL_MCI_TIMER_MS,std::ptr::null());
+            video_log(&format!(
+                "FR_VIRTUAL_VIDEO_RENDER paint_class=separate                  parent_black=1 surface_black_during_play=0                  mci_update_in_wm_paint=1 timer_id={VIRTUAL_MCI_TIMER_ID}                  timer_ms={VIRTUAL_MCI_TIMER_MS} timer_armed={}                  no_desktop_mode_switch=1",
+                u8::from(timer!=0)
+            ));
+        }
         video_log(&format!(
             "VIDEO_SURFACE_REVEALED visible={} after_successful_MCI_play=1 under_initial_black_cover={}",
             IsWindowVisible(h.surface as *mut c_void),
@@ -1791,6 +1935,7 @@ pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
         enable_movie_keys();
     }
     if command.eq_ignore_ascii_case("close movie"){
+        stop_virtual_mci_video_surface("close_movie");
         timing("MCI_MOVIE_CLOSED");
     }
     if command.eq_ignore_ascii_case("close avivideo"){
@@ -1939,7 +2084,9 @@ mod fullscreen_tests {
     }
     #[test]
     fn smooth_avi_parent_and_cover_paint_explicit_black_without_theme(){
-        assert_eq!(video_surface_class(true),HOST_CLASS);
+        assert_eq!(video_surface_class_for(true,false),HOST_CLASS);
+        assert_eq!(video_surface_class_for(true,true),VIRTUAL_VIDEO_CLASS);
+        assert_eq!(video_surface_class_for(false,true),b"STATIC\0");
         assert_eq!(video_surface_class(false),b"STATIC\0");
         assert_eq!(video_surface_style(true)&SS_BLACKRECT,0);
         assert_eq!(first_frame_cover_style()&SS_BLACKRECT,0);
