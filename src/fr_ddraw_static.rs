@@ -121,6 +121,57 @@ fn likely_mode_wrapper(data:&[u8])->bool{
     ];
     data.get(RAW..RAW+EXPECTED.len())==Some(EXPECTED)
 }
+/// Exact instruction sequences observed in the authenticated French PE32.
+/// These are *verified original-file* locations, not address patterns to
+/// overwrite or hooks. Document all three aspects of the 16-bpp dependency:
+/// fullscreen/exclusive cooperation, the primary mode wrapper, and the
+/// independent mode call in a second graphics code path.
+#[derive(Debug,Clone,Copy,PartialEq,Eq)]
+struct DisplayPathEvidence{
+    exclusive_cooperation:bool,
+    primary_mode:bool,
+    alternate_mode:bool,
+    secondary_mode:bool,
+}
+fn exact_original_bytes(data:&[u8],raw:usize,expected:&[u8])->bool{
+    data.get(raw..raw.saturating_add(expected.len()))==Some(expected)
+}
+fn display_path_evidence(data:&[u8])->DisplayPathEvidence{
+    // 00405E7E: push 0x11 (= DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE),
+    // followed by IDirectDraw v1::SetCooperativeLevel, slot 20, +0x50.
+    let exclusive_cooperation=exact_original_bytes(data,0x547e,&[
+        0x6a,0x11,0xff,0x35,0x18,0x81,0x52,0x00,
+        0xa1,0x8c,0x72,0x44,0x00,0x50,0x8b,0x10,
+        0xff,0x52,0x50
+    ]);
+    // 004050AF: (ECX,EDX,EAX) = (16,480,640), then
+    // call original 00405EB7 COM SetDisplayMode wrapper.
+    let primary_mode=exact_original_bytes(data,0x46af,&[
+        0xb9,0x10,0x00,0x00,0x00,
+        0xba,0xe0,0x01,0x00,0x00,
+        0xb8,0x80,0x02,0x00,0x00,
+        0xe8,0xf4,0x0d,0x00,0x00
+    ]);
+    // 00406A68: a second caller that can request the identical mode.
+    let alternate_mode=exact_original_bytes(data,0x6068,&[
+        0xb9,0x10,0x00,0x00,0x00,
+        0xba,0xe0,0x01,0x00,0x00,
+        0xb8,0x80,0x02,0x00,0x00,
+        0xe8,0x3b,0xf4,0xff,0xff
+    ]);
+    // 00436411: (16,480,640) pushed to a *different* COM object
+    // global at 0044AF70; IDirectDraw v1::SetDisplayMode at +0x54.
+    let secondary_mode=exact_original_bytes(data,0x35a11,&[
+        0x6a,0x10,
+        0x68,0xe0,0x01,0x00,0x00,
+        0x68,0x80,0x02,0x00,0x00,
+        0x8b,0x0d,0x70,0xaf,0x44,0x00,
+        0x51,0x8b,0x01,0xff,0x50,0x54
+    ]);
+    DisplayPathEvidence{
+        exclusive_cooperation,primary_mode,alternate_mode,secondary_mode
+    }
+}
 fn hex_window(data:&[u8],raw:usize,before:usize,after:usize)->String{
     // Small, bounded instruction-adjacent excerpt. Never log the game EXE.
     let start=raw.saturating_sub(before);
@@ -162,6 +213,18 @@ pub fn inspect(root:&Path,game_exe:&Path){
         report(root,"status=skip reason=invalid_executable_sections read_only=1");
         return;
     };
+    let evidence=display_path_evidence(&data);
+    report(root,&format!(
+        "display_dependency exclusive_cooperative_level={} exclusive_flags=0x11 (DDSCL_FULLSCREEN|DDSCL_EXCLUSIVE) set_mode_640x480x16_primary={} set_mode_640x480x16_alternate={} set_mode_640x480x16_secondary={} interpretation=exact_verified_file_instructions_not_runtime_proof read_only=1",
+        u8::from(evidence.exclusive_cooperation),
+        u8::from(evidence.primary_mode),
+        u8::from(evidence.alternate_mode),
+        u8::from(evidence.secondary_mode),
+    ));
+    if evidence.exclusive_cooperation&&evidence.primary_mode&&evidence.alternate_mode&&evidence.secondary_mode{
+        report(root,
+            "virtualization_requirements cooperative_level=nonexclusive logical_mode=640x480x16 physical_desktop_mode=preserved need_consistent_DirectDraw_surfaces=1 simple_bpp_or_mode_substitution=unsafe render_target=desktop_sized_borderless");
+    }
     let sites=candidates(&data,&sections);
     let calls:Vec<_>=sites.iter().filter(|site|site.kind=="call_vtable_slot21").collect();
     let loads:Vec<_>=sites.iter().filter(|site|site.kind=="mov_vtable_slot21").collect();
@@ -254,6 +317,46 @@ mod tests{
         assert!(likely_mode_wrapper(&data));
         data[0x54c7]=0x90;
         assert!(!likely_mode_wrapper(&data));
+    }
+    #[test]
+    fn display_dependency_requires_exact_independent_original_sequences(){
+        let mut data=vec![0u8;0x35a11+24];
+        let coop=&[
+            0x6a,0x11,0xff,0x35,0x18,0x81,0x52,0x00,
+            0xa1,0x8c,0x72,0x44,0x00,0x50,0x8b,0x10,
+            0xff,0x52,0x50
+        ];
+        let primary=&[
+            0xb9,0x10,0x00,0x00,0x00,0xba,0xe0,0x01,0x00,0x00,
+            0xb8,0x80,0x02,0x00,0x00,0xe8,0xf4,0x0d,0x00,0x00
+        ];
+        let alternate=&[
+            0xb9,0x10,0x00,0x00,0x00,0xba,0xe0,0x01,0x00,0x00,
+            0xb8,0x80,0x02,0x00,0x00,0xe8,0x3b,0xf4,0xff,0xff
+        ];
+        let secondary=&[
+            0x6a,0x10,0x68,0xe0,0x01,0x00,0x00,
+            0x68,0x80,0x02,0x00,0x00,
+            0x8b,0x0d,0x70,0xaf,0x44,0x00,
+            0x51,0x8b,0x01,0xff,0x50,0x54
+        ];
+        assert_eq!(display_path_evidence(&data),DisplayPathEvidence{
+            exclusive_cooperation:false,primary_mode:false,
+            alternate_mode:false,secondary_mode:false
+        });
+        data[0x547e..0x547e+coop.len()].copy_from_slice(coop);
+        data[0x46af..0x46af+primary.len()].copy_from_slice(primary);
+        data[0x6068..0x6068+alternate.len()].copy_from_slice(alternate);
+        data[0x35a11..0x35a11+secondary.len()].copy_from_slice(secondary);
+        assert_eq!(display_path_evidence(&data),DisplayPathEvidence{
+            exclusive_cooperation:true,primary_mode:true,
+            alternate_mode:true,secondary_mode:true
+        });
+        data[0x547f]=0x08; // DDSCL_NORMAL is *not* this original.
+        assert!(!display_path_evidence(&data).exclusive_cooperation);
+        data[0x547f]=0x11;
+        data[0x35a11+1]=0x08;
+        assert!(!display_path_evidence(&data).secondary_mode);
     }
     #[test]
     fn rejects_random_bytes_and_invalid_pe_headers(){
