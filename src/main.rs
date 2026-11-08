@@ -13,6 +13,7 @@ mod graphics;
 mod settings;
 mod patch;
 mod fr_patch;
+mod fr_ddraw_static;
 mod verify;
 mod diagnostics;
 mod bundle;
