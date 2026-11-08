@@ -320,8 +320,17 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             if !diagnostics::is_native_windows(){
                 return Err("Native FR mode experiment unavailable on Wine/Proton".into());
             }
-            if !root.join(install::DIR).join("cyber.exe").is_file(){
+            let game_exe=root.join(install::DIR).join("cyber.exe");
+            if !game_exe.is_file(){
                 return Err("Native FR mode experiment requires an existing installed game".into());
+            }
+            // Refuse US/unknown/corrupt executables and invalid FR backup
+            // before even staging the GameFrame DLL or other game resources.
+            fr_patch::verify_exe(&game_exe).map_err(|e|
+                format!("Native FR mode experiment requires a verified FR game: {e}")
+            )?;
+            if diagnostics::physical_primary_mode().is_none(){
+                return Err("Native FR mode experiment requires an active Windows desktop at 32 bits".into());
             }
             return user_gameframe_launch(root,true);
         },
