@@ -2,6 +2,51 @@
 
 **Experimental PR #5, NOT a public release.** Retain your last working US build. No French executable, disc data, music or IQ assets are distributed by this project.
 
+## Display contract — borderless non-exclusive, desktop mode preserved
+
+This is the **target behavior**, not a currently implemented or validated
+feature. The current Windows FR build #168 still changes the **physical**
+desktop mode to 640x480x16 while launching the original game.
+
+- The **only visible game presentation** (GameFrame/Glide and its coordinated
+  MCI intro) must use a **borderless, non-exclusive desktop window**,
+  occupying the selected user's display, never exclusive fullscreen.
+- Its size and position must be **dynamic**, taken from the actual monitor
+  and DPI-aware geometry. Never hard-code 1920x1200, 1536x960,
+  1920x1080 or 640x480; Win32 logical pixels may differ from physical.
+- **Intercept legacy resolution, color-depth and exclusive-mode requests
+  before Windows applies them.** The physical resolution, depth and
+  refresh rate must remain **unchanged during the entire game session**.
+  Restoring the desktop on exit alone does **not** meet this requirement.
+- Preserve the original **logical 640x480/16-bpp DirectDraw state** and
+  required surface/mode semantics without changing the real display.
+  Fake `SetDisplayMode` success without state, native desktop-dimension
+  substitution and simple 32-bit constant patching have all produced
+  failed native experiments; do not reintroduce them.
+- Render the game's 4:3 content proportionally in the borderless window,
+  without stretching. Intro AVI and gameplay OpenGL must have a seamless
+  handoff, no redundant resizing, desktop flash or focus/input loss.
+- Alt+Tab, mouse and keyboard, CDDA and clean shutdown must work.
+  Protect the working US edition and Wine/Proton behavior; no cnc-ddraw
+  dependency or experimental native COM vtable hook.
+
+### Acceptance criteria across different monitors
+
+1. Compare the actual physical current mode via `EnumDisplaySettings`
+   **before launch, during the intro, during 3D gameplay and after exit**.
+   Resolution, color depth and refresh must match at all checkpoints.
+2. Measure the live HWND: borderless, non-exclusive, full monitor coverage
+   at DPI-aware monitor geometry; no hard-coded desktop size.
+3. Confirm original 4:3 proportions, smooth MCI-to-OpenGL transition,
+   functional CDDA, ~60 FPS limiter, Alt+Tab/input, exit and Glide restore.
+4. Validate at least **two different display resolutions/DPI settings**
+   and test Windows plus Wine/Proton before claiming universal support.
+
+The game may keep its 640x480/16-bpp **logical** DirectDraw surface while
+the **physical Windows display remains at the user's own mode**.
+Any implementation must address the actual cooperative-level, mode,
+surface and window semantics, not just change resolution constants.
+
 ## Test environment
 
 - Use the Windows x64 **PreRelease** artifact produced by the latest successful GitHub Actions run for `feature/french-edition`.
