@@ -1310,8 +1310,23 @@ fn should_arm_curtain(smooth:bool,mci_close_result:u32)->bool{
 // it does NOT prove that it is visibly above the game during those seconds.
 // Reassert a *temporary* topmost position while the curtain is active.
 // No SetForegroundWindow, focus stealing, D3D9 hook or WndProc subclassing.
+// The optional US/Wine background-minimize experiment must not remap the
+// black transition curtain over another Linux window if the AVI finishes
+// during Alt+Tab; native Windows FR behavior remains unchanged.
+fn should_promote_curtain_for_focus(us_wine_virtual:bool,game_active:bool)->bool{
+    !us_wine_virtual||game_active
+}
 unsafe fn promote_curtain(h:&mut NativeHost)->i32 {
     if IsWindow(h.host as *mut c_void)==0{return 0;}
+    if us_wine_virtual_mci_profile(){
+        let foreground=GetForegroundWindow();
+        let active=foreground==h.game as *mut c_void
+            || foreground==h.host as *mut c_void;
+        if !should_promote_curtain_for_focus(true,active){
+            video_log("US_WINE_CURTAIN_BACKGROUND skipped_raise=1 foreground_external=1 host_remains_hidden=1");
+            return 0;
+        }
+    }
     let promoted=SetWindowPos(h.host as *mut c_void,(-1isize) as *mut c_void,
         0,0,0,0,
         SWP_NOACTIVATE|SWP_NOMOVE|SWP_NOSIZE|SWP_SHOWWINDOW);
@@ -2149,6 +2164,13 @@ mod fullscreen_tests {
         assert!(experimental_movie_focus_profiles(false,true));
         assert!(!experimental_movie_focus_profiles(false,false));
         assert!(experimental_movie_focus_profiles(true,true));
+    }
+    #[test]
+    fn us_wine_black_curtain_never_reappears_over_foreground_application(){
+        assert!(!should_promote_curtain_for_focus(true,false));
+        assert!(should_promote_curtain_for_focus(true,true));
+        assert!(should_promote_curtain_for_focus(false,false),
+            "native FR transition must remain identical");
     }
     #[test]
     fn us_wine_minimizes_game_only_while_inactive_for_mci_video(){
