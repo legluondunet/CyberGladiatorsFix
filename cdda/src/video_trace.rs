@@ -1813,7 +1813,7 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
 fn experimental_movie_focus_profiles(native_fr:bool,us_wine_virtual:bool)->bool{
     native_fr||us_wine_virtual
 }
-pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
+pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString>{
     if result!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
         || !gameframe_first_present_handoff(){return None;}
     let native_fr=std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
