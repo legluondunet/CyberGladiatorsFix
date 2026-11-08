@@ -29,6 +29,8 @@ pub unsafe extern "C" fn cyber_virtual_ddraw_trace(message:*const c_char){
 fn super_log_virtual(line:&str){
     let profile=if std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1"){
         "US_WINE_VIRTUAL_DDRAW"
+    }else if std::env::var("CYBER_US_NATIVE_VIRTUAL_DDRAW").as_deref()==Ok("1"){
+        "US_NATIVE_VIRTUAL_DDRAW"
     }else{
         "FR_VIRTUAL_DDRAW"
     };
