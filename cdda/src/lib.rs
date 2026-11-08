@@ -27,12 +27,12 @@ pub unsafe extern "C" fn cyber_virtual_ddraw_trace(message:*const c_char){
     }
 }
 fn super_log_virtual(line:&str){
-    let profile=if std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1"){
-        "US_WINE_VIRTUAL_DDRAW"
-    }else if std::env::var("CYBER_US_NATIVE_VIRTUAL_DDRAW").as_deref()==Ok("1"){
-        "US_NATIVE_VIRTUAL_DDRAW"
-    }else{
-        "FR_VIRTUAL_DDRAW"
+    let edition=std::env::var("CYBER_GAME_EDITION");
+    let native_focus=std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
+    let profile=match (edition.as_deref(),native_focus){
+        (Ok("US"),false)=>"US_WINE_VIRTUAL_DDRAW",
+        (Ok("US"),true)=>"US_NATIVE_VIRTUAL_DDRAW",
+        _=>"FR_VIRTUAL_DDRAW",
     };
     log(&format!("{profile} {line}"));
 }

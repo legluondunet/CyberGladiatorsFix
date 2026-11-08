@@ -181,21 +181,22 @@ unsafe fn hook_ddraw_create()->bool{
 #[link_section=".CRT$XCU"]
 static EARLY_FORWARD_INIT:unsafe extern "C" fn()=initialize;
 
+// Pure classifier shared by the early CRT loader and its unit tests.
+// Never enables the FR virtualization on Wine before a dedicated FR test.
+fn owned_virtual_profiles(requested:bool,fr:bool,us:bool,wine:bool)->(bool,bool,bool){
+    (requested && fr && !wine,
+     requested && us && wine,
+     requested && us && !wine)
+}
 unsafe extern "C" fn initialize(){
     INITIALIZED.store(true,Ordering::Release);
     if !env_is_one(b"CYBER_GAMEFRAME_TEST\0"){return;}
     let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
     let wine=!ntdll.is_null()
         &&!GetProcAddress(ntdll,b"wine_get_version\0".as_ptr().cast()).is_null();
-    let native_fr_virtual=!wine
-        &&env_is_one(b"CYBER_FR_VIRTUAL_DDRAW\0")
-        &&env_is_fr();
-    let us_wine_virtual=wine
-        &&env_is_one(b"CYBER_US_WINE_VIRTUAL_DDRAW\0")
-        &&env_is_us();
-    let us_native_virtual=!wine
-        &&env_is_one(b"CYBER_US_NATIVE_VIRTUAL_DDRAW\0")
-        &&env_is_us();
+    let (native_fr_virtual,us_wine_virtual,us_native_virtual)=owned_virtual_profiles(
+        env_is_one(b"CYBER_VIRTUAL_DDRAW\0"),env_is_fr(),env_is_us(),wine
+    );
     if native_fr_virtual || us_wine_virtual || us_native_virtual {
         // All experimental profiles use the same project-owned COM
         // implementation, without mutating DirectDraw system vtables or
@@ -333,6 +334,15 @@ pub fn report_once(){
 #[cfg(test)]
 mod tests{
     use super::*;
+    #[test]
+    fn one_owned_com_switch_selects_edition_and_runtime_safely(){
+        assert_eq!(owned_virtual_profiles(true,true,false,false),(true,false,false));
+        assert_eq!(owned_virtual_profiles(true,false,true,false),(false,false,true));
+        assert_eq!(owned_virtual_profiles(true,false,true,true),(false,true,false));
+        assert_eq!(owned_virtual_profiles(true,true,false,true),(false,false,false));
+        assert_eq!(owned_virtual_profiles(false,false,true,true),(false,false,false));
+        assert_eq!(owned_virtual_profiles(true,false,false,false),(false,false,false));
+    }
     #[test]
     fn desktop_geometry_requires_valid_native_dimensions(){
         assert_eq!(parse_native_desktop("1920x1080"),Some((1920,1080)));

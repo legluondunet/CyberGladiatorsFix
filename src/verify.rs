@@ -213,9 +213,17 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
     cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_virtual_focus{"1"}else{"0"});
     // A diagnostic child flag is always explicitly set, never inherited
     // from the caller. The normal user launch takes the validated #168 path.
-    cmd.env("CYBER_FR_VIRTUAL_DDRAW",if fr_borderless_test{"1"}else{"0"});
-    cmd.env("CYBER_US_WINE_VIRTUAL_DDRAW",if us_wine_virtual_test{"1"}else{"0"});
-    cmd.env("CYBER_US_NATIVE_VIRTUAL_DDRAW",if us_native_virtual_test{"1"}else{"0"});
+    // A single owned-COM/MCI switch is used for every verified edition
+    // and host OS. Edition and native/Wine focus policies remain separate.
+    let virtual_ddraw=fr_borderless_test || us_wine_virtual_test || us_native_virtual_test;
+    cmd.env("CYBER_VIRTUAL_DDRAW",if virtual_ddraw{"1"}else{"0"});
+    // Do not allow stale edition-specific A/B flags from the parent process.
+    for key in ["CYBER_FR_VIRTUAL_DDRAW","CYBER_US_WINE_VIRTUAL_DDRAW",
+        "CYBER_US_NATIVE_VIRTUAL_DDRAW"] {cmd.env_remove(key);}
+    crate::show(&format!(
+        "VIRTUAL_DDRAW_RUNTIME enabled={} edition={edition} wine={} shared_owned_COM=1 shared_MCI=1 experimental=1",
+        u8::from(virtual_ddraw),u8::from(!diagnostics::is_native_windows())
+    ),root);
     crate::show(&format!(
         "FR_VIRTUAL_DDRAW enabled={} native_FR={} opt_in=1 system_ddraw_vtable_unchanged=1 no_external_wrapper=1",
         u8::from(fr_borderless_test),u8::from(native_fr_alt_tab)
@@ -261,7 +269,7 @@ pub fn launch_gameframe(root:&Path,fr_borderless_test:bool,us_wine_virtual_test:
     // The native Windows loader always leaves this interception inactive.
     // The historical Wine forwarding must remain disabled for either
     // experimental US COM-owned profile; on native Windows it is inert.
-    let wine_forward=!us_wine_virtual_test && !us_native_virtual_test;
+    let wine_forward=!virtual_ddraw;
     cmd.env("CYBER_WINE_DDRAW_NATIVE_FORWARD",if wine_forward{"1"}else{"0"});
     crate::show(&format!(
         "WINE_DDRAW_NATIVE_FORWARD requested={} activation=wine_only forwarding=real_DirectDraw_when_intercepted game_only=1 disabled_for_us_virtual_ab={}",

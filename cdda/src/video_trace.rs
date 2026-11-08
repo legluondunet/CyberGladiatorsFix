@@ -429,18 +429,17 @@ unsafe extern "system" fn black_host_proc(
 fn virtual_mci_profile(native_fr:bool,us_wine_virtual:bool)->bool{
     native_fr||us_wine_virtual
 }
+fn owned_virtual_ddraw_requested()->bool{
+    std::env::var("CYBER_VIRTUAL_DDRAW").as_deref()==Ok("1")
+}
 fn us_wine_virtual_mci_profile()->bool{
     std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
-        && std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1")
-        && std::env::var("CYBER_US_NATIVE_VIRTUAL_DDRAW").as_deref()!=Ok("1")
-        && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        && owned_virtual_ddraw_requested()
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1")
 }
 fn us_native_virtual_mci_profile()->bool{
     std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
-        && std::env::var("CYBER_US_NATIVE_VIRTUAL_DDRAW").as_deref()==Ok("1")
-        && std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()!=Ok("1")
-        && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        && owned_virtual_ddraw_requested()
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
 }
 fn virtual_mci_log_prefix()->&'static str{
@@ -449,7 +448,7 @@ fn virtual_mci_log_prefix()->&'static str{
     else{"FR_VIRTUAL_VIDEO"}
 }
 fn virtual_mci_surface_enabled()->bool{
-    let fr=std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
+    let fr=owned_virtual_ddraw_requested()
         && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
     smooth_enabled() && virtual_mci_profile(fr||us_native_virtual_mci_profile(),us_wine_virtual_mci_profile())
@@ -1234,7 +1233,7 @@ fn mci_refresh_is_due(now:Instant,last:&mut Option<Instant>,interval:Duration)->
 pub fn virtual_fr_movie_repaint_target(command:&str,code:u32,reply:&str)->Option<usize>{
     if code!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
         || !reply.trim().eq_ignore_ascii_case("playing")
-        || std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        || !owned_virtual_ddraw_requested()
         || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
         || !gameframe_first_present_handoff()
         || !KEY_FILTER_ACTIVE.load(Ordering::Acquire){
