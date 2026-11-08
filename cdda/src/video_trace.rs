@@ -1485,8 +1485,9 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
         || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1"){
         return None;
     }
-    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
-    let h=guard.as_mut()?;
+    // Snapshot under the mutex and release it BEFORE synchronous Win32
+    // SetWindowPos: native window messages can reenter the WinMM bridge.
+    let h=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
     unsafe {
         if h.owner_thread!=GetCurrentThreadId()
             || IsWindow(h.host as *mut c_void)==0
@@ -1522,7 +1523,9 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
                 "FR_NATIVE_VIDEO_FOCUS active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1",
                 u8::from(active),foreground as usize,host_result,game_result
             ));
-            h.native_fr_last_active=Some(active);
+            if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
+                if current.host==h.host {current.native_fr_last_active=Some(active);}
+            }
         }
         let (width,height)=(GetSystemMetrics(0),GetSystemMetrics(1));
         let Some((x,y,w,vh))=fit_4_3(width,height) else{return None;};
@@ -1557,8 +1560,12 @@ pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
             "FR_NATIVE_VIDEO_RESIZED old_host={}x{} new_host={}x{} video_4_3=({x},{y} {w}x{vh}) active={} mode_change=none no_activate=1",
             current_width,current_height,width,height,u8::from(active)
         ));
-        h.video_width=w;
-        h.video_height=vh;
+        if let Some(current)=video_host().lock().unwrap_or_else(|e|e.into_inner()).as_mut(){
+            if current.host==h.host {
+                current.video_width=w;
+                current.video_height=vh;
+            }
+        }
         CString::new(format!("put movie destination at 0 0 {w} {vh}")).ok()
     }
 }
