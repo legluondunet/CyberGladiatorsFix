@@ -45,6 +45,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "GameFrame fullscreen stabilization patch failed; upstream source drift?" }
           python tools/gameframe/patch_first_present.py third_party/game-frame
           if ($LASTEXITCODE -ne 0) { throw "GameFrame first GL present patch failed; upstream source drift?" }
+          python tools/gameframe/patch_menu_signature.py third_party/game-frame
+          if ($LASTEXITCODE -ne 0) { throw "GameFrame menu signature patch failed; upstream source drift?" }
 
       - name: Compile upstream Glide wrapper using MSVC and decorated Win32 exports
         shell: pwsh
