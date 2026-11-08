@@ -194,6 +194,15 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     // Child profile is derived from a verified original EXE backup, never
     // from an inherited caller variable or a filename alone.
     cmd.env("CYBER_GAME_EDITION",edition);
+    // Do not change the already-validated US or Wine/Proton window handling.
+    // Scope Alt+Tab focus/z-order recovery to the reported native-Windows FR
+    // case. Always override inherited environment variables.
+    let native_fr_alt_tab=edition=="FR" && diagnostics::is_native_windows();
+    cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",if native_fr_alt_tab{"1"}else{"0"});
+    crate::show(&format!(
+        "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
+        u8::from(native_fr_alt_tab)
+    ),root);
     cmd.env("DXVK_LOG_PATH","none");
     for key in [
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_HOOK_DISABLED","CYBER_GLIDE_PASSTHRU_NOOP",
