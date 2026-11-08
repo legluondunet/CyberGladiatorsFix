@@ -208,7 +208,7 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
 /// renderer. Legacy nGlide diagnostics are kept separately for developers.
-fn user_gameframe_launch(root:&Path)->Result<(),String>{
+fn user_gameframe_launch(root:&Path,fr_borderless_test:bool)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
@@ -224,7 +224,7 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
     }else{
         None
     };
-    let child=verify::launch_gameframe(root)?;
+    let child=verify::launch_gameframe(root,fr_borderless_test)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
@@ -341,12 +341,15 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--launch")=>return user_launch(root,false,false,false),
         [one,two] if one.to_str()==Some("--launch")
             && (two.to_str()==Some("--gameframe")||two.to_str()==Some("--gameframe-test"))=>
-            return user_gameframe_launch(root),
+            return user_gameframe_launch(root,false),
+        [one,two] if one.to_str()==Some("--launch")
+            && two.to_str()==Some("--fr-borderless-test")=>
+            return user_gameframe_launch(root,true),
         // Preserve original validated #37 invocation as a compatibility alias.
         [one,two,three] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--gameframe-test")
             && three.to_str()==Some("--avi-first-present-handoff")=>
-            return user_gameframe_launch(root),
+            return user_gameframe_launch(root,false),
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--smooth-video-test")=>
             return user_launch(root,false,false,true),
         [one,two,three] if one.to_str()==Some("--launch")
