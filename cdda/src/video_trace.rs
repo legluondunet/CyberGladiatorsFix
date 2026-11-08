@@ -869,6 +869,25 @@ fn gameframe_popup_style(style:u32)->u32{
 }
 fn gameframe_prepare_window(phase:&str){
     if std::env::var("CYBER_GAMEFRAME_TEST").as_deref()!=Ok("1"){return;}
+    // Native FR DirectDraw still owns the physical 640x480x16 mode at
+    // "close avivideo". Expanding the *game* HWND to the prelaunch logical
+    // desktop here was premature: the game resizes it back to 656x519
+    // before the first real GL SwapBuffers, so GameFrame immediately
+    // expands it AGAIN. Keep the black AVI host in place, and let the
+    // already validated GameFrame first-present guard perform exactly one
+    // final fullscreen adjustment immediately before that GL swap.
+    //
+    // This is solely a WINDOW sizing change, not a DirectDraw mode hook.
+    // Wine/Proton and US keep their previously validated early handoff.
+    if phase=="after_MCI_close_before_first_gl_present"
+        && gameframe_first_present_handoff()
+        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
+        && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
+        && unsafe{GetSystemMetrics(0)}==640
+        && unsafe{GetSystemMetrics(1)}==480 {
+        video_log("GAMEFRAME_HANDOFF_PREPARE stage=after_MCI_close_before_first_gl_present deferred_to_first_GL_swap=1 reason=native_FR_current_640x480 skip_redundant_SetWindowPos=1 display_mode_change=0");
+        return;
+    }
     let raw=std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").ok();
     let Some((desktop_w,desktop_h))=gameframe_prelaunch_desktop(raw.as_deref()) else{
         video_log("GAMEFRAME_HANDOFF_PREPARE SKIP invalid_prelaunch_desktop_size");
