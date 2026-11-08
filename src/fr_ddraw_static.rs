@@ -90,10 +90,41 @@ fn candidates(data:&[u8],sections:&[CodeSection])->Vec<Candidate>{
     }
     found
 }
-fn hex_window(data:&[u8],raw:usize)->String{
-    // A bounded instruction-adjacent excerpt, not the game EXE itself.
-    let start=raw.saturating_sub(24);
-    let end=raw.saturating_add(12).min(data.len());
+/// Locate direct x86 CALL rel32 instructions targeting the verified
+/// function beginning at VA 0x00405EB7. Byte-pattern hits are *candidates*,
+/// not a control-flow proof without a full x86 decoder.
+fn rel32_callers(data:&[u8],sections:&[CodeSection],target:u32)->Vec<Candidate>{
+    let mut found=Vec::new();
+    for sec in sections{
+        let Some(code)=data.get(sec.raw..sec.raw+sec.size) else{continue;};
+        for off in 0..code.len().saturating_sub(4){
+            if code[off]!=0xe8{continue;}
+            let Some(bytes)=code.get(off+1..off+5) else{continue;};
+            let delta=i32::from_le_bytes(bytes.try_into().unwrap()) as i64;
+            let va=sec.image_base as i64+sec.rva as i64+off as i64;
+            if va+5+delta!=target as i64{continue;}
+            let Ok(va)=u32::try_from(va) else{continue;};
+            found.push(Candidate{raw:sec.raw+off,va,kind:"call_rel32_to_mode_wrapper"});
+        }
+    }
+    found
+}
+/// A specific x86 prologue and COM-style indirect call observed in the
+/// SHA-256-verified original FR EXE. The apparent COM object type cannot
+/// be proven solely from the bytes; the caller arguments offer more context.
+fn likely_mode_wrapper(data:&[u8])->bool{
+    const RAW:usize=0x54b7;
+    const EXPECTED:&[u8]=&[
+        0x55,0x8b,0xec,0x51,0x53,0x51,0x52,0x50,
+        0xa1,0x8c,0x72,0x44,0x00,0x50,0x8b,0x10,
+        0xff,0x52,0x54,
+    ];
+    data.get(RAW..RAW+EXPECTED.len())==Some(EXPECTED)
+}
+fn hex_window(data:&[u8],raw:usize,before:usize,after:usize)->String{
+    // Small, bounded instruction-adjacent excerpt. Never log the game EXE.
+    let start=raw.saturating_sub(before);
+    let end=raw.saturating_add(after).min(data.len());
     data[start..end].iter().map(|b|format!("{b:02x}"))
         .collect::<Vec<_>>().join(" ")
 }
@@ -132,19 +163,55 @@ pub fn inspect(root:&Path,game_exe:&Path){
         return;
     };
     let sites=candidates(&data,&sections);
+    let calls:Vec<_>=sites.iter().filter(|site|site.kind=="call_vtable_slot21").collect();
+    let loads:Vec<_>=sites.iter().filter(|site|site.kind=="mov_vtable_slot21").collect();
     report(root,&format!(
-        "status=ok original_sha256_verified=1 executable_sections={} slot21_candidates={} interpretation=possible_x86_vtable_call_or_load read_only=1",
-        sections.len(),sites.len()
+        "status=ok original_sha256_verified=1 executable_sections={} slot21_candidates={} slot21_calls={} slot21_loads={} interpretation=possible_x86_vtable_call_or_load read_only=1",
+        sections.len(),sites.len(),calls.len(),loads.len()
     ));
-    // Keep the unified log concise. Count unshown candidates explicitly.
-    for candidate in sites.iter().take(24){
+    // Call sites are more informative than arbitrary reads of a struct's
+    // +0x54 field. Report every call (up to 64), including any formerly
+    // hidden by the original top-24 candidate cutoff.
+    for site in calls.iter().take(64){
         report(root,&format!(
-            "site={:#010x} raw={:#08x} opcode={} nearby_bytes={}",
-            candidate.va,candidate.raw,candidate.kind,hex_window(&data,candidate.raw)
+            "call_site={:#010x} raw={:#08x} opcode={} context_bytes={}",
+            site.va,site.raw,site.kind,hex_window(&data,site.raw,96,48)
         ));
     }
-    if sites.len()>24{
-        report(root,&format!("additional_candidates_omitted={}",sites.len()-24));
+    if calls.len()>64{
+        report(root,&format!("additional_call_candidates_omitted={}",calls.len()-64));
+    }
+    if likely_mode_wrapper(&data){
+        report(root,
+            "mode_wrapper_candidate=0x00405eb7 indirect_call=0x00405ec7 object_global=0x0044728c pushed_argument_registers=EAX,EDX,ECX probable_api=IDirectDraw_v1_SetDisplayMode proof=not_yet_verified");
+        let callers=rel32_callers(&data,&sections,0x00405eb7);
+        report(root,&format!(
+            "mode_wrapper_direct_caller_candidates={} scan=E8_rel32 read_only=1",
+            callers.len()
+        ));
+        for site in callers.iter().take(48){
+            report(root,&format!(
+                "wrapper_caller={:#010x} raw={:#08x} nearby_bytes={}",
+                site.va,site.raw,hex_window(&data,site.raw,80,24)
+            ));
+        }
+        if callers.len()>48{
+            report(root,&format!(
+                "additional_wrapper_callers_omitted={}",callers.len()-48
+            ));
+        }
+    }else{
+        report(root,"mode_wrapper_candidate=unverified_signature no_action=1");
+    }
+    // Retain representative non-call sites as examples only.
+    for site in loads.iter().take(6){
+        report(root,&format!(
+            "load_sample={:#010x} raw={:#08x} opcode={} nearby_bytes={}",
+            site.va,site.raw,site.kind,hex_window(&data,site.raw,24,12)
+        ));
+    }
+    if loads.len()>6{
+        report(root,&format!("additional_load_samples_omitted={}",loads.len()-6));
     }
 }
 #[cfg(test)]
@@ -159,6 +226,34 @@ mod tests{
         assert_eq!(possible_slot21(&[0xff,0x50,0x50],0),None);
         assert_eq!(possible_slot21(&[0xff,0x10,0x54],0),None);
         assert_eq!(possible_slot21(&[0xff,0x90,0x54,0,0],0),None);
+    }
+    #[test]
+    fn rel32_scan_finds_call_to_wrapper_but_no_other_call(){
+        let mut image=vec![0u8;0x300];
+        let sec=CodeSection{
+            raw:0x100,size:0x80,rva:0x1000,image_base:0x400000
+        };
+        // VA 0x401020 -> 0x401010: E8 followed by signed -0x15.
+        image[0x120..0x125].copy_from_slice(&[0xe8,0xeb,0xff,0xff,0xff]);
+        image[0x130..0x135].copy_from_slice(&[0xe8,0,0,0,0]);
+        let list=rel32_callers(&image,&[sec],0x401010);
+        assert_eq!(list,vec![Candidate{
+            raw:0x120,va:0x401020,kind:"call_rel32_to_mode_wrapper"
+        }]);
+    }
+    #[test]
+    fn mode_wrapper_requires_exact_verified_bytes(){
+        let mut data=vec![0u8;0x54d0];
+        assert!(!likely_mode_wrapper(&data));
+        let sig:&[u8]=&[
+            0x55,0x8b,0xec,0x51,0x53,0x51,0x52,0x50,
+            0xa1,0x8c,0x72,0x44,0x00,0x50,0x8b,0x10,
+            0xff,0x52,0x54
+        ];
+        data[0x54b7..0x54b7+sig.len()].copy_from_slice(sig);
+        assert!(likely_mode_wrapper(&data));
+        data[0x54c7]=0x90;
+        assert!(!likely_mode_wrapper(&data));
     }
     #[test]
     fn rejects_random_bytes_and_invalid_pe_headers(){
