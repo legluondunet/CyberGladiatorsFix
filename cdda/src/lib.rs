@@ -410,6 +410,11 @@ pub unsafe extern "system" fn mciSendStringA(
             let code=native(destination.as_ptr(),std::ptr::null_mut(),0,std::ptr::null_mut());
             video_trace::native_fr_resize_mci_result(code);
         }
+        // During the experimental non-exclusive FR mode only, the legacy
+        // polling loop no longer leaves the original game HWND unresponsive
+        // to Windows for the full MCI movie. Dispatch occurs outside every
+        // WinMM/host mutex, and the normal verified launch is unaffected.
+        video_trace::pump_virtual_avi_messages(text,result);
         if result!=0 && substitute.is_some() && video_trace::movie_open_game_hwnd_for_retry(text){
             // An unsupported child-style MCI driver must not prevent game
             // startup. Revert to the original AVI open and log the fallback.
