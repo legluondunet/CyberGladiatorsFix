@@ -213,12 +213,26 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
     settings::ensure(&game)?;
     let enable_cdda=settings::read_cdda(&game)?;
     let mut previous_glide=gameframe::Session::begin(root,&game)?;
+    // Start before spawning CYBER.EXE: its DirectDraw initialization may
+    // switch the physical desktop mode before the first MCI AVI event.
+    // This is passive, native-Windows/FR-only sampling; no hook or graphics
+    // setting changes. A failed worker never prevents the working launch.
+    let native_fr=diagnostics::is_native_windows()
+        && crate::fr_patch::owns(&game.join("cyber.exe")).unwrap_or(false);
+    let display_watch=if native_fr{
+        diagnostics::DisplayModeWatch::start(root)
+    }else{
+        None
+    };
     let child=verify::launch_gameframe(root)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
     ),root);
     let result=wait_game(child,root);
+    // Stop/join the read-only sampler before the final launcher snapshot.
+    // It has no authority to restore or modify the user's desktop mode.
+    drop(display_watch);
     // Native FR's retail game switches Windows to 640x480x16 during its AVI.
     // Alt+Tab restores geometry but can leave the current mode at 16 bpp.
     // Observe the mode *after the process exits* before considering any
