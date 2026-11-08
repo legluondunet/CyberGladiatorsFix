@@ -345,9 +345,9 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one,two] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--fr-borderless-test")=>
             return user_gameframe_launch(root,true,false),
-        // Compare the real project-owned DirectDraw v1 COM proxy against the
-        // verified Wine-only SetDisplayMode forwarding on an authentic US EXE.
-        // This must never change the ordinary launch or native Windows path.
+        // Compare the project-owned DirectDraw v1 COM device and shared
+        // MCI surface with the known-good US path on both Wine and Windows.
+        // The normal one-click launch stays unchanged on both platforms.
         [one,two] if one.to_str()==Some("--launch")
             && two.to_str()==Some("--us-virtual-ddraw-test")=>
             return user_gameframe_launch(root,false,true),
