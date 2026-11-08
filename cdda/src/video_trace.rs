@@ -284,6 +284,7 @@ struct NativeHost {
     surface:usize,
     first_frame_cover:usize, // smooth test only; opaque sibling above video
     first_frame_cover_started:Option<Instant>,
+    native_fr_last_active:Option<bool>,
     game:usize,
     owner_thread:u32,
     video_width:i32,
@@ -672,7 +673,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         info.monitor.left,info.monitor.top,screen_w,screen_h,u8::from(smooth)));
     Some(NativeHost{
         host:host as usize,surface:surface as usize,
-        first_frame_cover,first_frame_cover_started:None,
+        first_frame_cover,first_frame_cover_started:None,native_fr_last_active:None,
         game,owner_thread:GetCurrentThreadId(),
         video_width:w,video_height:h,
         keyboard_hook:0,mouse_hook:0,
@@ -1468,6 +1469,103 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
     }
     None
 }
+
+/// Native Windows FR switches the desktop out of the game's 640x480 mode
+/// during Alt+Tab. The initial host was correctly sized to 640x480, but
+/// without adapting it and the MCI destination on mode restoration the
+/// movie remains a small window. Run only after the ORIGINAL MCI status
+/// request has returned on the owner's thread; never hook DirectDraw or
+/// change the display mode ourselves.
+/// Returns a native MCI destination command to forward through the real
+/// system WinMM export, without recursively entering our own interceptor.
+pub fn native_fr_refresh_during_movie(command:&str,result:u32)->Option<CString>{
+    if result!=0 || !command.trim().eq_ignore_ascii_case("status movie mode")
+        || !gameframe_first_present_handoff()
+        || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
+        || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1"){
+        return None;
+    }
+    let mut guard=video_host().lock().unwrap_or_else(|e|e.into_inner());
+    let h=guard.as_mut()?;
+    unsafe {
+        if h.owner_thread!=GetCurrentThreadId()
+            || IsWindow(h.host as *mut c_void)==0
+            || IsWindow(h.surface as *mut c_void)==0 {
+            return None;
+        }
+        // The host is a NOACTIVATE topmost window, while the actual
+        // foreground belongs to the original game. On focus loss, lower
+        // BOTH windows so neither covers the selected application. Do not
+        // activate or minimize either window.
+        let foreground=GetForegroundWindow();
+        let active=foreground==h.game as *mut c_void
+            || foreground==h.host as *mut c_void;
+        if h.native_fr_last_active!=Some(active){
+            const NO_MOVE_SIZE_ACTIVATE:u32=SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE;
+            let host=h.host as *mut c_void;
+            let game=h.game as *mut c_void;
+            let (host_result,game_result)=if active{
+                (SetWindowPos(host,(-1isize) as *mut c_void,
+                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE),-1)
+            }else{
+                let _=SetWindowPos(host,(-2isize) as *mut c_void,
+                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
+                let host_result=SetWindowPos(host,1usize as *mut c_void,
+                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
+                let _=SetWindowPos(game,(-2isize) as *mut c_void,
+                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
+                let game_result=SetWindowPos(game,1usize as *mut c_void,
+                    0,0,0,0,NO_MOVE_SIZE_ACTIVATE);
+                (host_result,game_result)
+            };
+            video_log(&format!(
+                "FR_NATIVE_VIDEO_FOCUS active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1",
+                u8::from(active),foreground as usize,host_result,game_result
+            ));
+            h.native_fr_last_active=Some(active);
+        }
+        let (width,height)=(GetSystemMetrics(0),GetSystemMetrics(1));
+        let Some((x,y,w,vh))=fit_4_3(width,height) else{return None;};
+        let mut previous=WinRect::default();
+        if GetWindowRect(h.host as *mut c_void,&mut previous)==0{return None;}
+        let current_width=previous.right-previous.left;
+        let current_height=previous.bottom-previous.top;
+        if current_width==width && current_height==height
+            && h.video_width==w && h.video_height==vh {
+            return None;
+        }
+        // Preserve current z-order (including Alt+Tab background state).
+        // Never show the black first-frame cover again after it is hidden.
+        let no_focus_zorder=SWP_NOZORDER|SWP_NOACTIVATE;
+        let host_ok=SetWindowPos(h.host as *mut c_void,std::ptr::null_mut(),
+            0,0,width,height,no_focus_zorder);
+        if host_ok==0 {
+            video_log(&format!("FR_NATIVE_VIDEO_RESIZE_FAILED stage=host win32={}",GetLastError()));
+            return None;
+        }
+        let surface_ok=SetWindowPos(h.surface as *mut c_void,std::ptr::null_mut(),
+            x,y,w,vh,no_focus_zorder);
+        if surface_ok==0 {
+            video_log(&format!("FR_NATIVE_VIDEO_RESIZE_FAILED stage=surface win32={}",GetLastError()));
+            return None;
+        }
+        if h.first_frame_cover!=0 && IsWindow(h.first_frame_cover as *mut c_void)!=0{
+            let _=SetWindowPos(h.first_frame_cover as *mut c_void,std::ptr::null_mut(),
+                x,y,w,vh,no_focus_zorder);
+        }
+        video_log(&format!(
+            "FR_NATIVE_VIDEO_RESIZED old_host={}x{} new_host={}x{} video_4_3=({x},{y} {w}x{vh}) active={} mode_change=none no_activate=1",
+            current_width,current_height,width,height,u8::from(active)
+        ));
+        h.video_width=w;
+        h.video_height=vh;
+        CString::new(format!("put movie destination at 0 0 {w} {vh}")).ok()
+    }
+}
+pub fn native_fr_resize_mci_result(code:u32){
+    video_log(&format!("FR_NATIVE_VIDEO_MCI_DESTINATION result={code}"));
+}
+
 pub fn on_4_3_command_result(text:&str,rewritten:bool,result:u32){
     if !video_enabled(){return;}
     let command=text.trim();
@@ -1551,6 +1649,12 @@ mod fullscreen_tests {
         assert_eq!(gameframe_prelaunch_desktop(None),None);
         assert_eq!(gameframe_popup_style(0x14ce0000),0x940a0000);
         assert_eq!(gameframe_popup_style(0x940a0000),0x940a0000);
+    }
+    #[test]
+    fn native_fr_avi_geometry_adapts_from_exclusive_mode_to_desktop(){
+        assert_eq!(fit_4_3(640,480),Some((0,0,640,480)));
+        assert_eq!(fit_4_3(1536,960),Some((128,0,1280,960)));
+        assert_eq!(fit_4_3(1920,1080),Some((240,0,1440,1080)));
     }
     #[test]
     fn gameframe_avi_host_separates_native_fr_and_wine_display_modes(){
