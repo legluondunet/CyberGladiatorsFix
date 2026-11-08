@@ -262,6 +262,7 @@ extern "system" {
     fn GetWindowLongA(hwnd:*mut c_void,index:i32)->i32;
     fn SetWindowLongA(hwnd:*mut c_void,index:i32,value:i32)->i32;
     fn GetForegroundWindow()->*mut c_void;
+    fn GetSystemMetrics(index:i32)->i32;
     fn IsIconic(hwnd:*mut c_void)->i32;
     fn SendInput(count:u32,inputs:*const WinInput,input_size:i32)->u32;
     fn GetClassLongA(hwnd:*mut c_void,index:i32)->u32;
@@ -1290,8 +1291,24 @@ fn early_black_host() {
 /// Called before the native 'open avivideo': the earliest verified moment
 /// in the game's video sequence, before the WinMM backend can display an
 /// initial gray surface. This is only enabled for --smooth-video-test.
+// Passive geometry-only telemetry for the French native-Windows scenario.
+// Never changes the display or hooks the DirectDraw COM object.
+fn trace_fr_screen(stage:&str){
+    if !smooth_enabled() || std::env::var("CYBER_GAME_EDITION").as_deref()!=Ok("FR")
+        || std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1"){
+        return;
+    }
+    unsafe{
+        video_log(&format!(
+            "FR_NATIVE_SCREEN stage={stage} reported_screen={}x{} captured_desktop={} directdraw_hook=disabled",
+            GetSystemMetrics(0),GetSystemMetrics(1),
+            std::env::var("CYBER_GAMEFRAME_DESKTOP_SIZE").as_deref().unwrap_or("missing")
+        ));
+    }
+}
 pub fn before_mci_open(command:&str){
     if smooth_enabled() && command.trim().eq_ignore_ascii_case("open avivideo"){
+        trace_fr_screen("before_avivideo_open");
         timing("PRE_MCI_AVIVIDEO_BLACK_REQUEST");
         early_black_host();
     }
@@ -1338,6 +1355,7 @@ pub fn before_mci_play(command:&str) {
         let _=InvalidateRect(h.host as *mut c_void,std::ptr::null(),1);
         let _=UpdateWindow(h.host as *mut c_void);
     }
+    trace_fr_screen("before_video_play");
     timing("PRE_VIDEO_BLACK_BEGIN");
     video_log(&format!("PRE_VIDEO_BLACK_HOLD duration_ms={VIDEO_LEAD_IN_MS}"));
     std::thread::sleep(Duration::from_millis(VIDEO_LEAD_IN_MS));
