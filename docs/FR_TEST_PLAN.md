@@ -86,6 +86,33 @@ resolution request. They narrow down when the mode changes so that a later
 native-Windows-specific remedy can be designed and tested without disrupting
 the validated Wine/Proton and US paths.
 
+## Native Windows FR — reduce redundant window resizing during AVI handoff
+
+This experiment is deliberately narrower than attempting to replace the
+legacy DirectDraw `640×480×16` display mode. The failed 32-bit-native-mode
+experiment has been removed. On native FR only, when the system is **still
+640×480** at `close avivideo`, the WinMM bridge no longer expands the game
+HWND prematurely to the *prelaunch* desktop dimensions: GameFrame was
+immediately resizing the HWND a second time just before the first real
+OpenGL `SwapBuffers`. The black MCI video host stays in place until
+GameFrame's first-present guard performs the single necessary fullscreen
+correction. Wine/Proton, US and restored-fullscreen-at-close paths are unchanged.
+
+A single native FR test without Alt+Tab is enough:
+- Compare the visible transitions from intro → menu with the earlier
+  successful #140/#163 runs. Note any desktop flashes, large/small windows,
+  or visible repeated window resizing.
+- Expect `GAMEFRAME_HANDOFF_PREPARE ... deferred_to_first_GL_swap=1`
+  after the AVI closes while `640×480` is active, and **no** early
+  `SetWindowPos=1` `GAMEFRAME_HANDOFF_PREPARE` for that same stage.
+- Expect exactly one `GAMEFRAME_FIRST_PRESENT_PREPARE ... SetWindowPos=1`
+  when it is needed, before the first OpenGL swap; then
+  `GAMEFRAME_FIRST_GL_HANDOFF notified=1`, 3D around 60 FPS, a clean exit,
+  and full restoration of the original Windows display mode.
+- An actual **Windows display-mode** switch to/from 640×480×16 is still
+  expected; this change removes one redundant **window resize**, not the
+  separate physical display-mode switch. Do not claim the latter is solved.
+
 ## Group D — unchanged US edition
 
 Repeat a quick verified install/launch and video/FLAC/exit test with the known US retail edition in a separate directory. The US code path must continue to use its original file hashes, offsets, HWND and WndProc.
