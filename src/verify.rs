@@ -203,6 +203,12 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
         "GAMEFRAME_ALT_TAB_NATIVE edition={edition} enabled={} strategy=demote_TOPMOST_and_lower_on_focus_loss no_activation=1 no_minimize=1",
         u8::from(native_fr_alt_tab)
     ),root);
+    if native_fr_alt_tab {
+        crate::show(&format!(
+            "FR_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn {}",
+            diagnostics::prelaunch_display_modes()
+        ),root);
+    }
     cmd.env("DXVK_LOG_PATH","none");
     for key in [
         "CYBER_GLIDE_TRACE","CYBER_GLIDE_HOOK_DISABLED","CYBER_GLIDE_PASSTHRU_NOOP",
