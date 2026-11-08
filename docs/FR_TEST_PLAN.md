@@ -49,6 +49,13 @@ rather than only the video window changing size.
 4. Share only the unified `CyberGladiatorsFix.log`. Compare these markers:
    - `FR_DISPLAY_MODE_SNAPSHOT stage=before_game_spawn`: current versus
      registry Windows mode before the EXE runs (dimensions, bpp, refresh).
+   - `FR_STATIC_DDRAW`: read-only static scan of the SHA-256-authenticated
+     **original FR backup**, limited to executable PE32 sections. A candidate
+     `call_vtable_slot21` or `mov_vtable_slot21` means an x86 instruction
+     **might** access DirectDraw v1 slot 21 (+0x54), not proof that the instruction
+     executes or that the pointer belongs to IDirectDraw. Only 24 candidate
+     instruction excerpts are written to the unified log, never the EXE.
+     No executable modification, runtime hook, or display-mode call occurs.
    - `GAMEFRAME_FR_DISPLAY stage=before_grGlideInit`,
      `before_grSstOpen`, `after_grSstOpen`: screen geometry at the earliest
      intercepted Glide entry points.
