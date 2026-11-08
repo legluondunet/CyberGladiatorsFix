@@ -2,7 +2,7 @@ CyberGladiatorsFix — Windows x64 distribution / release-candidate guide
 ==========================================================
 
 The package contains the Windows x64 launcher, LICENSE-GPL-3.0,
-LICENSE-APACHE and this README. The EXE embeds BOTH 32-bit Windows DLLs:
+LICENSE-APACHE, LICENSE-MIT (isomage 2.1.0) and this README. The EXE embeds BOTH 32-bit Windows DLLs:
   1. CyberGladiatorsFix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
   2. glide.dll — Apache-2.0 GameFrame Glide-to-OpenGL wrapper
 
@@ -123,7 +123,7 @@ The violet-grey font approximates the original menu typography; no
 proprietary game font texture is bundled.
 
 Before distributing, independently validate SHA256SUMS.txt against the EXE,
-both license notices and README.txt, and confirm exactly five files exist.
+all three license notices and README.txt, and confirm exactly six files exist.
 After extracting on Linux:
 
   sha256sum -c SHA256SUMS.txt
@@ -149,4 +149,6 @@ Third-party GameFrame pin:
   Apache-2.0, full license text in LICENSE-APACHE
 
 CyberGladiatorsFix license: GPL-3.0-or-later (LICENSE-GPL-3.0)
+Original isomage 2.1.0 ISO parser: MIT, copyright (c) 2025 Jack Danger
+  (upstream text in LICENSE-MIT)
 Authorship: legluondunet assisted by ChatGPT (OpenAI)
