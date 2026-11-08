@@ -113,6 +113,56 @@ A single native FR test without Alt+Tab is enough:
   expected; this change removes one redundant **window resize**, not the
   separate physical display-mode switch. Do not claim the latter is solved.
 
+## Native Windows FR — DirectDraw virtualization triage (cnc-ddraw)
+
+**Observed failure on 8 November 2026:** On a *disposable copy* of the
+working #166 French install, injecting a third-party `ddraw.dll` from
+cnc-ddraw leaves the physical desktop at `1920x1200x32` during intro
+initialization, but `GetSystemMetrics` reports `640x480`. MCI opens
+the movie successfully, then the unified log ends during the existing
+one-second `PRE_VIDEO_BLACK_HOLD`, before `MCI_PLAY_RETURNED`.
+**No crash code or failure location was captured.** It would be incorrect
+to assume that the real `play` command or Cinepak decode caused the
+failure: the process might have faulted asynchronously on another thread.
+
+### Minimal A/B isolation — no new binary / graphics patch
+
+Perform **one** second test only with the earlier official cnc-ddraw
+`ddraw.dll` and `ddraw.ini`, in the same *disposable copy* used for
+the failure. Leave the working #166 install unchanged.
+
+1. Edit `CyberGladiatorsFix/CyberGladiatorsFix.ini` **inside the game
+   subfolder**, not the game's binary `cyber.ini`.
+2. Set `[Video]` / `SkipIntro=1`. This uses the **existing supported**
+   intro-skip setting; the game's CDDA music and GameFrame renderer remain
+   enabled. Leave `ddraw.dll` and `ddraw.ini` in this disposable copy
+   only, with their previous test settings.
+3. Start the launcher normally: `CyberGladiatorsFix.exe`. Do not
+   Alt+Tab, change resolutions, or manually skip the already-disabled AVI.
+   If the game hangs or crashes, stop; do **not** repeat it.
+4. Record whether the menu/3D appears, whether Windows' physical mode stays
+   `1920x1200x32`, and whether the exit is clean. Provide the unified log.
+5. Remove both third-party files from the copy and restore `SkipIntro=0`
+   afterwards. No file in the validated original installation is changed.
+
+**Interpretation:**
+- If the game reaches 3D with its native Windows mode unchanged, the
+  virtualized 16-bpp DirectDraw state and GameFrame/OpenGL may coexist;
+  investigate the MCI/video geometry, thread lifetime, or external
+  wrapper's message loop next. This is **not yet proof** MCI scaling caused
+  the earlier failure.
+- If the game fails again even with AVI disabled, the conflict is in the
+  broader DirectDraw/Glide/GameFrame startup or asynchronous thread state.
+  Stop trying `cnc-ddraw` configurations and prioritize safer passive
+  observation of game DirectDraw calls.
+- If the virtual wrapper isn't loaded or the physical mode changes again,
+  the test is inconclusive.
+
+Do **not** integrate cnc-ddraw in a release, change the game's graphics
+configuration, enable the earlier crashing native COM hook (#124), or
+repeat the invalidated 32-bpp substitution experiment (#158).
+Build #166 is the reference until a genuinely safe alternative is proven.
+
 ## Group D — unchanged US edition
 
 Repeat a quick verified install/launch and video/FLAC/exit test with the known US retail edition in a separate directory. The US code path must continue to use its original file hashes, offsets, HWND and WndProc.
