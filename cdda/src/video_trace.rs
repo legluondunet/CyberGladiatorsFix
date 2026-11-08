@@ -423,27 +423,36 @@ unsafe extern "system" fn black_host_proc(
 // supplied by the application via MCI_WINDOW is responsible for WM_PAINT.
 // Reusing black_host_proc on the MCI surface caused video stalls on Windows
 // FR; its dedicated WndProc, 50 ms timer and *BeginPaint* MCI update were
-// field-validated there. The US/Wine virtual-DirectDraw A/B now deliberately
-// exercises THIS EXACT SAME implementation, instead of the historical Wine
-// black-surface video class. No ordinary Wine/US launch is affected.
+// field-validated there. Both explicit US virtual-DirectDraw A/B profiles
+// (Wine and native Windows) use THIS EXACT SAME implementation; normal
+// launch paths remain unchanged.
 fn virtual_mci_profile(native_fr:bool,us_wine_virtual:bool)->bool{
     native_fr||us_wine_virtual
 }
 fn us_wine_virtual_mci_profile()->bool{
     std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
         && std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1")
+        && std::env::var("CYBER_US_NATIVE_VIRTUAL_DDRAW").as_deref()!=Ok("1")
         && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1")
 }
+fn us_native_virtual_mci_profile()->bool{
+    std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
+        && std::env::var("CYBER_US_NATIVE_VIRTUAL_DDRAW").as_deref()==Ok("1")
+        && std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        && std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1")
+        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
+}
 fn virtual_mci_log_prefix()->&'static str{
     if us_wine_virtual_mci_profile(){"US_WINE_VIRTUAL_VIDEO"}
+    else if us_native_virtual_mci_profile(){"US_NATIVE_VIRTUAL_VIDEO"}
     else{"FR_VIRTUAL_VIDEO"}
 }
 fn virtual_mci_surface_enabled()->bool{
     let fr=std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()==Ok("1")
         && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
         && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
-    smooth_enabled() && virtual_mci_profile(fr,us_wine_virtual_mci_profile())
+    smooth_enabled() && virtual_mci_profile(fr||us_native_virtual_mci_profile(),us_wine_virtual_mci_profile())
 }
 unsafe extern "system" fn virtual_video_surface_proc(
     hwnd:*mut c_void,msg:u32,wparam:usize,lparam:isize
@@ -1881,13 +1890,12 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
         || !gameframe_first_present_handoff(){return None;}
     let native_fr=std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
         &&std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1");
-    // Explicit Wine US A/B flag is set exclusively by the verified launcher.
-    // The native-FR branch above preserves its tested unconditional gate.
-    let us_wine_virtual=std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("US")
-        &&std::env::var("CYBER_US_WINE_VIRTUAL_DDRAW").as_deref()==Ok("1")
-        &&std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()!=Ok("1")
-        &&std::env::var("CYBER_FR_VIRTUAL_DDRAW").as_deref()!=Ok("1");
-    if !experimental_movie_focus_profiles(native_fr,us_wine_virtual){return None;}
+    // Native US reuses the Windows FR focus and geometry pathway.
+    // Wine US alone applies extra fullscreen unmap/minimize adaptations.
+    let us_native_virtual=us_native_virtual_mci_profile();
+    let native_focus=native_fr || us_native_virtual;
+    let us_wine_virtual=us_wine_virtual_mci_profile();
+    if !experimental_movie_focus_profiles(native_focus,us_wine_virtual){return None;}
     // Snapshot under the mutex and release it BEFORE synchronous Win32
     // SetWindowPos: native window messages can reenter the WinMM bridge.
     let h=(*video_host().lock().unwrap_or_else(|e|e.into_inner()))?;
@@ -1960,7 +1968,9 @@ pub fn refresh_experimental_movie_focus(command:&str,result:u32)->Option<CString
             let game_iconic_after=IsIconic(game)!=0;
             video_log(&format!(
                 "{} active={} foreground={:#x} host_zorder={} game_zorder={} no_activation=1 no_minimize=1 topmost_when_active=1",
-                if us_wine_virtual{"US_WINE_VIDEO_FOCUS"}else{"FR_NATIVE_VIDEO_FOCUS"},
+                if us_wine_virtual{"US_WINE_VIDEO_FOCUS"}
+                else if us_native_virtual{"US_NATIVE_VIDEO_FOCUS"}
+                else{"FR_NATIVE_VIDEO_FOCUS"},
                 u8::from(active),foreground as usize,host_result,game_result
             ));
             if us_wine_virtual{
@@ -2387,7 +2397,7 @@ mod tests {
             &mut last,Duration::from_millis(500)));
     }
     #[test]
-    fn virtual_mci_host_reuses_native_fr_painter_only_for_explicit_us_wine_ab(){
+    fn virtual_mci_host_reuses_native_fr_painter_for_both_us_ab_profiles(){
         assert!(virtual_mci_profile(true,false));
         assert!(virtual_mci_profile(false,true));
         assert!(!virtual_mci_profile(false,false),
