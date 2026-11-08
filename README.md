@@ -53,7 +53,7 @@ GameFrame renders the original **640×480** Glide game at the current display re
 
 The one EXE embeds and validates both x86 DLLs before writing them. The GameFrame DLL remains installed after a fresh first run. If the player had a different valid glide.dll, it is backed up byte-for-byte and restored at the end of gameplay.
 
-## Experimental US virtual DirectDraw A/B test under Wine/Proton
+## Experimental US virtual DirectDraw A/B test under Wine/Proton and native Windows
 
 The field-validated US Wine path replaces the two original DirectDraw
 `640x480x16` mode requests with calls to Wine's **real DirectDraw** using
@@ -65,18 +65,20 @@ use the exact supported US retail installation with Wine/Proton:
 WINEDEBUG=-all wine CyberGladiatorsFix.exe --launch --us-virtual-ddraw-test
 ```
 
-This flag is **experimental and restricted to the verified US edition
-on Wine/Proton**; it does not affect the normal one-click launch and refuses
-native Windows. **For the current A/B build it also enables the exact same
+The same flag is **experimental and restricted to the SHA-256-verified
+US retail edition** on both Wine/Proton and native Windows. It never changes
+the ordinary one-click launch or either FR launch profile. **In this A/B
+build it also enables the exact same
 dedicated MCI video-surface Win32 procedure used by the validated native
 Windows FR mode**: native `WM_PAINT` / `BeginPaint` / `update movie hdc`,
 50 ms invalidation timer, bounded message pumping on the game's UI thread,
 and explicit foreground/z-order management. The host remains 4:3; the black
-parent and cover remain separate. This comparison deliberately replaces
-the former US/Wine `black_host_proc` movie destination only in this opt-in
-mode, as requested after the AVI host stayed above other applications in
-build #199. An MCI video behavior difference under Wine is possible and
-must be assessed in a real test, not assumed from successful compilation.
+parent and cover remain separate. The native Windows US experiment reuses
+the same z-order and native focus handling as Windows FR. The Wine/Proton
+US experiment adds a **Wine-only** temporary hide of the fullscreen AVI
+popup plus bounded minimization/restoration of the game's underlying
+fullscreen window during Alt+Tab (validated in build #205). Neither Wine
+adaptation is enabled on native Windows.
 
 The test still uses WinMM/MCI Cinepak decoding, GameFrame 60 FPS rendering
 and CDDA FLAC support. The expected unified session log contains
@@ -89,10 +91,31 @@ and CDDA FLAC support. The expected unified session log contains
 `DDRAW_VIRTUAL_CREATE edition=US wine=1`, virtual `SetDisplayMode`
 and `DDRAW_NATIVE_SUMMARY ... us_wine_virtual=1 ... native_mode_forwarded=0`.
 
-Compare full AVI playback, the first Glide frame, menu, inputs, Alt+Tab,
-CDDA, clean exit and desktop geometry with the normal known-good US Wine
-launch. A successful automated build does **not** constitute a field
-validation. Leave the test disabled by default pending real results.
+### Native Windows US experiment (not yet field-validated)
+
+Use the build attached to this PR and the same verified US installation,
+but run from PowerShell or Command Prompt on Windows:
+
+```powershell
+.\CyberGladiatorsFix.exe --launch --us-virtual-ddraw-test
+```
+
+The test selects `CYBER_US_NATIVE_VIRTUAL_DDRAW=1` in the verified game
+process, exercises the same project-owned DirectDraw v1 COM and the same
+MCI HWND / timer / repaint procedure as Windows FR, and uses the native
+Windows focus/z-order handling. It does **not** enable Wine's game-window
+minimization fallback. The log should contain `US_NATIVE_VIRTUAL_DDRAW
+enabled=1`, `DDRAW_VIRTUAL_CREATE edition=US wine=0`,
+`US_NATIVE_VIRTUAL_VIDEO_CLASS`, `US_NATIVE_VIRTUAL_VIDEO_RENDER`,
+`US_NATIVE_VIRTUAL_VIDEO_PAINT`, `US_NATIVE_VIDEO_FOCUS` when toggling
+focus, and `DDRAW_NATIVE_SUMMARY ... us_native_virtual=1
+... native_mode_forwarded=0`.
+
+Under **both** environments, compare complete AVI playback, Alt+Tab out
+of and back into the video (first attempt must work), the first Glide
+frame, menu, inputs, FLAC CDDA, clean exit and unchanged physical desktop
+mode. A successful CI build is not a Windows gameplay validation; this
+option stays disabled by default until actual testing.
 
 ## Commands
 
