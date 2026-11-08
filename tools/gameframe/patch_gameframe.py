@@ -165,7 +165,7 @@ pub fn cyber_viewport_size(w: u32, h: u32) -> Option<(u32, u32)> {
     # Passive sampling at the FIRST Glide entry points, before the game's
     # AVI bridge is invoked. A few GetSystemMetrics reads only; no DirectDraw
     # hooks, display-mode modifications, or user-facing window operations.
-    display_marker = '#[unsafe(no_mangle)]\\npub extern "system" fn grGlideInit() {'
+    display_marker = '#[unsafe(no_mangle)]\npub extern "system" fn grGlideInit() {'
     display_probe = """// Cyber Gladiators: Windows-native FR-only resolution timeline.
 #[link(name = "user32")]
 unsafe extern "system" {
@@ -186,10 +186,10 @@ fn cyber_fr_readonly_display_probe(stage: &str) {
     src = replace_one(src, display_marker, display_probe + display_marker,
         "probe before first Glide initialization")
     src = replace_one(src, '    shim::call!("grGlideInit");',
-        '    cyber_fr_readonly_display_probe("before_grGlideInit");\\n    shim::call!("grGlideInit");',
+        '    cyber_fr_readonly_display_probe("before_grGlideInit");\n    shim::call!("grGlideInit");',
         "early Glide initialization probe")
     src = replace_one(src, '    shim::call!("grSstOpen", res, refresh, format, origin, smoothing, buffers);',
-        '    cyber_fr_readonly_display_probe("before_grSstOpen");\\n    shim::call!("grSstOpen", res, refresh, format, origin, smoothing, buffers);',
+        '    cyber_fr_readonly_display_probe("before_grSstOpen");\n    shim::call!("grSstOpen", res, refresh, format, origin, smoothing, buffers);',
         "before Glide resolution open")
     src = replace_one(src,
         """    opened(w, h, format, origin);
@@ -203,7 +203,7 @@ fn cyber_fr_readonly_display_probe(stage: &str) {
 }""",
         "after Glide resolution open")
     src = replace_one(src, '    log!("grSstPassthruMode {mode}");',
-        '    log!("grSstPassthruMode {mode}");\\n    cyber_fr_readonly_display_probe("grSstPassthruMode");',
+        '    log!("grSstPassthruMode {mode}");\n    cyber_fr_readonly_display_probe("grSstPassthruMode");',
         "Glide video passthrough probe")
 
     marker = '#[unsafe(no_mangle)]\npub extern "system" fn grBufferSwap(_interval: u32) {'
