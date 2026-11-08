@@ -867,6 +867,12 @@ fn gameframe_popup_style(style:u32)->u32{
     // bits, input ownership, clipping and WndProc.
     (style & !0x00c4_0000u32)|WS_POPUP|WS_VISIBLE
 }
+fn should_defer_native_fr_handoff_resize(
+    phase:&str,first_present:bool,fr_native:bool,width:i32,height:i32
+)->bool{
+    phase=="after_MCI_close_before_first_gl_present" && first_present
+        && fr_native && width==640 && height==480
+}
 fn gameframe_prepare_window(phase:&str){
     if std::env::var("CYBER_GAMEFRAME_TEST").as_deref()!=Ok("1"){return;}
     // Native FR DirectDraw still owns the physical 640x480x16 mode at
@@ -879,12 +885,12 @@ fn gameframe_prepare_window(phase:&str){
     //
     // This is solely a WINDOW sizing change, not a DirectDraw mode hook.
     // Wine/Proton and US keep their previously validated early handoff.
-    if phase=="after_MCI_close_before_first_gl_present"
-        && gameframe_first_present_handoff()
-        && std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
-        && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR")
-        && unsafe{GetSystemMetrics(0)}==640
-        && unsafe{GetSystemMetrics(1)}==480 {
+    let native_fr=std::env::var("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX").as_deref()==Ok("1")
+        && std::env::var("CYBER_GAME_EDITION").as_deref()==Ok("FR");
+    if should_defer_native_fr_handoff_resize(
+        phase,gameframe_first_present_handoff(),native_fr,
+        unsafe{GetSystemMetrics(0)},unsafe{GetSystemMetrics(1)}
+    ) {
         video_log("GAMEFRAME_HANDOFF_PREPARE stage=after_MCI_close_before_first_gl_present deferred_to_first_GL_swap=1 reason=native_FR_current_640x480 skip_redundant_SetWindowPos=1 display_mode_change=0");
         return;
     }
@@ -1723,6 +1729,19 @@ mod fullscreen_tests {
         assert_eq!(gameframe_prelaunch_desktop(None),None);
         assert_eq!(gameframe_popup_style(0x14ce0000),0x940a0000);
         assert_eq!(gameframe_popup_style(0x940a0000),0x940a0000);
+    }
+    #[test]
+    fn native_fr_defers_only_redundant_game_window_resize_before_3d(){
+        let stage="after_MCI_close_before_first_gl_present";
+        assert!(should_defer_native_fr_handoff_resize(stage,true,true,640,480));
+        assert!(!should_defer_native_fr_handoff_resize(stage,true,false,640,480),
+            "Proton and US must keep their validated handoff path");
+        assert!(!should_defer_native_fr_handoff_resize(stage,false,true,640,480),
+            "the first-present guard must be available as fallback");
+        assert!(!should_defer_native_fr_handoff_resize(stage,true,true,1536,960),
+            "if Windows is already back at desktop resolution, keep old behavior");
+        assert!(!should_defer_native_fr_handoff_resize("before_mci",true,true,640,480),
+            "limit deferral to the proven transition");
     }
     #[test]
     fn native_fr_read_only_display_mode_uses_win32_devmode_abi(){
