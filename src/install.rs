@@ -397,7 +397,7 @@ mod iq_staging_policy_tests {
         let iq=dir.join("iq").join("iq40.dat");
         let original=b"original";
         fs::write(&iq,original).unwrap();
-        let manifest=format!("# CyberGladiatorsFix manifest v1\\niq/iq40.dat\\t{}\\t{}\\n",
+        let manifest=format!("# CyberGladiatorsFix manifest v1\niq/iq40.dat\t{}\t{}\n",
             original.len(),crate::patch::digest(original));
         assert!(verify_staged_manifest(&dir,&manifest).is_ok());
         fs::write(&iq,b"modified").unwrap();
