@@ -7,7 +7,7 @@
 - Merge the final audit-only PR after its green Windows CI run; confirm `main` points to the expected merge SHA.
 - Confirm no runtime feature changes are pending and the supported retail set remains original **US and FR CUE/BIN** only.
 - Confirm `Cargo.toml` reports `version = "0.2.13"`. The public tag must be precisely `v0.2.13`; do not publish a release under a tag that disagrees with the built launcher.
-- Confirm field evidence for Windows 11 and Wine-staging 11.17. The upper-right signature is accepted on FR/native Windows and both editions in earlier Wine testing. **PR #11** additionally validated the `.bak` name collision and repeated same-build `glide.dll` reuse on FR/Windows. Check the **exact tagged package** after this final audit (menu, 4:3, audio, exit); do not claim new changes received the same US/Wine test.
+- Confirm field evidence for Windows 11 and Wine-staging 11.17. The upper-right signature is accepted on FR/native Windows and both editions in earlier Wine testing. **PR #11** additionally validated the `.bak` name collision and repeated same-build `glide.dll` reuse on FR/Windows. **PR #12** additionally received a complete US/Wine-staging 11.17 field run on its source commit (`731aa136`), confirming the mounted-CD local AVI rewrite, Alt+Tab, 4:3 menu, FLAC and clean exit, with user visual acceptance. Still check the **exact tagged package** after final audit (menu, 4:3, audio, exit); this prior PR artifact is not the tag-built binary.
 - No tags, no GitHub Release, no GitHub Pages or distribution uploads until explicit maintainer approval.
 
 ## 2. Build provenance and tests
