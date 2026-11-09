@@ -1,6 +1,6 @@
-# CyberGladiatorsFix v0.2.13 — release notes (draft)
+# CyberGladiatorsFix v1.0.0 — release notes (draft)
 
-**Status: prepared draft, not yet published.** First public-release candidate for the original 1996 **Cyber Gladiators** PC game. Planned source tag: `v0.2.13` (only after final audit PR merge and acceptance). The version string includes the *actual short source commit* for the distributed build.
+**Status: prepared draft, not yet published.** Version 1.0.0 designates the first public release; validation from the earlier 0.2.13 candidate commits is historical evidence, not a test of the final tagged binary. First public-release candidate for the original 1996 **Cyber Gladiators** PC game. Planned source tag: `v1.0.0` (only after final audit PR merge and acceptance). The version string includes the *actual short source commit* for the distributed build.
 
 ## Overview
 

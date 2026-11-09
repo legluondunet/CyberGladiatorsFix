@@ -148,7 +148,7 @@ game's original authenticated CUE/BIN data is installed.
 The build signature appears at the upper-right 4-pixel border of the
 centered 4:3 fighter-selection menu and disappears during gameplay.
 
-See docs/RELEASE_READINESS.md, docs/RELEASE_NOTES_v0.2.13.md and
+See docs/RELEASE_READINESS.md, docs/RELEASE_NOTES_v1.0.0.md and
 docs/RELEASE_PROCESS.md in the source repository for validated platforms,
 known limitations and the manual tag/release procedure. The latest
 Windows FR test of the new archive behavior and strict INI configuration

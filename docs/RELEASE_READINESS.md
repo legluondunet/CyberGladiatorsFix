@@ -1,6 +1,6 @@
-# Release readiness and final source audit — candidate v0.2.13
+# Release readiness and final source audit — candidate v1.0.0
 
-Audit updated **2026-11-09** against `main` at **`dc8aa6a4bd427a7452f35d2d9685fa42ef8c6b96`** (merged PR #12). The intended first public version is **v0.2.13**; this document **does not authorize a tag, GitHub Release publication, or a claim of universal hardware compatibility**. The final release commit will change if this audit PR merges.
+Source acceptance recorded after merged PR #12 (`dc8aa6a4`) and documentation PR #13 (`60263016`). This version-only preparation does not alter the previously field-tested video, audio or gameplay code. The intended first public version is **v1.0.0**; this document **does not authorize a tag, GitHub Release publication, or a claim of universal hardware compatibility**. The final release commit will change if this audit PR merges.
 
 ## Decision
 
@@ -34,7 +34,7 @@ There are **no public GitHub Releases** as of this audit. The CI artifact curren
 
 | Priority | Risk / decision |
 | --- | --- |
-| **Pre-publication gate** | Tag only after the release-documentation update is merged and CI passes at that exact head. **Build and check the version-matched `v0.2.13` tag**. Match the 8-character source commit in the EXE and checksum sheet; do not build from a temporary PR merge ref. |
+| **Pre-publication gate** | Tag only after the release-documentation update is merged and CI passes at that exact head. **Build and check the version-matched `v1.0.0` tag**. Match the 8-character source commit in the EXE and checksum sheet; do not build from a temporary PR merge ref. |
 | **Pre-publication gate** | **FR/native Windows** already confirms the final upper-right signature, fullscreen, FLAC and clean exit (9 Nov). Repeat a brief smoke test using the **exact tag-built binary**, not solely earlier PR artifacts. An additional US/Wine-staging 11.17 field log now covers the PR #12 build with the Glide archive/INI policy and the local AVI path rewrite, including visual acceptance. **This is not a test of a future tag-built executable**; the final tag still needs its own smoke check. |
 | **Pre-publication gate** | Verify the final **tagged** CI package exactly has the six expected files, that five SHA-256 entries validate, that the `--version` source suffix matches the tag commit, then upload the immutable package to a draft GitHub Release and inspect published download links. Retain CI as a disposable 14-day build artifact only. |
 | **Documented limitation** | `Cargo.lock` files for the root and x86 bridge are not tracked, `rust-toolchain@stable` / `windows-latest` move over time. The upstream wrapper source is pinned, but **fully reproducible byte-for-byte builds are not yet guaranteed**. Do not describe the package as reproducible. Follow up by introducing reviewed lockfiles and toolchain pins in a separate PR with CI and a final host recheck. |
@@ -43,7 +43,7 @@ There are **no public GitHub Releases** as of this audit. The CI artifact curren
 
 ## Release procedure
 
-Follow [RELEASE_PROCESS.md](RELEASE_PROCESS.md) and use [RELEASE_NOTES_v0.2.13.md](RELEASE_NOTES_v0.2.13.md). **Do not create tags or publish a release as part of an audit-only PR.** The release manager decides whether to mark this first release as prerelease after the final smoke check.
+Follow [RELEASE_PROCESS.md](RELEASE_PROCESS.md) and use [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md). **Do not create tags or publish a release as part of an audit-only PR.** The release manager decides whether to mark this first release as prerelease after the final smoke check.
 
 The historical 2026-11-06 risk matrix is preserved through Git history. Its earlier statements that FR/Wine, clean CUE/BIN installs or Windows gameplay were untested were superseded by the field evidence above.
 
