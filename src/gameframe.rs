@@ -5,30 +5,65 @@
 //! Never overwrite a user's existing backup or follow a Glide DLL symlink.
 use sha2::{Digest,Sha256};
 use std::fs::{self,OpenOptions};
-use std::io::Write;
+use std::io::{Read,Write};
 use std::path::{Path,PathBuf};
 
-const MAX_GLIDE_BYTES:u64=16*1024*1024;
 const MAX_BACKUP_SLOTS:u32=256;
 
 fn digest(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
-
-/// Old/unrecognized Glide may be outdated, malformed, or not PE32 at all.
-/// It is *data to preserve*, never code to execute. Only the embedded
-/// GameFrame DLL needs the PE32 validation before becoming active.
-fn read_regular(path:&Path)->Result<Vec<u8>,String>{
-    let meta=fs::symlink_metadata(path)
-        .map_err(|e|format!("Cannot inspect {}: {e}",path.display()))?;
-    if meta.file_type().is_symlink()||!meta.is_file()||meta.len()>MAX_GLIDE_BYTES {
-        return Err(format!("Refusing symlink, non-file or oversized Glide DLL: {}",path.display()));
+/// Stream the digest; an unknown old DLL can have *any* size, and may
+/// be unreadable. Neither situation is a reason to refuse its .bak move.
+fn file_digest(path:&Path)->std::io::Result<String>{
+    let mut input=fs::File::open(path)?;
+    let mut hash=Sha256::new();
+    let mut buffer=[0u8;65536];
+    loop{
+        let count=input.read(&mut buffer)?;
+        if count==0{break;}
+        hash.update(&buffer[..count]);
     }
+    Ok(format!("{:x}",hash.finalize()))
+}
+
+/// Compare only the actual bytes of an existing Glide against the embedded
+/// SHA-256. A different or unreadable file is preserved and replaced.
+fn read_regular(path:&Path)->Result<Vec<u8>,String>{
     fs::read(path).map_err(|e|format!("Cannot read {}: {e}",path.display()))
 }
-fn read_optional(path:&Path)->Result<Option<Vec<u8>>,String>{
+#[derive(Clone)]
+struct Observed{
+    sha256:Option<String>,
+    len:u64,
+    link:bool,
+}
+fn read_optional(path:&Path)->Result<Option<Observed>,String>{
     match fs::symlink_metadata(path){
-        Ok(_)=>read_regular(path).map(Some),
+        Ok(meta)=>{
+            if meta.is_dir(){return Err(format!(
+                "Cannot use a directory as glide.dll: {}",path.display()));}
+            let link=meta.file_type().is_symlink();
+            // Never follow an external symlink target. Rename the link
+            // itself to a backup, then install the real embedded GameFrame.
+            // An unreadable or unusual file is simply an unknown version.
+            let sha256=if link{None}else{file_digest(path).ok()};
+            Ok(Some(Observed{sha256,len:meta.len(),link}))
+        },
         Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(None),
         Err(e)=>Err(format!("Cannot inspect {}: {e}",path.display())),
+    }
+}
+fn still_same(previous:Option<&Observed>,current:Option<&Observed>)->bool{
+    match (previous,current){
+        (None,None)=>true,
+        (Some(a),Some(b))=>{
+            if a.len!=b.len||a.link!=b.link{return false;}
+            match (&a.sha256,&b.sha256){
+                (Some(x),Some(y))=>x==y,
+                (None,None)=>true, // Preserve opaque source via rename
+                _=>false,
+            }
+        },
+        _=>false,
     }
 }
 fn vacant(path:&Path)->Result<(),String>{
@@ -70,27 +105,25 @@ fn move_no_replace(source:&Path,destination:&Path)->Result<(),String>{
             "Cannot move {} to {}: {e}",source.display(),destination.display()))
     }
 }
-fn backup_path(target:&Path,hash:&str)->Result<(PathBuf,bool),String>{
-    if hash.len()!=64||!hash.bytes().all(|b|b.is_ascii_hexdigit()){
-        return Err("Glide backup requires an exact SHA-256 digest".into());
+fn backup_path(target:&Path,hash:Option<&str>)->Result<(PathBuf,bool),String>{
+    if let Some(h)=hash{
+        if h.len()!=64||!h.bytes().all(|b|b.is_ascii_hexdigit()){
+            return Err("Invalid Glide SHA-256 backup suffix".into());
+        }
     }
-    // Primary filename requested by the user. If it is occupied, keep it
-    // untouched and archive under a SHA-qualified .bak, then numbered .bak.
     let primary=target.with_file_name("glide.dll.bak");
     if vacant(&primary).is_ok(){return Ok((primary,false));}
-    let short=&hash[..16];
+    let prefix=hash.map(|h|&h[..16]).unwrap_or("unknown");
     for n in 0..MAX_BACKUP_SLOTS{
         let name=if n==0{
-            format!("glide.dll.{short}.bak")
+            format!("glide.dll.{prefix}.bak")
         }else{
-            format!("glide.dll.{short}.{n}.bak")
+            format!("glide.dll.{prefix}.{n}.bak")
         };
         let candidate=target.with_file_name(name);
         if vacant(&candidate).is_ok(){return Ok((candidate,true));}
     }
-    Err(format!(
-        "No free Glide .bak archive slot after {MAX_BACKUP_SLOTS} attempts; existing backups left unchanged"
-    ))
+    Err(format!("No free glide.dll .bak slot ({MAX_BACKUP_SLOTS} attempted); no file overwritten"))
 }
 
 pub struct Session{
@@ -113,20 +146,18 @@ impl Session{
         let expected=digest(embedded);
         let target=game.join("glide.dll");
         let old=read_optional(&target)?;
-        let old_hash=old.as_ref().map(|b|digest(b));
-
-        if old_hash.as_deref()==Some(expected.as_str()){
+        let old_hash=old.as_ref().and_then(|f|f.sha256.as_deref());
+        if old_hash==Some(expected.as_str()){
             crate::show(&format!(
                 "GAMEFRAME_GLIDE_POLICY action=keep_existing existing_embedded=1 sha256={expected} previous_backups_untouched=1 retained_after_exit=1"
             ),root);
             return Ok(Self{target,backup:None,expected,root:root.to_path_buf(),active:true});
         }
-        let (backup,collision)=match old_hash.as_deref(){
-            Some(hash)=>{
-                let (path,collision)=backup_path(&target,hash)?;
-                (Some(path),collision)
-            },
-            None=>(None,false),
+        let (backup,collision)=if old.is_some(){
+            let (path,collision)=backup_path(&target,old_hash)?;
+            (Some(path),collision)
+        }else{
+            (None,false)
         };
         let stage=game.join("glide.dll.gameframe-staging.tmp");
         vacant(&stage)?;
@@ -146,10 +177,10 @@ impl Session{
         }
         // Reject a last-moment file change. In particular, a third-party
         // DLL appearing after a clean-install check must never be discarded.
-        let still_unchanged=match (&old_hash,read_optional(&target)){
-            (None,Ok(None))=>true,
-            (Some(hash),Ok(Some(bytes)))=>digest(&bytes)==*hash,
-            _=>false,
+        let now=read_optional(&target);
+        let still_unchanged=match now{
+            Ok(ref current)=>still_same(old.as_ref(),current.as_ref()),
+            Err(_)=>false,
         };
         if !still_unchanged{
             let _=fs::remove_file(&stage);
@@ -160,11 +191,11 @@ impl Session{
                 let _=fs::remove_file(&stage);
                 return Err(format!("Cannot back up existing Glide DLL: {e}"));
             }
-            if !matches!(read_regular(saved),Ok(ref bytes) if
-                old_hash.as_deref()==Some(digest(bytes).as_str())){
+            if !matches!(read_optional(saved),Ok(Some(ref archived)) if
+                still_same(old.as_ref(),Some(archived))){
                 let rollback=move_no_replace(saved,&target);
                 let _=fs::remove_file(&stage);
-                return Err(format!("Archived Glide DLL differs from its original SHA-256; rollback={rollback:?}"));
+                return Err(format!("Old Glide backup changed unexpectedly; rollback={rollback:?}"));
             }
         }
         if let Err(e)=move_no_replace(&stage,&target){
@@ -175,13 +206,13 @@ impl Session{
         if let Some(ref saved)=backup{
             crate::show(&format!(
                 "GAMEFRAME_GLIDE_BACKUP action=rename original_sha256={} path={} collision_slot={} bytes_preserved=1 existing_backups_untouched=1",
-                old_hash.as_deref().unwrap_or("none"),saved.display(),u8::from(collision)
+                old_hash.unwrap_or("unreadable_or_link"),saved.display(),u8::from(collision)
             ),root);
         }
         crate::show(&format!(
             "GAMEFRAME_GLIDE_POLICY action={} previous_sha256={} installed_embedded_sha256={expected} backup={} keep_embedded_after_exit=1 backup_retained_after_exit=1 game_launch_prepared=1",
-            if old_hash.is_some(){"replace_unknown_or_old"}else{"install_missing"},
-            old_hash.as_deref().unwrap_or("none"),
+            if old.is_some(){"replace_unknown_or_old"}else{"install_missing"},
+            old_hash.unwrap_or("unreadable_or_link"),
             backup.as_ref().map_or_else(||"none".into(),|p|p.display().to_string())
         ),root);
         Ok(Self{target,backup,expected,root:root.to_path_buf(),active:true})
@@ -228,16 +259,26 @@ mod tests{
         dir
     }
     #[test]
+    fn matching_regular_bytes_are_accepted_even_if_metadata_hints_vary(){
+        let dir=temp_fixture("exact");
+        let path=dir.join("glide.dll");
+        fs::write(&path,b"exact payload").unwrap();
+        let seen=read_optional(&path).unwrap().unwrap();
+        assert_eq!(seen.sha256.as_deref(),Some(digest(b"exact payload").as_str()));
+        assert!(still_same(Some(&seen),Some(&seen)));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
     fn collision_names_are_hash_qualified_and_never_overwritten(){
         let dir=temp_fixture("slots");
         let target=dir.join("glide.dll");
         let hash=digest(b"example older glide");
-        assert_eq!(backup_path(&target,&hash).unwrap(),(dir.join("glide.dll.bak"),false));
+        assert_eq!(backup_path(&target,Some(&hash)).unwrap(),(dir.join("glide.dll.bak"),false));
         fs::write(dir.join("glide.dll.bak"),b"first archive").unwrap();
         let next=dir.join(format!("glide.dll.{}.bak",&hash[..16]));
-        assert_eq!(backup_path(&target,&hash).unwrap(),(next.clone(),true));
+        assert_eq!(backup_path(&target,Some(&hash)).unwrap(),(next.clone(),true));
         fs::write(&next,b"second archive").unwrap();
-        assert_eq!(backup_path(&target,&hash).unwrap(),
+        assert_eq!(backup_path(&target,Some(&hash)).unwrap(),
             (dir.join(format!("glide.dll.{}.1.bak",&hash[..16])),true));
         // A pre-existing destination cannot be overwritten by the mover.
         let active=dir.join("glide.dll");

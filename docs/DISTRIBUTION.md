@@ -65,7 +65,10 @@ After the game exits, GameFrame stays installed and the backup remains
 available for manual recovery; it is NOT automatically restored.
 Operations, original and embedded SHA-256 digests, selected archive path
 and any collision fallback are recorded in CyberGladiatorsFix.log.
-Unsafe symlinks, non-regular files and oversized active DLLs are refused.
+No size limit or PE32-validity check is imposed on the old DLL: only the
+bundled GameFrame is required to be a validated PE32/SHA-256 file.
+Symlinks are archived as links, without following their targets;
+directory entries cannot be used as glide.dll.
 
 The WinMM import name in the patched US retail executable now refers
 to CyberGladiatorsFix.dll rather than the old CyberGladiatorsCDDA.dll.

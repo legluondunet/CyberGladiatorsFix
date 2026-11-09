@@ -10,27 +10,32 @@ silently run an unknown older `glide.dll` from the installed game folder.
 | --- | --- | --- |
 | Missing | Install bundled GameFrame | GameFrame remains installed |
 | Identical to bundled GameFrame | Reuse without modification | GameFrame remains installed |
-| Older, unknown or malformed **regular** file, up to 16 MiB | Move original to an unused `.bak` and install bundled GameFrame | GameFrame remains installed; backup stays as a file |
-| Symlink, directory, oversized or inaccessible source | Refuse safely without replacing the source | Existing files unchanged |
+| Older, unknown, malformed, oversized or unreadable file | Rename original to an unused `.bak` without requiring a valid DLL structure; install bundled GameFrame | GameFrame remains installed; backup stays intact |
+| Symbolic link named `glide.dll` | Move the **link itself** to `.bak`, without following its target; install GameFrame | Link backup and its original target stay untouched |
+| Directory named `glide.dll` | Refuse, since a directory is not a DLL file | Existing directory unchanged |
 
 The first archive is **`glide.dll.bak`**. If this already exists,
 the launcher preserves it and selects
 `glide.dll.<first 16 hexadecimal digits of SHA-256>.bak`.
 If that also exists, it tries `glide.dll.<hash16>.1.bak`, then
-`.2.bak`, etc., within a bounded number of attempts. Existing archives
+`.2.bak`, etc., within a bounded number of attempts. If the old file
+cannot be read or is a symbolic link, `unknown` replaces `<hash16>` in
+the alternative backup name. Existing archives
 are **never overwritten**. Legacy backup names from older builds remain
 untouched; no old backup is implicitly considered the active DLL.
 
 The launcher stages the bundled DLL in a separate file, validates its
-Windows x86 PE32 format and SHA-256, confirms the installed DLL did not
-change since inspection, and performs non-replacing moves (Windows
+Windows x86 PE32 format and SHA-256, checks the installed file again
+without enforcing a file-size or old-PE32 restriction, and performs
+non-replacing moves (Windows
 `MoveFileW`, also supported under Wine). If staging/archiving/activation
 fails, it attempts to roll back the original while keeping it recoverable.
 If the rollback itself fails, the preserved original remains in the
 named backup for manual recovery.
 
 **Log events:**
-- `GAMEFRAME_GLIDE_BACKUP`: archive path, original SHA-256, collision
+- `GAMEFRAME_GLIDE_BACKUP`: archive path, original SHA-256 when readable
+  (otherwise `unreadable_or_link`), collision
   fallback decision, and confirmation that existing backups were not touched
 - `GAMEFRAME_GLIDE_POLICY`: action
   `replace_unknown_or_old`, `install_missing`, or `keep_existing`;
