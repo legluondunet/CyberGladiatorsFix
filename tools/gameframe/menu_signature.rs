@@ -200,8 +200,18 @@ fn is_control_screen(scores:[u32;4])->bool {
     // the two multi-line instructional regions.
     scores.iter().all(|v|*v>=165)
 }
+// This is deliberately more tolerant of dark pre-gamma GL pixels than the
+// already field-accepted sprite palette sampler above. The sampled UI ink
+// must remain a muted purple-grey, not blue/black background or green HUD.
+// Do not alter purple_footer_palette: changing it would restyle the label.
+fn is_footer_probe_ink(p:&[u8])->bool{
+    let (r,g,b)=(p[0],p[1],p[2]);
+    r>=26 && g>=28 && b>=47 && r<180 && g<180 && b<205
+        && b>=r.saturating_add(12) && b>=g.saturating_add(12)
+        && r.abs_diff(g)<38
+}
 fn purple_score(raw:&[u8])->u32{
-    let matched=raw.chunks_exact(4).filter(|p|is_footer_ink(p)).count();
+    let matched=raw.chunks_exact(4).filter(|p|is_footer_probe_ink(p)).count();
     (matched*10_000/raw.len().saturating_div(4).max(1)) as u32
 }
 const FOOTER_PROMPT_MIN_SCORE:u32=1200;
@@ -473,6 +483,9 @@ mod tests{
     #[test]
     fn footer_probe_matches_violet_text_but_rejects_blue_background(){
         assert_eq!(purple_score(&[99,94,137,255,5,10,42,255]),5000);
+        // The GPU can expose dark linear/pre-gamma text pixels. Recognize
+        // these without changing the purple used by the drawn signature.
+        assert_eq!(purple_score(&[38,42,72,255,5,10,42,255]),5000);
         assert_eq!(purple_score(&[5,10,42,255,5,10,42,255]),0);
         assert_eq!(purple_score(&[0,160,0,255,0,160,0,255]),0);
     }
