@@ -53,7 +53,7 @@ Use the exact distribution build, not an older PR artifact:
 3. Verify the unobtrusive `CyberGladiatorsFix v1.0.0-XXXXXXXX` signature is aligned to the **upper-right original 4:3 border** and is hidden during combat; check at least one native Windows 11 host and review the previously accepted US/FR Wine runs.
 4. Confirm mandatory FLAC CD audio, ~60 FPS after stabilization, clean process exit, and **non-overwriting `.bak` archive** of any mismatched old `glide.dll`, with bundled verified GameFrame **retained** after exit. Re-launch the same EXE and confirm `action=keep_existing` without a new backup.
 5. Check `CyberGladiatorsFix.log` for `GAMEFRAME_MENU_SIGNATURE placement=upper_right_edge_4px_transparent`, `CYBER_MENU_SIGNATURE_PROBE` visibility transition, `CYBER_MENU_SIGNATURE_STYLE`, `GAMEFRAME_GLIDE_POLICY action=keep_existing` (on identical second run), `GAME_EXIT exit_status=exit code: 0` and `SESSION END success`. The log proves instrumentation, not visual fidelity: visual acceptance remains a human check.
-6. Run strict `--verify`. Confirm generated `CyberGladiatorsFix.ini` contains only `[Video] SkipIntro` and the log reports required FLAC and strict IQ integrity. Fail closed on unknown game assets. If problems emerge, **do not publish**; open a PR with the fix and repeat this checklist.
+6. Run `--verify` after an initial installation and again after playing. Confirm only `[Video] SkipIntro` remains in the INI, FLAC and immutable resources use strict SHA-256, and game-writable `iq/` resources use presence-only verification after install. A missing IQ file or altered non-IQ resource must fail. **Do not publish** if a routine second launch is blocked; fix and repeat.
 
 ## 5. Publish only after sign-off
 
