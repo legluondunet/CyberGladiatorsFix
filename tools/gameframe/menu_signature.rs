@@ -4,8 +4,9 @@
 //! This is compiled into the pinned x86 GameFrame wrapper. No game resource,
 //! system font, Win32 overlay window, focus ownership or MCI path is modified.
 //! The signed version string is child-scoped by the authenticated x64 launcher.
-//! A bounded GPU pixel probe recognizes the bright-green Player 1/Player 2
-//! captions AND the lower instruction text on the fighter-selection screen.
+//! A bounded GPU pixel probe recognizes BOTH fighter-selection phases:
+//! bright-green Player 1/Player 2 instructions on the control screen, or
+//! the two violet-grey footer prompts retained while choosing fighters.
 //! Unrelated games or invalid labels cannot activate this overlay.
 use crate::gl::*;
 use crate::render::shaders::Program;
@@ -151,14 +152,18 @@ fn make_sprite(text:&str,ink:[u8;3])->(Vec<u8>,i32,i32){
 // lower-left "Ctrl + O pour Options" (or English counterpart) pixels.
 // The logo/background are too dark; use bright muted purple candidates.
 // A robust per-channel median avoids choosing one anti-aliased edge pixel.
+fn is_footer_ink(p:&[u8])->bool{
+    let (r,g,b)=(p[0],p[1],p[2]);
+    r>=50 && g>=42 && b>=75 && r<180 && g<180 && b<205
+        && b>=r.saturating_add(10) && b>=g.saturating_add(12)
+        && r.abs_diff(g)<42
+}
 fn purple_footer_palette(raw:&[u8])->Option<([u8;3],u32)>{
     let mut hist=[[0u32;256];3];
     let mut n=0u32;
     for p in raw.chunks_exact(4){
-        let (r,g,b)=(p[0],p[1],p[2]);
-        if r>=50 && g>=42 && b>=75 && r<180 && g<180 && b<205
-            && b>=r.saturating_add(10) && b>=g.saturating_add(12)
-            && r.abs_diff(g)<42 {
+        if is_footer_ink(p){
+            let (r,g,b)=(p[0],p[1],p[2]);
             hist[0][r as usize]+=1;
             hist[1][g as usize]+=1;
             hist[2][b as usize]+=1;
@@ -194,6 +199,20 @@ fn is_control_screen(scores:[u32;4])->bool {
     // instructions. Combat health bars may occupy the upper area, but not
     // the two multi-line instructional regions.
     scores.iter().all(|v|*v>=165)
+}
+fn purple_score(raw:&[u8])->u32{
+    let matched=raw.chunks_exact(4).filter(|p|is_footer_ink(p)).count();
+    (matched*10_000/raw.len().saturating_div(4).max(1)) as u32
+}
+const FOOTER_PROMPT_MIN_SCORE:u32=1200;
+fn is_selection_screen(green:[u32;4],footer:[u32;2])->bool{
+    // The original green instructions are replaced by large character
+    // portraits once selection starts. Both original purple bottom prompts
+    // ("Ctrl+O for Options" and "Esc to Exit", localized on FR) remain in
+    // precisely the same two 4:3 viewport regions in BOTH menu phases.
+    // Require both, rather than holding a stale menu flag into gameplay.
+    is_control_screen(green) ||
+        footer.iter().all(|v|*v>=FOOTER_PROMPT_MIN_SCORE)
 }
 const SIGNATURE_EDGE_MARGIN:i32=4;
 /// Keep the last signature pixel four screen pixels from the right and top
@@ -232,41 +251,55 @@ impl MenuSignature {
             (gl.TexImage2D)(TEXTURE_2D,0,RGBA8 as i32,w,h,0,RGBA,
                 UNSIGNED_BYTE,pixels.as_ptr() as *const c_void);
         }
-        shim::log!("CYBER_MENU_SIGNATURE_READY text={label} detection=two_player_green_regions menu_only=1 GL_texture={texture} font=angular_mixed_case_7x9 color=menu_purple palette=footer_sample_or_fallback no_frame=1");
+        shim::log!("CYBER_MENU_SIGNATURE_READY text={label} detection=green_controls_or_two_footer_prompts menu_only=1 GL_texture={texture} font=angular_mixed_case_7x9 color=menu_purple palette=footer_sample_or_fallback no_frame=1");
         Some(Self{texture,pixel_width:w,pixel_height:h,frames:0,hits:0,visible:false,polls:0,
             label,palette_sampled:false,ink:MENU_PURPLE_FALLBACK})
     }
     pub unsafe fn delete(&self,gl:&Gl){
         unsafe{(gl.DeleteTextures)(1,&self.texture);}
     }
-    unsafe fn probe(&self,gl:&Gl,fbo:u32,w:u32,h:u32)->[u32;4]{
+    unsafe fn probe(&self,gl:&Gl,fbo:u32,w:u32,h:u32)->([u32;4],[u32;2]){
         // Coordinates are normalized against the original 4:3 game image,
         // NOT the physical letterboxed Windows/XFCE desktop.
-        const ZONES:[(f32,f32,f32,f32);4]=[
+        const GREEN_ZONES:[(f32,f32,f32,f32);4]=[
             (0.19,0.39,0.11,0.21), // left Player 1 caption
             (0.16,0.44,0.22,0.40), // left keyboard instructions
             (0.60,0.83,0.11,0.21), // right Player 2 caption
             (0.56,0.86,0.22,0.40), // right keyboard instructions
         ];
-        let mut scores=[0;4];
+        // Two small, bottom-edge regions enclosing the *existing* violet
+        // footer prompts. The upper portraits can change without affecting
+        // the menu signature. Restrict the probe vertically so nearby violet
+        // background/portrait pixels cannot masquerade as footer lettering.
+        const FOOTER_ZONES:[(f32,f32,f32,f32);2]=[
+            (0.115,0.49,0.935,0.98), // Ctrl+O / Options
+            (0.605,0.84,0.935,0.98), // Esc / Exit
+        ];
+        let mut green=[0;4];
+        let mut footer=[0;2];
         unsafe{
             (gl.BindFramebuffer)(READ_FRAMEBUFFER,fbo);
             (gl.PixelStorei)(PACK_ALIGNMENT,1);
-            for (i,(x0,x1,top0,top1)) in ZONES.iter().copied().enumerate(){
-                let left=(x0*w as f32) as i32;
-                let right=(x1*w as f32) as i32;
-                let bottom=(h as f32*(1.0-top1)) as i32;
-                let top=(h as f32*(1.0-top0)) as i32;
-                let (rw,rh)=(right-left,top-bottom);
-                if rw<8||rh<4 {continue;}
-                let mut data=vec![0u8;(rw*rh*4) as usize];
-                (gl.ReadPixels)(left,bottom,rw,rh,RGBA,UNSIGNED_BYTE,
-                    data.as_mut_ptr() as *mut c_void);
-                scores[i]=green_score(&data);
+            for (zones,scores,score) in [
+                (&GREEN_ZONES[..],&mut green[..],green_score as fn(&[u8])->u32),
+                (&FOOTER_ZONES[..],&mut footer[..],purple_score as fn(&[u8])->u32),
+            ]{
+                for (i,(x0,x1,top0,top1)) in zones.iter().copied().enumerate(){
+                    let left=(x0*w as f32) as i32;
+                    let right=(x1*w as f32) as i32;
+                    let bottom=(h as f32*(1.0-top1)) as i32;
+                    let top=(h as f32*(1.0-top0)) as i32;
+                    let (rw,rh)=(right-left,top-bottom);
+                    if rw<8||rh<4 {continue;}
+                    let mut data=vec![0u8;(rw*rh*4) as usize];
+                    (gl.ReadPixels)(left,bottom,rw,rh,RGBA,UNSIGNED_BYTE,
+                        data.as_mut_ptr() as *mut c_void);
+                    scores[i]=score(&data);
+                }
             }
             (gl.BindFramebuffer)(READ_FRAMEBUFFER,0);
         }
-        scores
+        (green,footer)
     }
     /// Read only a narrow strip of the authenticated retail screen where
     /// its own violet "Ctrl + O pour Options" footer is drawn.
@@ -318,14 +351,14 @@ impl MenuSignature {
         if cw<320||ch<240 {return;}
         self.frames+=1;
         if self.frames%20==1 {
-            let scores=unsafe{self.probe(gl,fbo,ow,oh)};
+            let (scores,footer_scores)=unsafe{self.probe(gl,fbo,ow,oh)};
             self.polls+=1;
-            let candidate=is_control_screen(scores);
+            let candidate=is_selection_screen(scores,footer_scores);
             self.hits=if candidate{self.hits.saturating_add(1).min(3)}else{0};
             let was_visible=self.visible;
             self.visible=self.hits>=2;
             if self.polls<=6||self.polls%120==0||self.visible!=was_visible {
-                shim::log!("CYBER_MENU_SIGNATURE_PROBE poll={} green_scores={scores:?} candidate={} visible={} transition={} gpu_readback=4_regions",
+                shim::log!("CYBER_MENU_SIGNATURE_PROBE poll={} green_scores={scores:?} footer_scores={footer_scores:?} candidate={} visible={} transition={} gpu_readback=6_regions",
                     self.polls,u8::from(candidate),u8::from(self.visible),u8::from(self.visible!=was_visible));
             }
         }
@@ -421,5 +454,26 @@ mod tests{
         assert!(!is_control_screen([500,0,500,0]));
         assert!(!is_control_screen([500,900,0,800]));
         assert_eq!(green_score(&[0,180,0,255,0,0,0,255]),5000);
+    }
+    #[test]
+    fn fighter_portrait_menu_stays_visible_without_green_player_instructions(){
+        // Two reference screenshots show identical bottom prompts on the
+        // initial Player 1/2 screen and the fighter-portrait selection screen.
+        // Their displayed footer scores are comfortably above 1200.
+        let control=[400,700,450,650];
+        let portrait=[0,0,0,0];
+        assert!(is_selection_screen(control,[0,0]));
+        assert!(is_selection_screen(portrait,[2459,2179]));
+        assert!(is_selection_screen(portrait,[1500,1300]));
+        assert!(!is_selection_screen(portrait,[1500,0]));
+        assert!(!is_selection_screen(portrait,[0,1300]));
+        assert!(!is_selection_screen(portrait,[0,0])); // combat: no prompts
+        assert!(!is_selection_screen([500,0,500,0],[0,0]));
+    }
+    #[test]
+    fn footer_probe_matches_violet_text_but_rejects_blue_background(){
+        assert_eq!(purple_score(&[99,94,137,255,5,10,42,255]),5000);
+        assert_eq!(purple_score(&[5,10,42,255,5,10,42,255]),0);
+        assert_eq!(purple_score(&[0,160,0,255,0,160,0,255]),0);
     }
 }
