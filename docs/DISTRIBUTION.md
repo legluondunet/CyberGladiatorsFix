@@ -1,8 +1,8 @@
-CyberGladiatorsFix — Windows x64 pre-release testing guide
+CyberGladiatorsFix — Windows x64 release candidate and distribution guide
 ==========================================================
 
-The testing artifact contains the Windows x64 launcher, LICENSE-GPL-3.0,
-LICENSE-APACHE and this README. The EXE embeds BOTH 32-bit Windows DLLs:
+The distribution contains exactly one Windows x64 launcher, LICENSE-GPL-3.0,
+LICENSE-APACHE, LICENSE-MIT (isomage 2.1.0), this README and SHA256SUMS.txt. The EXE embeds BOTH 32-bit Windows DLLs:
   1. CyberGladiatorsFix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
   2. glide.dll — Apache-2.0 GameFrame Glide-to-OpenGL wrapper
 
@@ -118,7 +118,7 @@ Useful commands:
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-This is a pre-release testing artifact, NOT a public release.
+GitHub Actions artifacts are temporary test packages (currently retained 14 days), NOT public releases. Public distribution requires the reviewed tag-built six-file package attached to a GitHub Release. The CI workflow does not publish releases automatically.
 The baseline implementation and audit were merged into main on 2026-11-06.
 Merged PR #6 introduced the common owned-COM DirectDraw/MCI engine,
 selected automatically on normal launch, plus the verified original US
@@ -129,13 +129,39 @@ release must not claim universal hardware or window-manager compatibility.
 A green CI workflow checks compilation, PE exports and loading,
 but DOES NOT verify actual video or gameplay on a player's machine.
 
+PACKAGE AND RELEASE CHECKS
+--------------------------
+The package must contain exactly six files:
+  CyberGladiatorsFix.exe
+  LICENSE-GPL-3.0
+  LICENSE-APACHE
+  LICENSE-MIT
+  README.txt
+  SHA256SUMS.txt
+
+SHA256SUMS.txt covers the first five files. Verify with
+"sha256sum -c SHA256SUMS.txt" from the extracted package under Linux,
+or Get-FileHash SHA256 under PowerShell. The executable version suffix
+must match the source commit used for this distribution. Only the source
+game's original authenticated CUE/BIN data is installed.
+
+The build signature appears at the upper-right 4-pixel border of the
+centered 4:3 fighter-selection menu and disappears during gameplay.
+
+See docs/RELEASE_READINESS.md, docs/RELEASE_NOTES_v0.2.13.md and
+docs/RELEASE_PROCESS.md in the source repository for validated platforms,
+known limitations and the manual tag/release procedure. The latest
+Windows FR test of the new archive behavior and strict INI configuration
+passed on 2026-11-09. A future tag release still needs final validation
+on the exact tagged build.
+
 HISTORICAL TEST REFERENCES
 --------------------------
 Build #37, 2026-11-06, commit 63e0d7dd7490162bd2701f847a333f9f06d6d2f2:
 The user verified a complete fullscreen 4:3 AVI, a seamless transition
 with no desktop flashes, a stable 1920x1080 borderless game at ~59.6 FPS,
 FLAC soundtrack and clean process exit under Wine. Build #42 proved the
-one-file dual-DLL packaging and restored the previously installed DLL.
+one-file dual-DLL packaging and restored the previously installed DLL under its old policy; current builds **archive** older Glide DLLs as non-overwriting `.bak` files and **retain** GameFrame after exit.
 Subsequent builds removed failed/unused GDI-child experiments.
 
 Third-party GameFrame pin:
@@ -144,4 +170,5 @@ Third-party GameFrame pin:
   Apache-2.0, full license text in LICENSE-APACHE
 
 CyberGladiatorsFix license: GPL-3.0-or-later (LICENSE-GPL-3.0)
+isomage 2.1.0: MIT (original copyright 2025 Jack Danger in LICENSE-MIT)
 Authorship: legluondunet assisted by ChatGPT (OpenAI)

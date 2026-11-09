@@ -1,59 +1,50 @@
-# CyberGladiatorsFix — pre-release code audit
+# Release readiness and final source audit — candidate v0.2.13
 
-> **Status update — 2026-11-08: PR #6 merged to `main` (`c12d1eff`).** Four-way acceptance matrix completed. The `ee639245` common owned-COM DirectDraw/MCI runtime is automatically selected by verified US and FR editions. **All four combinations were field-tested:** US/Windows 11 (complete ~40s AVI), FR/Windows 11 (fresh `CYBERG.cue` install and successful native game), US/Wine-staging 11.17 on XFCE (keyboard skip without Alt+Tab, fullscreen/Alt+Tab and clean exit), and **FR/Wine-staging 11.17** (fresh `CYBERG.cue` installation, second launch, Espace skip, reversible Alt+Tab during playback, uninterrupted ~39s AVI on another run, FLAC and clean exit). The original US single-BIN `CYBER.cue` with exactly 150 undeclared all-zero audio pregap sectors was also accepted without changing source media. Prior CI [#42505502686](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42505502686) passed on `ee639245`. **The remaining sections below document the historical 2026-11-06 baseline; statements that Windows gameplay, first CD installation or FR/Wine are untested no longer describe the current branch.** This is still a *pre-release*: public release, tags, reproducible dependencies and cross-hardware claims are separate decisions.
+Audit updated **2026-11-09** against `main` at **`588f5f44ac69c6a1b3156462d32de6f41cd05144`** (merged PR #11). The intended first public version is **v0.2.13**; this document **does not authorize a tag, GitHub Release publication, or a claim of universal hardware compatibility**. The final release commit will change if this audit PR merges.
 
-> **Post-merge audit:** Follow-up source hygiene is documented in [POST_MERGE_AUDIT.md](POST_MERGE_AUDIT.md). That audit removes unused DirectDraw/MCI experiments, updates misleading comments, and retains legacy diagnostic escape hatches outside the default path. It is not a public release sign-off.
+## Decision
 
+**Release candidate technically prepared; public release not yet published.** Current source, Windows build/packaging checks and real-machine field evidence support a **limited-scope US/FR Windows 11 and Wine-staging 11.17 first release**. Before publication, run the final tag build from the exact merged source commit and inspect its attached package and SHA256SUMS. The upper-right menu signature is now also field-validated under **FR/native Windows** in PR #11, but the actual final tagged binary should still get a minimal end-to-end Windows smoke check. Do not substitute a GitHub Actions success for playing the retail game.
 
-Audit date: **2026-11-06**. Baseline: `main` commit `fbe8fb9f5f8d0cc39f2d8bfed2c2d79a6161e35e`, produced by merged PRs #1, #2 and #3. All proposed changes belong to `audit/pre-release-cleanup` until independently reviewed and integrated.
+There are **no public GitHub Releases** as of this audit. The CI artifact currently expires after 14 days and must be uploaded to a GitHub Release for durable distribution.
 
-## What has been verified
+## Verified source and acceptance evidence
 
-- **Existing installed game**: build 90 was used under Wine-staging 11.17 (without a virtual desktop) and Proton/Wine 11.0. Both logs showed the two real `IDirectDraw::SetDisplayMode` calls redirected from 640×480×16 to 1920×1080×16, a 1440×1080 centered 4:3 video surface, handoff to the first real OpenGL swap, ~59.5 FPS after stabilization, exit code 0, and original Glide DLL restoration.
-- **Complete AVI**: a separate build-85 Proton test allowed approximately 40 seconds of Cinepak playback to complete naturally (`MCI_VIDEO mode="stopped"`). The build-90 tests skipped the video: they do not independently prove a second complete viewing.
-- **Windows CI**: `main` GameFrame workflow #94 completed with 41 x86 and 86 x64 Rust tests passing, Glide export/PE checks, Windows LoadLibrary smoke, embedded-payload checks and rejection of a missing-CD launch. The retired legacy nGlide-only workflow was not a distributable build.
-- **Known safeguards**: staged CUE/BIN extraction and post-copy manifest verification; SHA-256 gates on the retail EXE and embedded DLLs; symlink/unsafe-path rejection; per-installation mutex; fail-closed replacement; preservation of unknown `glide.dll`; single consolidated session log; CD audio FLAC without distributing copyrighted tracks.
+| Topic | Evidence and limitations |
+| --- | --- |
+| Editions | Only authenticated original **USA** and **French** retail CUE/BIN images. Exact original EXE / disc-resource hash profiles; fail closed on unknown versions. No standalone ISO or unsupported localized editions. |
+| First-time installation | FR/Windows: clean original `CYBERG.cue` install and gameplay. FR/Wine: clean `CYBERG.cue` install, second run, full AVI and FLAC. US/Wine: clean original USA CUE/BIN installation, 342 extracted files, 14 FLAC tracks and 355 authenticated CD resources verified in the 2026-11-08 23:55:56 log for build `0.2.13-cf9001d3`. US/Windows: complete intro/normal common-engine acceptance previously documented in PR #6. |
+| Common runtime | Merged [PR #6](https://github.com/legluondunet/CyberGladiatorsFix/pull/6): one project-owned DirectDraw v1 COM/MCI/WinMM codepath for both editions and both platforms. Only focus/window-manager adaptation is host-specific; there is no duplicate default video engine. Merged [PR #7](https://github.com/legluondunet/CyberGladiatorsFix/pull/7) removed unused speculative and unreachable video/DirectDraw experiments. |
+| Video / input / fullscreen | Real field testing of natural ~39–40-second Cinepak playback, keyboard skip, reversible Alt+Tab, first real OpenGL swap handoff and 4:3 aspect under Windows 11 and Wine/XFCE. Default owned COM wrapper avoids physically changing the desktop resolution, as verified in the observed logs; behavior on all window managers and GPUs is **not** guaranteed. |
+| Audio / display | Native MCI AVI, mandatory FLAC CD audio, 640×480 logical Glide, centered 4:3 at desktop resolution, GameFrame/OpenGL ~60 FPS steady-state and normal exit. The archived old Glide DLL is **not restored** after exit: the SHA-256-verified bundled GameFrame stays installed, and a second same-build launch keeps it without creating a new archive. |
+| Menu signature | [PR #8](https://github.com/legluondunet/CyberGladiatorsFix/pull/8) added conditional transparent text; [PR #9](https://github.com/legluondunet/CyberGladiatorsFix/pull/9) places **`CyberGladiatorsFix v<version>-<8-character commit>`** at the 4:3 menu's upper-right edge with **4-pixel margin**. The user validated this latest position **visually on FR and US editions**. US Wine log: `CYBER_MENU_SIGNATURE_PROBE poll=2 visible=1`, `poll=76 visible=0`, `CYBER_MENU_SIGNATURE_STYLE ... top_right=1 edge_margin_px=4`; the palette used `fallback rgb=[99,94,137]`. In-menu visibility is image-heuristic-based; fonts visually approximate original text, not extracted proprietary glyphs. |
+| CI | [PR #11 Windows workflow #42574709816](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42574709816) **success** for merged PR #11 runtime; [PR #10 audit workflow #42535279910](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42535279910) previously **success** with six-file package, MIT notice and independent five-hash verification. The combined PR #10+11 merge candidate must receive its **own** green CI. No CI test plays the retail game. |
 
-These are **source inspection and observed tests**, not independent proof that every operating-system or display-driver scenario is correct.
+## Code and distribution scope
 
-## Implemented in this audit PR
+- **One download executable:** `CyberGladiatorsFix.exe` for Windows x64, also runnable under supported Wine/Proton. It embeds its x86 GameFrame/Glide DLL and the project WinMM/CDDA DLL. No proprietary original game data, copyrighted music, nGlide, DXVK or sidecar executable is redistributed.
+- On first use, run beside one original CUE/BIN set. The game is staged, validated and installed; subsequent runs need no CUE/BIN. `--verify` and automatic launch **both** require strict retail resource/IQ SHA-256 integrity. CDDA/FLAC always runs through the bundled bridge; the only user INI setting is `[Video] SkipIntro`.
+- `glide.dll` replacement compares to the bundled GameFrame SHA-256. An older/unknown file is moved to `glide.dll.bak` or a collision-free hashed/numbered `.bak` without overwriting existing backups, then GameFrame is installed and **retained after exit**. A matching GameFrame is reused. PR #11's FR/Windows logs validate both archive collision and identical second launch. Source: `src/gameframe.rs`.
+- A single session log `CyberGladiatorsFix.log` is written next to the EXE; it contains version-commit, observed host information, edition, integrity events and result. The original source images and verified immutable CD assets remain untouched.
+- **Licenses:** project GPL-3.0-or-later; GameFrame pinned to `tanepiper/game-frame@f195a074a63cc150673c38becdec696163b0b3d1`, Apache-2.0. The package contains `LICENSE-GPL-3.0` and `LICENSE-APACHE`. Distribution hardening also includes the original MIT notice (`LICENSE-MIT`) for runtime ISO parser `isomage 2.1.0` (copyright 2025 Jack Danger).
+- **Distribution content:** executable, `README.txt`, `LICENSE-GPL-3.0`, `LICENSE-APACHE`, `LICENSE-MIT` and `SHA256SUMS.txt`. No game EXE, `.cue`, `.bin`, `.flac` or unpacked DLL.
+- **Non-goals for this release:** add ISO, additional languages, replacement game assets, experimental nGlide/DXVK modes, a new SDL input subsystem or rewriting `cdda/src/video_trace.rs`.
 
-1. **Interrupted-session recovery**: exact SHA-256 allowlist includes CI GameFrame artifacts #90–#94, plus earlier known builds. Tests assert each new entry. Unknown or altered DLLs are still rejected.
-2. **One distributable CI pipeline**: retire `.github/workflows/windows.yml`, which built an x64 EXE **without** the required GameFrame wrapper. Move its unique CLI/log safety checks to the real bundled GameFrame workflow.
-3. **Release-build traceability**: check out the PR's actual head commit and embed the checked-out commit's short hash in `--version` instead of a temporary PR merge SHA. Generate `SHA256SUMS.txt` for every packaged file.
-4. **Accurate names and messages**: `launch_gameframe` replaces the former internal `launch_gameframe_test` name, with no changed launch behavior. Logs now distinguish a *requested* Wine hook from a *confirmed* DirectDraw call. Clarify default GameFrame versus legacy opt-in nGlide/DXVK diagnostics.
-5. **Clear release information**: `docs/DISTRIBUTION.md` replaces the stale experimental artifact guide; `README.md` and the package describe the current `main` status and the remaining release gates. Artifacts are explicitly labeled **PreRelease**, not published releases.
+## Remaining bounded risks — explicit release decisions
 
-This PR deliberately does **not** rewrite Glide/OpenGL, native WinMM/MCI sequencing, DirectDraw ABI, CD extraction, or the binary patch offsets that were validated in the field.
+| Priority | Risk / decision |
+| --- | --- |
+| **Pre-publication gate** | Tag only after this audit PR is merged and CI passes at that exact head. **Build and check the version-matched `v0.2.13` tag**. Match the 8-character source commit in the EXE and checksum sheet; do not build from a temporary PR merge ref. |
+| **Pre-publication gate** | **FR/native Windows** already confirms the final upper-right signature, fullscreen, FLAC and clean exit (9 Nov). Repeat a brief smoke test using the **exact tag-built binary**, not solely earlier PR artifacts. The latest Glide archive/INI change has not received an additional US/Wine field log. |
+| **Pre-publication gate** | Verify the final **tagged** CI package exactly has the six expected files, that five SHA-256 entries validate, that the `--version` source suffix matches the tag commit, then upload the immutable package to a draft GitHub Release and inspect published download links. Retain CI as a disposable 14-day build artifact only. |
+| **Documented limitation** | `Cargo.lock` files for the root and x86 bridge are not tracked, `rust-toolchain@stable` / `windows-latest` move over time. The upstream wrapper source is pinned, but **fully reproducible byte-for-byte builds are not yet guaranteed**. Do not describe the package as reproducible. Follow up by introducing reviewed lockfiles and toolchain pins in a separate PR with CI and a final host recheck. |
+| **Documented limitation** | Actual Windows 10, other hardware and Wine/Proton versions have not all been verified in this final tag cycle; make support claims by edition and tested platform, not universal. |
+| **Deferred maintenance** | `cdda/src/video_trace.rs` is large. Refactor only after release, with field-verified behavior tests. Legacy diagnostic escapes remain strictly opt-in, not part of the advertised supported features. |
 
-## Risk assessment
+## Release procedure
 
-| Priority | Area | Finding and release decision |
-| --- | --- | --- |
-| **Blocking before public release** | Windows native gameplay | CI tests load the DLL, **not** the retail game; a real Windows 10/11 test must exercise intro, controls, 4:3 viewport, music, game exit and DLL restore |
-| **Blocking before public release** | Clean CUE/BIN installation | Existing-installation logs do not validate first-use extraction/patching/FLAC on a clean machine; test an original supported retail image end-to-end |
-| **Validate before release** | Physical display changes | Wine logs show identical 1920×1080 dimensions before and after the DirectDraw calls, but 16-bit depth is still forwarded. Neither physical display-mode/depth nor refresh-rate changes have been independently ruled out |
-| **Follow-up hardening** | Dependency reproducibility | This repository does not track a Cargo.lock for the root and x86 bridge; CI uses stable Rust and downloads crates. For a release tag, consider committing tested lockfiles and applying `--locked`. GameFrame upstream is source-commit pinned |
-| **Follow-up hardening** | Older GameFrame DLL inventory | Recovery must recognize only known exact hashes. Every newly distributed artifact needs its recorded digest, or a dedicated authenticated installation receipt design; never match arbitrary Glide DLLs by filename alone |
-| **Keep isolated** | Legacy diagnostics | Old nGlide/DXVK/Vulkan experiments are still accessible by explicit developer flags and the corresponding opt-in diagnostic modules. Removing them wholesale would change untested behaviors; consider separate feature-gating/refactor after release |
-| **Follow-up hardening** | Branch/release policy | Confirm GitHub branch rules, CI requirements and signed/tagged release workflow before publishing publicly. A green CI run is not game-play verification |
+Follow [RELEASE_PROCESS.md](RELEASE_PROCESS.md) and use [RELEASE_NOTES_v0.2.13.md](RELEASE_NOTES_v0.2.13.md). **Do not create tags or publish a release as part of an audit-only PR.** The release manager decides whether to mark this first release as prerelease after the final smoke check.
 
-## Minimal grouped manual acceptance tests
-
-**Test A — Native Windows 10/11 + clean install (release gate)**
-
-Place an original verified USA CUE/BIN set next to the pre-release EXE in a **new, writable** folder. Run the EXE with no arguments. Confirm extraction finishes, verify the native fullscreen 4:3 Cinepak intro **without skipping**, ensure no undesirable physical resolution change, then check gameplay, input, FLAC soundtrack and the frame limit. Exit normally. Check that `CyberGladiatorsFix.log` reports successful installation, real game launch and clean exit, and that unknown/supplied Glide DLLs were preserved. Remove/relocate the CUE/BIN files and launch again: existing-install detection must work. Run `--verify` for strict integrity. On native Windows the `DDRAW_NATIVE_SUMMARY enabled` field should remain `0`; the Wine-only interception must never engage.
-
-**Test B — Linux regression (after this cleanup PR)**
-
-Run the pre-release binary under Wine-staging 11.17 without a virtual desktop and under Proton. Confirm full-screen video, transition, controls, FLAC, ~60 FPS steady-state and normal exit; inspect `DDRAW_NATIVE_SUMMARY` for the two successful native-size forward calls, zero shadow-limit events and the expected 4:3 geometry. For maximum confidence, allow one introduction to finish naturally rather than skipping.
-
-**Test C — Recovery safety (if available)**
-
-Simulate a terminated previous GameFrame session **only in a disposable copy** of the installation. Keep one correctly named and SHA-matching original Glide backup plus the byte-identical known prior project GameFrame DLL. The new EXE should recover and restore those bytes without altering unrelated files. An unknown or renamed DLL must fail closed instead of being silently overwritten. Do not tamper with the sole real installation.
-
-## Release decision
-
-A successful build/audit PR can merge to `main` after CI and basic Wine regression testing. **Do not publish the first public release** until the native Windows and first-time CUE/BIN tests are actually completed and reviewed. Preserve the last field-validated binary while evaluating any new artifact.
+The historical 2026-11-06 risk matrix is preserved through Git history. Its earlier statements that FR/Wine, clean CUE/BIN installs or Windows gameplay were untested were superseded by the field evidence above.
 
 Signed: **legluondunet assisted by ChatGPT (OpenAI)**.

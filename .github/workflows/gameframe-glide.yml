@@ -5,6 +5,7 @@ on:
   # This covers license, toolchain, packaging, CI and metadata updates too.
   push:
     branches: [main]
+    tags: ['v*']  # Verify tags; no automatic GitHub Release publishing.
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -30,6 +31,18 @@ jobs:
           ref: f195a074a63cc150673c38becdec696163b0b3d1
           path: third_party/game-frame
           persist-credentials: false
+
+      - name: Check version tag against Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $source = Get-Content 'Cargo.toml' -Raw
+          if ($source -notmatch '(?m)^version\s*=\s*"([^"]+)"\s*$') { throw 'Cargo.toml version not found' }
+          $expectedTag = "v$($Matches[1])"
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -cne $expectedTag) { throw "Tag $tag does not match manifest $expectedTag" }
+          Write-Host "Verified release tag: $tag"
 
       - name: Install 32-bit Windows Rust target
         uses: dtolnay/rust-toolchain@stable
@@ -200,22 +213,50 @@ jobs:
           if (Test-Path 'dist/CyberGladiatorsFix-PreRelease/glide.dll') { throw "One-file distribution must not ship a separate GameFrame glide.dll" }
           Copy-Item 'third_party/game-frame/LICENSE-APACHE' 'dist/CyberGladiatorsFix-PreRelease/LICENSE-APACHE'
           Copy-Item 'LICENSE' 'dist/CyberGladiatorsFix-PreRelease/LICENSE-GPL-3.0'
+          Copy-Item 'LICENSE-MIT' 'dist/CyberGladiatorsFix-PreRelease/LICENSE-MIT'
           Copy-Item 'docs/DISTRIBUTION.md' 'dist/CyberGladiatorsFix-PreRelease/README.txt'
           $release = 'dist/CyberGladiatorsFix-PreRelease'
           # Publish a reproducible byte-level receipt for the exact artifact.
-          $checksums = foreach ($name in @('CyberGladiatorsFix.exe', 'LICENSE-APACHE', 'LICENSE-GPL-3.0', 'README.txt')) {
+          $checksums = foreach ($name in @('CyberGladiatorsFix.exe', 'LICENSE-APACHE', 'LICENSE-GPL-3.0', 'LICENSE-MIT', 'README.txt')) {
             $digest = (Get-FileHash (Join-Path $release $name) -Algorithm SHA256).Hash.ToLowerInvariant()
             "$digest  $name"
           }
           $checksums | Set-Content (Join-Path $release 'SHA256SUMS.txt') -Encoding ascii
-          if ((Get-Content (Join-Path $release 'SHA256SUMS.txt')).Count -ne 4) {
-            throw 'Pre-release SHA256SUMS.txt must cover the executable and all three documents'
+          if ((Get-Content (Join-Path $release 'SHA256SUMS.txt')).Count -ne 5) {
+            throw 'Release SHA256SUMS.txt must cover the executable and all four documents'
           }
           $executables = @(Get-ChildItem $release -File | Where-Object { $_.Extension -eq '.exe' -or $_.Extension -eq '.dll' })
           if ($executables.Count -ne 1 -or $executables[0].Name -ne 'CyberGladiatorsFix.exe') {
             throw "One-file distribution must contain exactly one executable and no external DLL"
           }
           Get-FileHash (Join-Path $release 'CyberGladiatorsFix.exe') -Algorithm SHA256 | Format-List | Out-String | Write-Host
+
+      - name: Validate packaged release candidate SHA256SUMS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = 'dist/CyberGladiatorsFix-PreRelease'
+          $expected = @('CyberGladiatorsFix.exe','LICENSE-APACHE','LICENSE-GPL-3.0','LICENSE-MIT','README.txt','SHA256SUMS.txt') | Sort-Object
+          $found = @(Get-ChildItem -LiteralPath $root -File | ForEach-Object { $_.Name } | Sort-Object)
+          if (@(Compare-Object -ReferenceObject $expected -DifferenceObject $found).Count -ne 0) { throw 'Unexpected files in distribution folder' }
+          $rows = @(Get-Content -LiteralPath (Join-Path $root 'SHA256SUMS.txt'))
+          if ($rows.Count -ne 5) { throw 'Expected exactly five checksum rows' }
+          $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+          foreach ($line in $rows) {
+            if ($line -cmatch '^([0-9a-f]{64})  ([A-Za-z0-9.-]+)$') {
+              $hash = $Matches[1]
+              $file = $Matches[2]
+            } else { throw "Invalid SHA256SUMS row: $line" }
+            if ($file -eq 'SHA256SUMS.txt' -or $file -notin $expected -or !$seen.Add($file)) { throw "Duplicate/unexpected file: $file" }
+            $measured = (Get-FileHash -LiteralPath (Join-Path $root $file) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($measured -cne $hash) { throw "Bad SHA-256 for $file" }
+          }
+          if ($seen.Count -ne 5) { throw 'Missing checksum entries' }
+          $commit = (git rev-parse --short=8 HEAD).Trim()
+          $exe = Join-Path (Resolve-Path $root).Path 'CyberGladiatorsFix.exe'
+          $version = (& $exe --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or !$version.EndsWith("-$commit")) { throw "Wrong packaged version: $version, source=$commit" }
+          Write-Host 'Package validated: six files, five SHA-256 checksums, exact source suffix'
 
       - name: Smoke test native Windows x86 loader (no rendering)
         shell: pwsh
@@ -239,7 +280,7 @@ jobs:
       - name: Upload Windows x64 pre-release package
         uses: actions/upload-artifact@v4
         with:
-          name: CyberGladiatorsFix-Windows-x64-PreRelease
+          name: CyberGladiatorsFix-Windows-x64-${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'PreRelease' }}
           path: dist/CyberGladiatorsFix-PreRelease/
           if-no-files-found: error
           retention-days: 14
