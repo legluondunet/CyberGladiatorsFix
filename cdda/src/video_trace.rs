@@ -663,20 +663,37 @@ fn fit_4_3(width:i32,height:i32)->Option<(i32,i32,i32,i32)>{
     let w=w as i32;
     Some(((width-w)/2,(height-h)/2,w,h))
 }
+// Original US retail can address the intro through the old CD drive
+// (e.g. G:\cyber\splash4.avi), even after its files are installed locally.
+// Never depend on the original CD drive remaining mounted under Wine.
+// Match only this exact original movie, not arbitrary AVI paths.
+fn game_splash_source(file:&str)->bool{
+    let file=file.trim_matches('"');
+    if file.eq_ignore_ascii_case("splash4.avi"){return true;}
+    let Some((drive,tail))=file.split_once(':') else{return false;};
+    drive.len()==1 && drive.bytes().all(|b|b.is_ascii_alphabetic())
+        && (tail.eq_ignore_ascii_case(r"\cyber\splash4.avi")
+            || tail.eq_ignore_ascii_case("/cyber/splash4.avi"))
+}
 fn movie_open_game_hwnd(text:&str)->Option<usize>{
-    // Restrict to the exact known sequence: never rewrite CD audio, other
-    // AVI files, aliases, or a window handle unrelated to the verified game.
+    // Restrict to the exact game sequence. Preserve aliases, HWND, and
+    // video geometry; reject all unrelated paths, movies and MCI commands.
     let parts:Vec<&str>=text.split_ascii_whitespace().collect();
     if parts.len()!=8
-        || !parts[..4].iter().zip(["open","splash4.avi","alias","movie"])
-            .all(|(a,b)|a.eq_ignore_ascii_case(b))
+        || !parts[0].eq_ignore_ascii_case("open")
+        || !game_splash_source(parts[1])
+        || !parts[2].eq_ignore_ascii_case("alias")
+        || !parts[3].eq_ignore_ascii_case("movie")
         || !parts[4].eq_ignore_ascii_case("parent")
         || !parts[6].eq_ignore_ascii_case("style")
         || !parts[7].eq_ignore_ascii_case("popup") {return None;}
     parts[5].parse::<usize>().ok()
 }
-pub fn movie_open_game_hwnd_for_retry(text:&str)->bool{
-    movie_open_game_hwnd(text).is_some()
+/// If a child-style MCI driver rejects the host, retry the same locally
+/// extracted AVI with original popup style, never a dead legacy CD drive.
+pub fn movie_open_fallback(text:&str)->Option<CString>{
+    let game=movie_open_game_hwnd(text)?;
+    CString::new(format!("open splash4.avi alias movie parent {game} style popup")).ok()
 }
 fn exact_handle_command(text:&str)->Option<usize>{
     let parts:Vec<&str>=text.split_ascii_whitespace().collect();
@@ -1833,6 +1850,9 @@ pub fn rewrite_for_4_3(text:&str)->Option<CString>{
             *video_host().lock().unwrap_or_else(|e|e.into_inner())=Some(h);
             h
         };
+        if !text.split_ascii_whitespace().nth(1).unwrap_or_default().eq_ignore_ascii_case("splash4.avi"){
+            video_log("MCI_VIDEO_SOURCE original=legacy_absolute_CD_path local=splash4.avi policy=installed_verified_game_file");
+        }
         let rewritten=format!("open splash4.avi alias movie parent {} style child",h.surface);
         let Ok(encoded)=CString::new(rewritten) else{
             close_host("MCI_open_rewrite_failed");
@@ -2441,6 +2461,28 @@ mod fullscreen_tests {
     fn rewrite_matches_only_the_game_splash_sequence(){
         assert_eq!(movie_open_game_hwnd(
             "open splash4.avi alias movie parent 131252 style popup"),Some(131252));
+        assert_eq!(movie_open_game_hwnd(
+            r"open G:\cyber\splash4.avi alias movie parent 131252 style popup"),Some(131252));
+        assert_eq!(movie_open_game_hwnd(
+            r"open Z:\CYBER\SPLASH4.AVI alias movie parent 131252 style popup"),Some(131252));
+        assert_eq!(movie_open_game_hwnd(
+            "open F:/cyber/splash4.avi alias movie parent 131252 style popup"),Some(131252));
+        assert_eq!(movie_open_fallback(
+            r"open G:\cyber\splash4.avi alias movie parent 131252 style popup")
+            .unwrap().to_str().unwrap(),"open splash4.avi alias movie parent 131252 style popup");
+        // Never rewrite unrelated disks, traversal, other films or devices.
+        for forbidden in [
+            r"open G:\unrelated\splash4.avi alias movie parent 131252 style popup",
+            r"open G:\cyber\..\splash4.avi alias movie parent 131252 style popup",
+            r"open \\server\cyber\splash4.avi alias movie parent 131252 style popup",
+            "open G:cyber/splash4.avi alias movie parent 131252 style popup",
+            "open G:/cyber/other.avi alias movie parent 131252 style popup",
+            "open splash.avi alias movie parent 131252 style popup",
+            "open G:/cyber/splash4.avi alias other parent 131252 style popup",
+        ]{
+            assert_eq!(movie_open_game_hwnd(forbidden),None,"{forbidden}");
+            assert!(movie_open_fallback(forbidden).is_none(),"{forbidden}");
+        }
         assert_eq!(exact_handle_command("window movie handle 131252"),Some(131252));
         assert!(destination_command("put movie destination at 0 0 640 480"));
         assert!(!destination_command("put movie destination at 10 0 640 480"));

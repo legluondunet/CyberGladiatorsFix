@@ -431,11 +431,14 @@ pub unsafe extern "system" fn mciSendStringA(
         // fullscreen AVI surface keeps painting. Dispatch occurs outside
         // every WinMM/host mutex.
         video_trace::pump_virtual_avi_messages(text,result);
-        if result!=0 && substitute.is_some() && video_trace::movie_open_game_hwnd_for_retry(text){
-            // An unsupported child-style MCI driver must not prevent game
-            // startup. Revert to the original AVI open and log the fallback.
-            result=native(cmd,out,len,hwnd);
-            log(&format!("AVI_4X3 MCI_OPEN_FALLBACK original_result={result}"));
+        if result!=0 && substitute.is_some(){
+            if let Some(fallback)=video_trace::movie_open_fallback(text){
+                // Child-style MCI may be unsupported. Retry with the same
+                // locally installed, strictly verified splash4.avi instead
+                // of the potentially unavailable original CD drive letter.
+                result=native(fallback.as_ptr(),out,len,hwnd);
+                log(&format!("AVI_4X3 MCI_OPEN_FALLBACK source=local_splash4.avi result={result}"));
+            }
         }
     }
     if let Some(ref text)=command{
