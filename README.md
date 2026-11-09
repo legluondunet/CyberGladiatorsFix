@@ -102,8 +102,7 @@ For normal use only a double-click is necessary. The legacy nGlide diagnostics r
 The **CyberGladiatorsFix/CyberGladiatorsFix.ini** text file is distinct from the game's binary **cyber.ini**:
 
 - **[Video] SkipIntro=0** — play the original introduction (default).
-- **[Audio] EnableCDDA=1** — virtual CD audio using music/TrackNN.flac (default).
-- **[Integrity] AllowModifiedIQ=0** — strict verification (default). Setting 1 allows only same-size differences in known original iq/iqNN.dat files during launch, without modifying them or trusting the altered hashes. The **--verify** command stays strict.
+**CDDA/FLAC playback is required** and enabled automatically. **IQ data integrity and all original retail resource SHA-256 checks are always strict**, both at launch and with `--verify`; no opt-out or special user setting exists. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
 
 A single **CyberGladiatorsFix.log**, next to the EXE, records the system and display configuration, effective game options, integrity checks, video/Glide/FLAC behavior and normal or abnormal exit. No separate video player log is created.
 
