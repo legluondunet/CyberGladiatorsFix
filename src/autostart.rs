@@ -56,8 +56,8 @@ pub fn prepare(root:&Path,selected:Option<&Path>)->Result<(),String>{
         }
         crate::show("AUTO_DETECT existing_game=1 disc_search=skipped",root);
         settings::ensure(&game)?;
-        // Prove every original game resource and exact SHA-256-gated EXE
-        // against the previous manifest before moving any old FLAC files.
+        // Strictly check the original EXE and immutable CD assets. After installation,
+        // game-writable IQ files are required to exist, but are not rehashed.
         crate::show(&format!("AUTO_INTEGRITY_PRECHECK {}",verify::verify_install_content(root)?),root);
         let moved=migration::migrate(&game)?;
         if moved>0{crate::show(&format!("AUTO_MUSIC_MIGRATION moved_tracks={moved} destination=music/ legacy_manifest_backup=preserved"),root);}
@@ -81,8 +81,8 @@ pub fn prepare(root:&Path,selected:Option<&Path>)->Result<(),String>{
         let report=install::install(&cue,&game,root)?;
         crate::show(&format!("AUTO_INSTALL {report}"),root);
     }
-    // Check again independently, including the newly migrated music/
-    // entries and immutable original CYBER.EXE.bak.
+    // Recheck immutable resources, migrated music, exact EXE backup and IQ
+    // presence; the game may have rewritten IQ contents.
     crate::show(&format!("AUTO_INTEGRITY_POSTCHECK {}",verify::verify_install_content(root)?),root);
     Ok(())
 }
