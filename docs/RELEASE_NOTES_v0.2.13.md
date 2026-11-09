@@ -24,10 +24,10 @@ The download is one Windows x64 executable, `CyberGladiatorsFix.exe`, embedding 
 | --- | --- | --- |
 | US | Native Windows 11 | Original AVI, GameFrame, audio, focus and exit tested on PR #6; latest `.bak` and INI policy from PR #11 has not had a separate US/Windows field log in this cycle. |
 | FR | Native Windows 11 | Clean original CUE/BIN installation and common engine tested on PR #6; **2026-11-09 PR #11 field tests** confirmed the final upper-right signature, MCI/AVI and FLAC, safe `.bak` name collision, unchanged 1920×1200 desktop mode, successful exit and second same-build launch with `action=keep_existing`. |
-| US | Wine-staging 11.17 / XFCE | Clean CUE/BIN install, 14 FLAC tracks, 4:3 fullscreen, original MCI, menu signature **visible/hidden at correct times**, steady ~59.5 FPS and clean exit; user confirmed final upper-right position. |
+| US | Wine-staging 11.17 / XFCE | Clean CUE/BIN install previously validated. A further **2026-11-09 PR #12** run (`0.2.13-731aa136`) verified that the game's `G:\\cyber\\splash4.avi` request is redirected to the authenticated local `splash4.avi` even with the CD mounted; full ~39-second AVI, Alt+Tab, first OpenGL frame, menu signature, FLAC playback, ~59.5 FPS and clean exit were observed. User reported no visual issues. |
 | FR | Wine-staging 11.17 / XFCE | Clean install, second launch, full ~39s intro, video skip, Alt+Tab, audio and clean exit; user confirmed final upper-right signature. |
 
-These are real-world acceptance results from different candidate commits. **The exact final tagged binary still requires a smoke check**; the latest archive/INI policy is field-validated on FR/Windows, but not yet repeated on the US/Wine and FR/Wine combinations. No universal Windows, Wine, Proton, GPU or window-manager compatibility is claimed.
+These are real-world acceptance results from different candidate commits. **The exact final tagged binary still requires a smoke check**; the latest archive/INI policy is field-validated on FR/Windows and the PR #12 US/Wine build; the FR/Wine combination has not been rerun against that exact commit. No universal Windows, Wine, Proton, GPU or window-manager compatibility is claimed.
 
 ## Install / use
 
@@ -55,6 +55,6 @@ These are real-world acceptance results from different candidate commits. **The 
 - Main repository: https://github.com/legluondunet/CyberGladiatorsFix
 - [Pre-release acceptance and source audit](RELEASE_READINESS.md)
 - [Final tag/package/release procedure](RELEASE_PROCESS.md)
-- [Merged common-engine PR #6](https://github.com/legluondunet/CyberGladiatorsFix/pull/6), [menu signature PRs #8](https://github.com/legluondunet/CyberGladiatorsFix/pull/8) and [#9](https://github.com/legluondunet/CyberGladiatorsFix/pull/9), [archive and internal-settings PR #11](https://github.com/legluondunet/CyberGladiatorsFix/pull/11)
+- [Merged common-engine PR #6](https://github.com/legluondunet/CyberGladiatorsFix/pull/6), [menu signature PRs #8](https://github.com/legluondunet/CyberGladiatorsFix/pull/8) and [#9](https://github.com/legluondunet/CyberGladiatorsFix/pull/9), [archive and internal-settings PR #11](https://github.com/legluondunet/CyberGladiatorsFix/pull/11), [local-AVI-path fix PR #12](https://github.com/legluondunet/CyberGladiatorsFix/pull/12)
 
 **legluondunet assisted by ChatGPT (OpenAI)**
