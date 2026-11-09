@@ -29,7 +29,34 @@ fn safe_manifest_path(s:&str)->bool{
     if s.is_empty()||s.contains(['\t','\n','\r',':','\\'])||p.is_absolute(){return false;}
     p.components().all(|c|matches!(c,Component::Normal(_)))
 }
-/// Always verify every original CD asset, including IQ files.
+// Only files actually below the game's top-level iq/ directory may change
+// after installation. Similar prefixes (e.g. iq_backup/) are immutable.
+fn is_game_writable_iq(name:&str)->bool{
+    name.split_once('/').is_some_and(|(dir,rest)|
+        dir.eq_ignore_ascii_case("iq") && !rest.is_empty()
+    )
+}
+/// An installed IQ file must be present and a normal file. Its current size
+/// and hash belong to the running game, not to the original CD manifest.
+/// All other resources remain byte-for-byte verified against that manifest.
+fn verify_installed_resource(name:&str,expected_size:u64,expected_sha256:&str,path:&Path)
+    ->Result<bool,String>{
+    if is_game_writable_iq(name){
+        let m=fs::symlink_metadata(path).map_err(|e|format!("Missing IQ resource {name}: {e}"))?;
+        if m.file_type().is_symlink()||!m.is_file(){
+            return Err(format!("IQ resource is not a regular file: {name}"));
+        }
+        return Ok(true);
+    }
+    let (actual_size,actual_hash)=file_hash(path)?;
+    if actual_size!=expected_size||actual_hash!=expected_sha256 {
+        return Err(asset_mismatch_message(name,expected_size,expected_sha256,actual_size,&actual_hash));
+    }
+    Ok(false)
+}
+/// Original CD assets are SHA-256-verified during fresh staged installation.
+/// For existing installations and --verify, check game-writable iq/ files
+/// for presence only, and keep strict hash checks on every other resource.
 /// CDDA and integrity protections are internal and cannot be disabled in INI.
 pub fn verify(root:&Path)->Result<String,String>{
     verify_assets(root,true)
@@ -49,7 +76,7 @@ fn verify_assets(root:&Path,check_modules:bool)->Result<String,String>{
     if manifest.len()>4*1024*1024||!manifest.starts_with("# CyberGladiatorsFix manifest v1\n"){
         return Err("Missing or invalid extraction manifest".into());
     }
-    let mut count=0usize;let mut bytes=0u64;
+    let mut count=0usize;let mut bytes=0u64;let mut iq_files=0usize;
     let mut seen=std::collections::BTreeSet::<String>::new();
     for line in manifest.lines().skip(1){
         let mut parts=line.split('\t');
@@ -69,10 +96,7 @@ fn verify_assets(root:&Path,check_modules:bool)->Result<String,String>{
             let meta=fs::symlink_metadata(&path).map_err(|e|format!("Missing manifest path {}: {e}",path.display()))?;
             if meta.file_type().is_symlink(){return Err(format!("Symlink in manifest path: {}",path.display()));}
         }
-        let (actual_size,actual_hash)=file_hash(&path)?;
-        if actual_size!=size||actual_hash!=hash {
-            return Err(asset_mismatch_message(name,size,hash,actual_size,&actual_hash));
-        }
+        if verify_installed_resource(name,size,hash,&path)?{iq_files+=1;}
         count+=1;bytes+=size;
     }
     let audio=if check_modules{
@@ -83,7 +107,7 @@ fn verify_assets(root:&Path,check_modules:bool)->Result<String,String>{
             "embedded WinMM bridge verified; FLAC CD audio selected"
         }else{"legacy system WinMM import"}
     }else{"retail assets checked before module installation"};
-    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), {audio}; all assets match original CD"))
+    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} original manifest bytes), {audio}; immutable_resources_sha256_verified={} IQ_files_presence_only={iq_files} IQ_hash_and_size_not_checked_after_install=1; original CD IQ hashes remain recorded in manifest",count-iq_files))
 }
 pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
     launch_with_video_delay(root,logo,trace,passthru_noop,0)
@@ -569,11 +593,39 @@ mod shared_default_ddraw_tests {
 mod experimental_launch_tests {
     use super::*;
     #[test]
-    fn strict_iq_integrity_rejects_modified_data_by_default(){
-        let changed=asset_mismatch_message("iq/iq40.dat",3696,"recorded",3696,"changed");
-        assert!(changed.contains("iq/iq40.dat"));
-        assert!(changed.contains("expected size=3696, SHA-256=recorded"));
-        assert!(changed.contains("actual size=3696, SHA-256=changed"));
+    fn only_real_iq_directory_is_writable_after_install(){
+        for name in ["iq/iq40.dat","IQ/iq40.dat","iq/subdir/state.dat"]{
+            assert!(is_game_writable_iq(name),"{name}");
+        }
+        for name in ["iq","iq40.dat","iq_extra/a.dat","graphics/iq/iq40.dat",
+                     "music/Track02.flac","iq\\iq40.dat","iq/"]{
+            assert!(!is_game_writable_iq(name),"{name}");
+        }
+    }
+    #[test]
+    fn installed_iq_accepts_game_changes_but_not_missing_or_directory_entries(){
+        let dir=std::env::temp_dir().join(format!("CyberIQPresence-{}",
+            std::process::id()));
+        let _=fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let iq=dir.join("iq40.dat");
+        let clean=b"original";
+        fs::write(&iq,clean).unwrap();
+        let clean_hash=crate::patch::digest(clean);
+        assert_eq!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
+        fs::write(&iq,b"modified").unwrap(); // same size, different hash
+        assert_eq!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
+        fs::write(&iq,b"modified and longer").unwrap(); // different size, still the game's file
+        assert_eq!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
+        assert!(verify_installed_resource("graphics/shell.fnt",clean.len() as u64,&clean_hash,&iq)
+            .unwrap_err().contains("Game asset has changed"));
+        fs::remove_file(&iq).unwrap();
+        assert!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq)
+            .unwrap_err().contains("Missing IQ resource"));
+        fs::create_dir(&iq).unwrap();
+        assert!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq)
+            .unwrap_err().contains("not a regular file"));
+        fs::remove_dir_all(&dir).unwrap();
     }
     #[test]
     fn asset_change_error_reports_both_size_and_hash_without_approving_changes(){
