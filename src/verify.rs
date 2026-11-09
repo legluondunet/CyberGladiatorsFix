@@ -29,35 +29,18 @@ fn safe_manifest_path(s:&str)->bool{
     if s.is_empty()||s.contains(['\t','\n','\r',':','\\'])||p.is_absolute(){return false;}
     p.components().all(|c|matches!(c,Component::Normal(_)))
 }
-/// Exact IQ record keys on the original USA CD. Do not accept unrelated
-/// files, paths, extensions, changed lengths or symlinks in this policy.
-fn same_size_iq_asset(name:&str,expected_size:u64,actual_size:u64)->bool{
-    let Some(num)=name.strip_prefix("iq/").and_then(|s|s.strip_prefix("iq"))
-        .and_then(|s|s.strip_suffix(".dat")) else{return false;};
-    expected_size==actual_size && num.len()==2 && num.bytes().all(|b|b.is_ascii_digit())
-}
+/// Always verify every original CD asset, including IQ files.
+/// CDDA and integrity protections are internal and cannot be disabled in INI.
 pub fn verify(root:&Path)->Result<String,String>{
-    verify_assets(root,false,true).map(|(summary,_)|summary)
+    verify_assets(root,true)
 }
-/// A launch can opt in to exact-path, same-size IQ differences without
-/// rewriting the manifest or asset. --verify always calls the strict mode.
 pub fn verify_launch_assets(root:&Path)->Result<String,String>{
-    let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
-    let (summary,warnings)=verify_assets(root,allow,true)?;
-    for message in warnings {crate::show(&message,root);}
-    Ok(summary)
+    verify_assets(root,true)
 }
-/// Before any migration/reinstall, verify the retail backed-up EXE and the
-/// complete CD manifest without requiring a renderer that is staged only
-/// during startup. The integrity exception applies solely to same-size IQ
-/// data and never rewrites the manifest.
 pub fn verify_install_content(root:&Path)->Result<String,String>{
-    let allow=settings::read_allow_modified_iq(&root.join(DIR))?;
-    let (summary,warnings)=verify_assets(root,allow,false)?;
-    for warning in warnings{crate::show(&warning,root);}
-    Ok(summary)
+    verify_assets(root,false)
 }
-fn verify_assets(root:&Path,allow_modified_iq:bool,check_modules:bool)->Result<(String,Vec<String>),String>{
+fn verify_assets(root:&Path,check_modules:bool)->Result<String,String>{
     let game=root.join(DIR);
     let meta=fs::symlink_metadata(&game).map_err(|e|format!("Missing game directory: {e}"))?;
     if !meta.is_dir()||meta.file_type().is_symlink(){return Err("Game folder is not a regular directory".into());}
@@ -66,7 +49,6 @@ fn verify_assets(root:&Path,allow_modified_iq:bool,check_modules:bool)->Result<(
     if manifest.len()>4*1024*1024||!manifest.starts_with("# CyberGladiatorsFix manifest v1\n"){
         return Err("Missing or invalid extraction manifest".into());
     }
-    let mut warnings=Vec::<String>::new();
     let mut count=0usize;let mut bytes=0u64;
     let mut seen=std::collections::BTreeSet::<String>::new();
     for line in manifest.lines().skip(1){
@@ -89,15 +71,7 @@ fn verify_assets(root:&Path,allow_modified_iq:bool,check_modules:bool)->Result<(
         }
         let (actual_size,actual_hash)=file_hash(&path)?;
         if actual_size!=size||actual_hash!=hash {
-            if allow_modified_iq && same_size_iq_asset(name,size,actual_size){
-                // User explicitly chose to retain same-size data the game
-                // may update. Never silently rewrite the original CD receipt.
-                warnings.push(format!(
-                    "IQ_INTEGRITY_WARNING allowed only for this launch: {name} changed (expected size={size}, SHA-256={hash}; actual size={actual_size}, SHA-256={actual_hash}). Strict --verify will still fail; preserve a copy to compare with the CD."
-                ));
-            }else{
-                return Err(asset_mismatch_message(name,size,hash,actual_size,&actual_hash));
-            }
+            return Err(asset_mismatch_message(name,size,hash,actual_size,&actual_hash));
         }
         count+=1;bytes+=size;
     }
@@ -106,14 +80,10 @@ fn verify_assets(root:&Path,allow_modified_iq:bool,check_modules:bool)->Result<(
         else{crate::bundle::verify()?;}
         if patch::cdda_active(&game.join("cyber.exe"))?{
             cdda::verify(&game)?;
-            if settings::read_cdda(&game)?{
-                "embedded WinMM bridge verified; FLAC CD audio selected"
-            }else{"embedded WinMM bridge verified; system CD audio selected"}
+            "embedded WinMM bridge verified; FLAC CD audio selected"
         }else{"legacy system WinMM import"}
     }else{"retail assets checked before module installation"};
-    let label=if warnings.is_empty(){"all assets match original CD"}
-        else{"modified IQ data permitted by explicit INI option; other assets match original CD"};
-    Ok((format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), {audio}; {label}"),warnings))
+    Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} bytes), {audio}; all assets match original CD"))
 }
 pub fn launch(root:&Path,logo:bool,trace:bool,passthru_noop:bool)->Result<Child,String>{
     launch_with_video_delay(root,logo,trace,passthru_noop,0)
@@ -165,7 +135,7 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
     let skip_intro=settings::read(&game)?;
-    let enable_cdda=settings::read_cdda(&game)?;
+    let enable_cdda=settings::CDDA_ENABLED;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
     let edition=if crate::fr_patch::owns(&exe)?{"FR"}else{"US"};
@@ -376,7 +346,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // SkipIntro=0. Never touch the game's binary cyber.ini.
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
-    let enable_cdda=settings::read_cdda(&game)?;
+    let enable_cdda=settings::CDDA_ENABLED;
     if avi_4x3 && skip {
         return Err("Native AVI 4:3 host requires [Video] SkipIntro=0; INI not modified".into());
     }
@@ -572,9 +542,6 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     if let Ok(hash)=patch::file_hash(&game.join(cdda::DLL_NAME)){
         diagnostics::log(root,"MODULE",&format!("WinMM video/CDDA bridge sha256={hash}"));
     }
-    if let Ok(iq)=settings::read_allow_modified_iq(&game){
-        diagnostics::log(root,"CONFIG",&format!("effective AllowModifiedIQ={} (strict --verify unaffected)",u8::from(iq)));
-    }
     diagnostics::log(root,"CONFIG",&format!(
         "GAME launch: SkipIntro={} EnableCDDA={} NGLIDE_BACKEND={} NGLIDE_RESOLUTION=1 NGLIDE_ASPECT=1 NGLIDE_REFRESH={} NGLIDE_VSYNC=1 NGLIDE_GAMMA=5 NGLIDE_SPLASH={} DXVK_defer_surface={} trace={}",
         u8::from(skip),u8::from(enable_cdda),if normal_repair {backend_override.unwrap_or("1")}else{backend_override.unwrap_or("0")},
@@ -602,16 +569,11 @@ mod shared_default_ddraw_tests {
 mod experimental_launch_tests {
     use super::*;
     #[test]
-    fn iq_opt_in_limits_to_exact_cd_paths_and_unchanged_sizes(){
-        for name in ["iq/iq00.dat","iq/iq01.dat","iq/iq40.dat","iq/iq99.dat"]{
-            assert!(same_size_iq_asset(name,3696,3696));
-            assert!(!same_size_iq_asset(name,3696,3695));
-        }
-        for bad in [
-            "iq/iq0.dat","iq/iq100.dat","iq/iqAA.dat","iq/IQ01.dat",
-            "iq/iq01.dat.bak","iq/other.dat","graphics/iq01.dat",
-            "iq/../iq01.dat","iq\\iq01.dat","iq/iq99.exe",
-        ]{assert!(!same_size_iq_asset(bad,3696,3696),"{bad}");}
+    fn strict_iq_integrity_rejects_modified_data_by_default(){
+        let changed=asset_mismatch_message("iq/iq40.dat",3696,"recorded",3696,"changed");
+        assert!(changed.contains("iq/iq40.dat"));
+        assert!(changed.contains("expected size=3696, SHA-256=recorded"));
+        assert!(changed.contains("actual size=3696, SHA-256=changed"));
     }
     #[test]
     fn asset_change_error_reports_both_size_and_hash_without_approving_changes(){

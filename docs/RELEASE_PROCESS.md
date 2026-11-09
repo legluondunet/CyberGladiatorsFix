@@ -7,7 +7,7 @@
 - Merge the final audit-only PR after its green Windows CI run; confirm `main` points to the expected merge SHA.
 - Confirm no runtime feature changes are pending and the supported retail set remains original **US and FR CUE/BIN** only.
 - Confirm `Cargo.toml` reports `version = "0.2.13"`. The public tag must be precisely `v0.2.13`; do not publish a release under a tag that disagrees with the built launcher.
-- Confirm actual field evidence for Windows 11 and Wine 11.17. The last *upper-right* visual tweak was accepted on both editions; ideally perform a **final Windows 11 run of this release candidate** after this audit (menu, 4:3, audio, exit).
+- Confirm field evidence for Windows 11 and Wine-staging 11.17. The upper-right signature is accepted on FR/native Windows and both editions in earlier Wine testing. **PR #11** additionally validated the `.bak` name collision and repeated same-build `glide.dll` reuse on FR/Windows. Check the **exact tagged package** after this final audit (menu, 4:3, audio, exit); do not claim new changes received the same US/Wine test.
 - No tags, no GitHub Release, no GitHub Pages or distribution uploads until explicit maintainer approval.
 
 ## 2. Build provenance and tests
@@ -51,9 +51,9 @@ Use the exact distribution build, not an older PR artifact:
 1. Launch the verified original US or FR game via the one EXE, preferably once from a fresh writable folder with CUE/BIN and once after removing the source images.
 2. Confirm original MCI intro (natural finish or space skip), desktop display mode unchanged, 4:3 game output, input and Alt+Tab.
 3. Verify the unobtrusive `CyberGladiatorsFix v0.2.13-XXXXXXXX` signature is aligned to the **upper-right original 4:3 border** and is hidden during combat; check at least one native Windows 11 host and review the previously accepted US/FR Wine runs.
-4. Confirm FLAC CD audio, ~60 FPS after stabilization, clean process exit, and protection/restoration of any preinstalled user Glide DLL.
-5. Check `CyberGladiatorsFix.log` for `GAMEFRAME_MENU_SIGNATURE placement=upper_right_edge_4px_transparent`, `CYBER_MENU_SIGNATURE_PROBE` visibility transition, `CYBER_MENU_SIGNATURE_STYLE`, `GAME_EXIT exit_status=exit code: 0` and `SESSION END success`. The log proves instrumentation, not visual fidelity: visual acceptance remains a human check.
-6. Run strict `--verify`. Fail closed on unknown game assets. If problems emerge, **do not publish**; open a PR with the fix and repeat this checklist.
+4. Confirm mandatory FLAC CD audio, ~60 FPS after stabilization, clean process exit, and **non-overwriting `.bak` archive** of any mismatched old `glide.dll`, with bundled verified GameFrame **retained** after exit. Re-launch the same EXE and confirm `action=keep_existing` without a new backup.
+5. Check `CyberGladiatorsFix.log` for `GAMEFRAME_MENU_SIGNATURE placement=upper_right_edge_4px_transparent`, `CYBER_MENU_SIGNATURE_PROBE` visibility transition, `CYBER_MENU_SIGNATURE_STYLE`, `GAMEFRAME_GLIDE_POLICY action=keep_existing` (on identical second run), `GAME_EXIT exit_status=exit code: 0` and `SESSION END success`. The log proves instrumentation, not visual fidelity: visual acceptance remains a human check.
+6. Run strict `--verify`. Confirm generated `CyberGladiatorsFix.ini` contains only `[Video] SkipIntro` and the log reports required FLAC and strict IQ integrity. Fail closed on unknown game assets. If problems emerge, **do not publish**; open a PR with the fix and repeat this checklist.
 
 ## 5. Publish only after sign-off
 

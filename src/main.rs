@@ -47,14 +47,15 @@ CUE/BIN image. Subsequent launches verify the installation and start automatical
 One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
 (Apache-2.0) and the project's CyberGladiatorsFix.dll WinMM/CDDA bridge
 (GPLv3). They are SHA-256 verified before being installed beside CYBER.EXE.
-An existing third-party glide.dll is preserved byte-for-byte and restored
-after gameplay. A fresh installation keeps the embedded Glide DLL.
+Any older or unknown glide.dll is renamed to an unused .bak backup before
+the bundled verified GameFrame is installed; that GameFrame remains after exit.
 Original lossless CD music is stored in music/TrackNN.flac.
 No original game data is distributed. IQ data is never silently changed.
 
 A fresh, single CyberGladiatorsFix.log appears beside the launcher.
---verify always applies strict SHA-256 checks. The optional INI setting
-AllowModifiedIQ=1 permits only same-size IQ modifications during launch.
+CDDA/FLAC music is always on. Retail asset and IQ integrity is always
+strictly SHA-256 verified, including --verify and automatic launches.
+The user INI contains only [Video] SkipIntro.
 Both US and French retail discs are authenticated by exact EXE and resource
 hashes before installing or patching. A single-BIN raw disc with a verified
 150-sector zero pause before the first AUDIO INDEX 01 is accepted even when
@@ -188,7 +189,7 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
     let skip=settings::read(&game)?;
-    let enable_cdda=settings::read_cdda(&game)?;
+    let enable_cdda=settings::CDDA_ENABLED;
     if smooth_test && (skip||trace||logo) {
         return Err("--smooth-video-test requires SkipIntro=0 without --trace or --3dfx-logo; INI unchanged".into());
     }
@@ -216,8 +217,8 @@ fn user_launch(root:&Path,trace:bool,logo:bool,smooth_test:bool)->Result<(),Stri
 fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
     settings::ensure(&game)?;
-    let enable_cdda=settings::read_cdda(&game)?;
-    let mut previous_glide=gameframe::Session::begin(root,&game)?;
+    let enable_cdda=settings::CDDA_ENABLED;
+    let mut glide_session=gameframe::Session::begin(root,&game)?;
     // Start before spawning CYBER.EXE: its DirectDraw initialization may
     // switch the physical desktop mode before the first MCI AVI event.
     // This is passive, native-Windows/FR-only sampling; no hook or graphics
@@ -246,9 +247,11 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
             diagnostics::prelaunch_display_modes()
         ),root);
     }
-    let restored=previous_glide.restore();
-    match (result,restored){
-        (Err(game),Err(dll))=>Err(format!("{game}; original Glide restoration failed: {dll}")),
+    // Keep the verified embedded GameFrame DLL after exit; any original
+    // glide.dll stays archived in a unique .bak, never auto-restored.
+    let finalized=glide_session.finish();
+    match (result,finalized){
+        (Err(game),Err(dll))=>Err(format!("{game}; GameFrame finalization failed: {dll}")),
         (Err(game),_)=>Err(game),
         (_,Err(dll))=>Err(dll),
         (Ok(()),Ok(()))=>Ok(()),
@@ -263,7 +266,7 @@ fn smooth_vulkan_launch(root:&Path,early_release:bool,auto_fullscreen:bool)->Res
     if settings::read(&game)?{
         return Err("--smooth-video-test --nglide-vulkan requires [Video] SkipIntro=0; INI unchanged".into());
     }
-    let enable_cdda=settings::read_cdda(&game)?;
+    let enable_cdda=settings::CDDA_ENABLED;
     let child=verify::launch_smooth_vulkan(root,early_release,auto_fullscreen)?;
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=nGlide-Vulkan smooth_video=1 early_host_release={} auto_fullscreen={} guarded_wndproc_repair=1 trace=false external_helper=0 music_flac={}",
@@ -309,7 +312,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             autostart::prepare(root,None)?;
             let game=root.join(install::DIR);
             let mut glide=gameframe::Session::begin(root,&game)?;
-            glide.restore()?;
+            glide.finish()?;
             show(&format!("AUTO_INSTALL_ONLY verified: {}",verify::verify(root)?),root);
             return Ok(());
         },
@@ -441,7 +444,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         // Validate the text settings before modifying the game binary.
         settings::ensure(&target)?;
         let skip_intro=settings::read(&target)?;
-        let enable_cdda=settings::read_cdda(&target)?;
+        let enable_cdda=settings::CDDA_ENABLED;
         cdda::try_install_with_consent(root,&target,upgrade_cdda)?;
         let status=patch::apply(&exe)?;
         let audio=patch::set_cdda(&exe,true)?;

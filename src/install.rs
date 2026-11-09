@@ -351,14 +351,13 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
             if path!="cyber.exe" {manifest.push_str(&format!("{path}\t{}\t{hash}\n",asset.size));}
             if (i+1)%50==0 {println!("Extracted {}/{} files",i+1,files.len());}
         }
-        // Generate settings before patching. Fresh installs use the
-        // in-process WinMM/CDDA bridge and native fullscreen AVI by default;
-        // existing INIs are never modified by the launcher/update path.
+        // Generate [Video] preferences before patching. CDDA and strict IQ
+        // integrity are always-on internal behavior, not user settings.
+        // Existing INIs are only migrated to remove obsolete sections.
         settings::ensure(&staged)?;
-        let enable_cdda=settings::read_cdda(&staged)?;
         // WinMM is always proxied to keep fullscreen AVI, the DXVK repair
-        // and optional FLAC playback in one x86 DLL. Audio emulation is
-        // selected independently by the child process environment at launch.
+        // and always-on FLAC playback in one x86 DLL. The child process
+        // environment enables CDDA music without a user INI option.
         cdda::try_install(root,&staged)?;
         let exe=staged.join("cyber.exe");
         let outcome=patch::apply(&exe)?;
@@ -379,7 +378,7 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
         fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
         let audio_note=format!("{} lossless FLAC tracks saved in music/TrackNN.flac; {} tracks omitted (missing BIN files)",
             audio_report.extracted,audio_report.missing.len());
-        Ok(format!("Detected edition: {edition_name}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0, EnableCDDA=1), native 4:3 AVI and embedded WinMM bridge selected. Renderer: bundled open-source GameFrame staged at first launch. Audio: {}. Installed to {}.",
+        Ok(format!("Detected edition: {edition_name}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0 only; CDDA always enabled), native 4:3 AVI and embedded WinMM bridge selected. Renderer: bundled open-source GameFrame staged at first launch. Audio: {}. Installed to {}.",
             files.len(),outcome,audio_note,destination.display()))
     })();
     if operation.is_err(){let _=fs::remove_dir_all(&staged);}
