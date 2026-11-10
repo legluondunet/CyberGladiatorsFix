@@ -1,0 +1,85 @@
+name: Cleanup GameFrame Windows CI run history
+
+# Manually triggered only. Deletes *runs* of GameFrame Windows CI, never releases,
+# tags, or the separate v1.0.0 publication workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview only: do not delete anything (recommended first)'
+        required: true
+        type: boolean
+        default: true
+      confirmation:
+        description: 'To delete, uncheck dry_run and type DELETE-GAMEFRAME-CI-RUNS'
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cybergladiatorsfix-manual-gameframe-ci-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.repository == 'legluondunet/CyberGladiatorsFix' && github.ref == 'refs/heads/main'
+    name: Preview or delete completed GameFrame CI run history
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Cleanup only gameframe-glide.yml completed runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" ]]; then
+            echo "::error::Unexpected dry_run input"
+            exit 1
+          fi
+          if [[ "$DRY_RUN" == "false" && "$CONFIRMATION" != "DELETE-GAMEFRAME-CI-RUNS" ]]; then
+            echo "::error::Deletion refused: confirmation must be DELETE-GAMEFRAME-CI-RUNS"
+            exit 1
+          fi
+
+          # Paginate through *this workflow only*. It does not match any
+          # publish-v*.yml workflow or this cleanup workflow itself.
+          runs="$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/workflows/gameframe-glide.yml/runs?per_page=100" \
+            --jq '.workflow_runs[] | select(.status == "completed") | .id')"
+
+          if [[ -z "$runs" ]]; then
+            echo "No completed GameFrame CI runs to clean."
+            echo "No completed GameFrame CI runs found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          planned=0
+          deleted=0
+          while IFS= read -r run_id; do
+            [[ "$run_id" =~ ^[0-9]+$ ]] || { echo "::error::Invalid run ID"; exit 1; }
+            planned=$((planned + 1))
+            if [[ "$DRY_RUN" == "true" ]]; then
+              echo "PREVIEW: would delete GameFrame CI run $run_id"
+            else
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id" >/dev/null
+              deleted=$((deleted + 1))
+              echo "DELETED: GameFrame CI run $run_id"
+              # Avoid a burst of GitHub API write requests.
+              sleep 0.5
+            fi
+          done <<< "$runs"
+
+          {
+            echo "## GameFrame CI run cleanup"
+            echo ""
+            echo "- Target: \`gameframe-glide.yml\` only"
+            echo "- Completed runs found: $planned"
+            echo "- Actually deleted: $deleted"
+            echo "- Mode: $([[ "$DRY_RUN" == "true" ]] && echo preview || echo deletion)"
+            echo "- Publisher workflow, GitHub Releases, tags and source code: untouched"
+          } >> "$GITHUB_STEP_SUMMARY"
