@@ -1,0 +1,163 @@
+name: Publish CyberGladiatorsFix v1.0.0
+
+# Manual-only, like ScorchedPlanetFix. Never publish on push, PR or merge.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type publish-v1.0.0 to build, tag and publish the stable release"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cybergladiatorsfix-v1.0.0-publication
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    if: github.repository == 'legluondunet/CyberGladiatorsFix' && github.ref == 'refs/heads/main' && inputs.confirm == 'publish-v1.0.0'
+    permissions:
+      contents: read
+    # Reuse ALL the ordinary source-pinned Windows/GameFrame/WinMM checks.
+    # This is a fresh build of the exact workflow_dispatch main commit.
+    uses: ./.github/workflows/gameframe-glide.yml
+
+  publish:
+    name: Verify six-file package, create v1.0.0 tag and publish assets
+    needs: build-and-test
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: v1.0.0
+      ARCHIVE: CyberGladiatorsFix-v1.0.0-Windows-x64.zip
+      TAG_COMMIT: ${{ github.sha }}
+    steps:
+      - name: Checkout approved main source and release notes
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Guard exact main SHA, stable Cargo version, and absent public release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $head = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $head -cne $env:TAG_COMMIT) { throw 'Checked-out source SHA changed' }
+          $latest = (gh api "repos/$env:GITHUB_REPOSITORY/branches/main" --jq '.commit.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $latest -cne $env:TAG_COMMIT) { throw 'main changed or wrong selected SHA; restart publication' }
+          if (!(Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"1\.0\.0"\s*$' -Quiet)) {
+            throw 'Refusing mismatched or pre-release package version; require stable 1.0.0'
+          }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw 'v1.0.0 release already exists; refusing overwrite' }
+          $global:LASTEXITCODE = 0
+
+      - name: Download successful same-commit Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: CyberGladiatorsFix-Windows-x64-PreRelease
+          path: dist
+
+      - name: Validate exact six-file distribution, checksums and source version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = @('CyberGladiatorsFix.exe','LICENSE-APACHE','LICENSE-GPL-3.0','LICENSE-MIT','README.txt','SHA256SUMS.txt') | Sort-Object
+          $actual = @(Get-ChildItem dist -File | ForEach-Object { $_.Name } | Sort-Object)
+          if (@(Compare-Object -ReferenceObject $expected -DifferenceObject $actual).Count -ne 0) {
+            throw 'Release artifact must have exactly six expected files'
+          }
+          if (@(Get-ChildItem dist -Directory).Count -ne 0) { throw 'Nested distribution folders are forbidden' }
+          $checks = @(Get-Content dist/SHA256SUMS.txt)
+          if ($checks.Count -ne 5) { throw 'Expected exactly five original artifact hashes' }
+          $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+          foreach ($line in $checks) {
+            if ($line -cnotmatch '^([0-9a-f]{64})  ([A-Za-z0-9.-]+)$') { throw "Bad checksum row: $line" }
+            $digest = $Matches[1]; $name = $Matches[2]
+            if ($name -eq 'SHA256SUMS.txt' -or $name -cnotin $expected -or !$seen.Add($name)) {
+              throw "Unexpected or repeated checksum name: $name"
+            }
+            $actualHash = (Get-FileHash -LiteralPath (Join-Path dist $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualHash -cne $digest) { throw "Checksum mismatch: $name" }
+          }
+          if ($seen.Count -ne 5) { throw 'Incomplete original checksum manifest' }
+          $exe = (Resolve-Path dist/CyberGladiatorsFix.exe).Path
+          $version = (& $exe --version | Out-String).Trim()
+          $short = $env:TAG_COMMIT.Substring(0,8)
+          if ($LASTEXITCODE -ne 0 -or $version -cne "CyberGladiatorsFix 1.0.0-$short") {
+            throw "Binary version/source mismatch: $version, expected 1.0.0-$short"
+          }
+          Write-Host "Release build verified: $version, six files, five original SHA-256 checks"
+
+      - name: Package immutable ZIP, verify extracted bytes and prepare notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -Path dist/* -DestinationPath $env:ARCHIVE
+          Expand-Archive -Path $env:ARCHIVE -DestinationPath zip-verify -Force
+          $original = @(Get-ChildItem dist -File | ForEach-Object { $_.Name } | Sort-Object)
+          $extracted = @(Get-ChildItem zip-verify -File | ForEach-Object { $_.Name } | Sort-Object)
+          if (@(Compare-Object -ReferenceObject $original -DifferenceObject $extracted).Count -ne 0) {
+            throw 'ZIP contents do not match verified build'
+          }
+          foreach ($name in $original) {
+            $before = (Get-FileHash -LiteralPath (Join-Path dist $name) -Algorithm SHA256).Hash
+            $after = (Get-FileHash -LiteralPath (Join-Path zip-verify $name) -Algorithm SHA256).Hash
+            if ($before -cne $after) { throw "ZIP extraction changed $name" }
+          }
+          if (@(Get-ChildItem zip-verify -Directory).Count -ne 0) { throw 'ZIP contains a nested directory' }
+          $zipHash = (Get-FileHash $env:ARCHIVE -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$zipHash  $env:ARCHIVE" | Set-Content "$env:ARCHIVE.sha256" -Encoding ascii
+          $exeHash = (Get-FileHash dist/CyberGladiatorsFix.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          $notes = Get-Content docs/RELEASE_NOTES_v1.0.0.md -Raw
+          $notes += [Environment]::NewLine + [Environment]::NewLine + '## Verified release checksums' +
+            [Environment]::NewLine + "ZIP SHA-256: $zipHash" + [Environment]::NewLine + "EXE SHA-256: $exeHash"
+          $notes | Set-Content release-notes-published.md -Encoding utf8
+          Write-Host "Verified ZIP archive: $env:ARCHIVE ($zipHash)"
+
+      - name: Create immutable v1.0.0 tag only after all build checks pass
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $latest = (gh api "repos/$env:GITHUB_REPOSITORY/branches/main" --jq '.commit.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $latest -cne $env:TAG_COMMIT) { throw 'main advanced during release build; restart' }
+          $existing = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $ref = $existing | ConvertFrom-Json
+            if ($ref.object.type -cne 'commit' -or $ref.object.sha -cne $env:TAG_COMMIT) {
+              throw 'The v1.0.0 tag exists on an unexpected commit'
+            }
+          } else {
+            $global:LASTEXITCODE = 0
+            gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$env:RELEASE_TAG" -f "sha=$env:TAG_COMMIT" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Unable to create immutable release tag' }
+          }
+          $tag = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$env:RELEASE_TAG" --jq '.object.sha').Trim()
+          if ($LASTEXITCODE -ne 0 -or $tag -cne $env:TAG_COMMIT) { throw 'Published tag points to the wrong source' }
+
+      - name: Publish public stable release with verified ZIP and SHA-256
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release create $env:RELEASE_TAG $env:ARCHIVE "$env:ARCHIVE.sha256" --repo $env:GITHUB_REPOSITORY --title 'CyberGladiatorsFix v1.0.0' --notes-file release-notes-published.md --verify-tag --latest
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub Release publication failed' }
+          $release = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName,isDraft,isPrerelease,assets,url | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $release.isDraft -or $release.isPrerelease -or $release.tagName -cne $env:RELEASE_TAG) {
+            throw 'Published release metadata did not pass inspection'
+          }
+          $assetNames = @($release.assets | ForEach-Object { $_.name })
+          foreach ($name in @($env:ARCHIVE,"$env:ARCHIVE.sha256")) {
+            if ($assetNames -cnotcontains $name) { throw "Missing release attachment: $name" }
+          }
+          Write-Host "Published first stable release: $($release.url)"
