@@ -4,7 +4,7 @@ Source acceptance recorded after merged PR #12 (`dc8aa6a4`) and documentation PR
 
 ## Decision
 
-**Release candidate technically prepared; public release not yet published.** Current source, Windows build/packaging checks and real-machine field evidence support a **limited-scope US/FR Windows 11 and Wine-staging 11.17 first release**. Before publication, run the final tag build from the exact merged source commit and inspect its attached package and SHA256SUMS. The upper-right menu signature is now also field-validated under **FR/native Windows** in PR #11, but the actual final tagged binary should still get a minimal end-to-end Windows smoke check. Do not substitute a GitHub Actions success for playing the retail game.
+**Release candidate technically prepared; public release is a separate manual GitHub Actions approval.** Current source, Windows build/packaging checks and real-machine field evidence support a **limited-scope US/FR Windows 11 and Wine-staging 11.17 first release**. Before publication, run the dedicated manual release workflow, which builds the final reviewed `main` commit, checks the package and only then creates the matching tag and public release. The upper-right menu signature is now also field-validated under **FR/native Windows** in PR #11, but the actual final tagged binary should still get a minimal end-to-end Windows smoke check. Do not substitute a GitHub Actions success for playing the retail game.
 
 There are **no public GitHub Releases** as of this audit. The CI artifact currently expires after 14 days and must be uploaded to a GitHub Release for durable distribution.
 
@@ -20,6 +20,11 @@ There are **no public GitHub Releases** as of this audit. The CI artifact curren
 | Menu signature | [PR #8](https://github.com/legluondunet/CyberGladiatorsFix/pull/8) added conditional transparent text; [PR #9](https://github.com/legluondunet/CyberGladiatorsFix/pull/9) places **`CyberGladiatorsFix v<version>-<8-character commit>`** at the 4:3 menu's upper-right edge with **4-pixel margin**. The user validated this latest position **visually on FR and US editions**. US Wine log: `CYBER_MENU_SIGNATURE_PROBE poll=2 visible=1`, `poll=76 visible=0`, `CYBER_MENU_SIGNATURE_STYLE ... top_right=1 edge_margin_px=4`; the palette used `fallback rgb=[99,94,137]`. In-menu visibility is image-heuristic-based; fonts visually approximate original text, not extracted proprietary glyphs. |
 | CI | [PR #12 Windows workflow #42677217583](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42677217583) **success** on the tested commit `731aa136`; [merged `main` workflow #42681141750](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42681141750) **success** on `dc8aa6a4` after merging PR #12. Earlier packaging audits validated the six-file distribution and five SHA-256 checksums. CI validates build, unit checks, DLL exports and package structure; it does **not** play the retail game. |
 
+## Final merged-code field evidence (10 November 2026)
+
+- **US / Wine-staging 11.17:** `1.0.0-bc55394e` passed `--version` and `--verify` after the game changed its IQ files, then the logged session verified 255 original immutable resources by SHA-256 and 100 IQ files by presence, initialized 4:3 video and native DirectDraw virtualization, played FLAC, displayed the menu signature, stabilized near 59.5 FPS and exited with status 0. This is a real Wine session for the merged post-IQ-policy source, not yet a test of the final release ZIP.
+- **CI on `main`:** [Windows workflow #42727497444](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/42727497444) succeeded for `bc55394e`. This does not cover retail gameplay.
+
 ## Code and distribution scope
 
 - **One download executable:** `CyberGladiatorsFix.exe` for Windows x64, also runnable under supported Wine/Proton. It embeds its x86 GameFrame/Glide DLL and the project WinMM/CDDA DLL. No proprietary original game data, copyrighted music, nGlide, DXVK or sidecar executable is redistributed.
@@ -34,16 +39,16 @@ There are **no public GitHub Releases** as of this audit. The CI artifact curren
 
 | Priority | Risk / decision |
 | --- | --- |
-| **Pre-publication gate** | Tag only after the release-documentation update is merged and CI passes at that exact head. **Build and check the version-matched `v1.0.0` tag**. Match the 8-character source commit in the EXE and checksum sheet; do not build from a temporary PR merge ref. |
+| **Pre-publication gate** | Merge and validate the release workflow PR. Use **Run workflow → main → `publish-v1.0.0`**. The publisher reuses the fully tested Windows build on that exact source SHA and refuses a moving main, version mismatch or existing release. It creates the matching tag only after package validation. |
 | **Pre-publication gate** | **FR/native Windows** already confirms the final upper-right signature, fullscreen, FLAC and clean exit (9 Nov). Repeat a brief smoke test using the **exact tag-built binary**, not solely earlier PR artifacts. An additional US/Wine-staging 11.17 field log now covers the PR #12 build with the Glide archive/INI policy and the local AVI path rewrite, including visual acceptance. **This is not a test of a future tag-built executable**; the final tag still needs its own smoke check. |
-| **Pre-publication gate** | Verify the final **tagged** CI package exactly has the six expected files, that five SHA-256 entries validate, that the `--version` source suffix matches the tag commit, then upload the immutable package to a draft GitHub Release and inspect published download links. Retain CI as a disposable 14-day build artifact only. |
+| **Pre-publication gate** | The release workflow verifies the final six-file artifact, all five SHA-256 entries, and the executable commit suffix; it publishes a ZIP and its SHA-256 automatically. Verify public assets/downloads after successful publication; CI-only artifacts expire after 14 days. |
 | **Documented limitation** | `Cargo.lock` files for the root and x86 bridge are not tracked, `rust-toolchain@stable` / `windows-latest` move over time. The upstream wrapper source is pinned, but **fully reproducible byte-for-byte builds are not yet guaranteed**. Do not describe the package as reproducible. Follow up by introducing reviewed lockfiles and toolchain pins in a separate PR with CI and a final host recheck. |
 | **Documented limitation** | Actual Windows 10, other hardware and Wine/Proton versions have not all been verified in this final tag cycle; make support claims by edition and tested platform, not universal. |
 | **Deferred maintenance** | `cdda/src/video_trace.rs` is large. Refactor only after release, with field-verified behavior tests. Legacy diagnostic escapes remain strictly opt-in, not part of the advertised supported features. |
 
 ## Release procedure
 
-Follow [RELEASE_PROCESS.md](RELEASE_PROCESS.md) and use [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md). **Do not create tags or publish a release as part of an audit-only PR.** The release manager decides whether to mark this first release as prerelease after the final smoke check.
+Follow [RELEASE_PROCESS.md](RELEASE_PROCESS.md) and use [RELEASE_NOTES_v1.0.0.md](RELEASE_NOTES_v1.0.0.md). **Merges and tags do not publish automatically.** Explicitly run the protected [v1.0.0 release publisher](../.github/workflows/publish-v1.0.0.yml) from `main` only when ready to create the public stable Release. A separately created pre-release would require a different workflow.
 
 The historical 2026-11-06 risk matrix is preserved through Git history. Its earlier statements that FR/Wine, clean CUE/BIN installs or Windows gameplay were untested were superseded by the field evidence above.
 

@@ -10,6 +10,10 @@ CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher compatible with Wi
 
 **2026-11-09 follow-up (merged PR #12):** The original US game may request `G:\cyber\splash4.avi` when a CD is mounted under Wine. CyberGladiatorsFix now routes that legacy CD-drive MCI request to the verified installed `splash4.avi`, independent of the mounted drive letter. A real Wine-staging 11.17 run of `v0.2.13-731aa136` completed the full ~39-second introduction, reversible Alt+Tab, GameFrame handoff, CDDA playback and normal exit with no visual regression reported. The subsequent merge to `main` passed the Windows CI workflow; a final release-tag build and smoke test are still required.
 
+## Release manager: one-click v1.0.0 publication
+
+As with ScorchedPlanetFix, the stable GitHub release is created by a **manually approved, guarded GitHub Actions workflow**. Once all field tests are approved, open [Publish CyberGladiatorsFix v1.0.0](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/publish-v1.0.0.yml), choose **Run workflow** on **main**, enter `publish-v1.0.0` and start it. The workflow builds and verifies the exact source, creates tag `v1.0.0` and publishes the six-file Windows x64 ZIP plus its SHA-256 automatically. It never publishes on PR or normal push; see the [release procedure](docs/RELEASE_PROCESS.md). **Do not run until ready for a public stable release.**
+
 ## In-game version and commit signature
 
 The pre-release GameFrame build draws `CyberGladiatorsFix v<version>-<8-character commit>` at the **upper-right edge** of the original 4:3 **fighter-selection / Control Screen**, with a four-pixel margin. It is **not** a Windows title-bar rename, topmost overlay, patch to the game EXE or a separate helper application. The launcher injects the actual build version as a child-only variable and the existing pinned x86 GameFrame OpenGL renderer draws unobtrusive pixel-font lettering **with a transparent background and no frame**, after the game's scene is composed, before the real frame swap.

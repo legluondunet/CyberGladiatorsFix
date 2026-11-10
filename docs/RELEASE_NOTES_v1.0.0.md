@@ -1,6 +1,6 @@
-# CyberGladiatorsFix v1.0.0 — release notes (draft)
+# CyberGladiatorsFix v1.0.0 — release notes
 
-**Status: prepared draft, not yet published.** Version 1.0.0 designates the first public release; validation from the earlier 0.2.13 candidate commits is historical evidence, not a test of the final tagged binary. First public-release candidate for the original 1996 **Cyber Gladiators** PC game. Planned source tag: `v1.0.0` (only after final audit PR merge and acceptance). The version string includes the *actual short source commit* for the distributed build.
+CyberGladiatorsFix 1.0.0 is the first public release for the original 1996 **Cyber Gladiators** PC game. It supports original authenticated US and FR CUE/BIN editions. The publisher workflow creates tag `v1.0.0` at the exact successfully built and verified source commit; the distributed executable displays that commit's eight-character suffix. The listed hardware field tests document accepted combinations, not universal platform guarantees.
 
 ## Overview
 
@@ -27,14 +27,14 @@ The download is one Windows x64 executable, `CyberGladiatorsFix.exe`, embedding 
 | US | Wine-staging 11.17 / XFCE | Clean CUE/BIN install previously validated. A further **2026-11-09 PR #12** run (`0.2.13-731aa136`) verified that the game's `G:\cyber\splash4.avi` request is redirected to the authenticated local `splash4.avi` even with the CD mounted; full ~39-second AVI, Alt+Tab, first OpenGL frame, menu signature, FLAC playback, ~59.5 FPS and clean exit were observed. User reported no visual issues. |
 | FR | Wine-staging 11.17 / XFCE | Clean install, second launch, full ~39s intro, video skip, Alt+Tab, audio and clean exit; user confirmed final upper-right signature. |
 
-These are real-world acceptance results from different candidate commits. **The exact final tagged binary still requires a smoke check**; the latest archive/INI policy is field-validated on FR/Windows and the PR #12 US/Wine build; the FR/Wine combination has not been rerun against that exact commit. No universal Windows, Wine, Proton, GPU or window-manager compatibility is claimed.
+These are real-world acceptance results from multiple candidate commits, not a guarantee on every machine. **The merged v1.0.0 source commit `bc55394e` was additionally tested on US/Wine-staging 11.17**: `--verify` checked 255 immutable resources by SHA-256 and 100 game-writable IQ files for safe presence, then the game started, presented the 4:3 video and menu signature, played FLAC music, stabilized around 59.5 FPS and exited successfully. The official release workflow builds from the final source commit and independently validates its package; the downloaded release binary still merits a final native Windows smoke test. No universal Windows, Wine, Proton, GPU or window-manager compatibility is claimed.
 
 ## Install / use
 
 1. Download the final release asset containing `CyberGladiatorsFix.exe`, three license notices (GPL, Apache-2.0 and MIT), `README.txt`, and `SHA256SUMS.txt`; verify the checksums.
 2. Put `CyberGladiatorsFix.exe` in a new writable folder beside **one original US or FR `.cue`** and its referenced `.bin` file(s).
 3. Double-click `CyberGladiatorsFix.exe` on Windows, or run `wine CyberGladiatorsFix.exe` under Wine. The launcher automatically installs, verifies and launches the game. Subsequent runs do not need the CD image.
-4. Use `CyberGladiatorsFix.exe --verify` for strict verification and `--help` for available commands.
+4. Use `CyberGladiatorsFix.exe --verify` for strict verification of original EXE, immutable resources and CD audio plus safe presence of game-writable IQ files; use `--help` for available commands.
 
 ## Supported / unsupported
 

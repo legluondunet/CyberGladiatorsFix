@@ -1,66 +1,40 @@
-# First public release procedure — v1.0.0
+# First public release: one-click GitHub Actions publication — v1.0.0
 
-**Maintainer checklist: not an automated publishing workflow.** Source is validated through PRs and GitHub Actions; a **GitHub Release must not be published automatically** by merging a PR or creating a tag. Release artifacts are built/tested from the exact intended source revision. The project currently has **no published Releases**.
+CyberGladiatorsFix follows the same **manually approved, automated publication** model as ScorchedPlanetFix. Merging a PR or pushing a tag **never publishes a GitHub Release**. The release manager explicitly initiates the dedicated publisher workflow after source/field acceptance.
 
-## 1. Source acceptance and scope
+## 1. Preconditions
 
-- Merge the final audit-only PR after its green Windows CI run; confirm `main` points to the expected merge SHA.
-- Confirm no runtime feature changes are pending and the supported retail set remains original **US and FR CUE/BIN** only.
-- Confirm `Cargo.toml` reports `version = "1.0.0"`. The public tag must be precisely `v1.0.0`; do not publish a release under a tag that disagrees with the built launcher.
-- Confirm field evidence for Windows 11 and Wine-staging 11.17. The upper-right signature is accepted on FR/native Windows and both editions in earlier Wine testing. **PR #11** additionally validated the `.bak` name collision and repeated same-build `glide.dll` reuse on FR/Windows. **PR #12** additionally received a complete US/Wine-staging 11.17 field run on its source commit (`731aa136`), confirming the mounted-CD local AVI rewrite, Alt+Tab, 4:3 menu, FLAC and clean exit, with user visual acceptance. Still check the **exact tagged package** after final audit (menu, 4:3, audio, exit); this prior PR artifact is not the tag-built binary.
-- No tags, no GitHub Release, no GitHub Pages or distribution uploads until explicit maintainer approval.
+- The final reviewed code is merged into `main`. The original retail images supported by this version remain **US and FR CUE/BIN**, not unverified DE/other editions.
+- Confirm `Cargo.toml` has `version = "1.0.0"`; no known release-blocking issues remain.
+- Prior authenticated retail field tests on Windows 11 and Wine-staging 11.17 validate installation, the original movie (including skip), full-screen 4:3, Alt+Tab, FLAC music, 60 FPS, menu signature and normal exit.
+- The US/Wine test on the merged `bc55394e` build verified `--verify` and a normal game exit with **100 IQ files checked for safe presence** and **255 remaining resources strictly hashed**; original IQ data may be rewritten by the retail game.
+- The release manager has explicitly approved public publication.
 
-## 2. Build provenance and tests
+## 2. Start publication entirely in the GitHub web interface
 
-- Create `v1.0.0` on the **final reviewed `main` commit**, not on a feature branch or an ephemeral pull-request merge commit. Prefer an annotated tag with the source SHA, date and author. Do this only when the release is approved.
-- The `.github/workflows/gameframe-glide.yml` workflow runs on `main`, PRs and version tags. The tag path verifies that `vX.Y.Z` equals the project's `Cargo.toml` version; tag activity **only builds and uploads a CI artifact**, never publishes a GitHub Release.
-- Confirm successful Windows x86 Glide compilation and exported symbols; matching embedded x86 WinMM bridge; Windows x64 tests, embedded DLL SHA checks, strict no-game fail-closed smoke, PE32 loader smoke and package integrity check. GitHub Actions **cannot** run an authenticated original game.
-- The launcher `--version` output must end in `-<8-char source SHA>`, matching the final tagged source commit.
-- The binary is **not promised bit-for-bit reproducible**: Cargo lockfiles and complete Rust toolchain/runner pinning are future hardening. Recording the actual source commit, GameFrame upstream pin and per-asset SHA256SUMS is nevertheless mandatory.
+1. Open [**Publish CyberGladiatorsFix v1.0.0**](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/publish-v1.0.0.yml).
+2. Click **Run workflow**, select **main**.
+3. Enter **`publish-v1.0.0`** in the `confirm` field, then click **Run workflow**.
 
-## 3. Verify the distribution artifact
+**This is the only manual publishing action.** There is no need to create a tag, draft Release, upload a ZIP, copy SHA-256 hashes or run `git` locally. Do not run this workflow until the release is ready to go public.
 
-Expected files, **exactly six**:
+The publisher refuses any branch other than `main`, a wrong confirmation phrase, a mismatched `Cargo.toml` version, an existing v1.0.0 release, an unexpected SHA or a branch that advances during publication. It uses `contents: write` for the designated release workflow only.
 
-~~~text
-CyberGladiatorsFix.exe
-LICENSE-APACHE
-LICENSE-GPL-3.0
-LICENSE-MIT
-README.txt
-SHA256SUMS.txt
-~~~
+## 3. GitHub Actions performs all release checks
 
-- **One EXE** embeds both verified x86 DLLs. There must not be a separate `glide.dll`, `CyberGladiatorsFix.dll`, nGlide, DXVK, game `CYBER.EXE`, `.cue`, `.bin`, `.flac` or proprietary bitmap.
-- `SHA256SUMS.txt` must contain exactly five valid SHA-256 entries, one per file except itself; re-hash the package **after download** and compare.
-- Confirm `README.txt` documents automatic US/FR CUE/BIN install, supported runtime, command-line checks and limitations.
-- GitHub Actions downloads expire (currently **14 days**). To distribute publicly, upload the reviewed files as a **durable GitHub Release asset** (normally a ZIP of the exact six files), and verify the Release's download link.
+1. Invoke the same [Windows GameFrame build/CI workflow](../.github/workflows/gameframe-glide.yml) as a **reusable workflow**, building the verified source commit fresh in this release run. This compiles and tests the x86 open-source Glide DLL, bundled x86 WinMM, the Windows x64 launcher, native loader, CLI/no-CD checks and package structure.
+2. Download the successful build's **six-file** artifact within the same workflow run.
+3. Confirm the exact six allowed files: `CyberGladiatorsFix.exe`, `LICENSE-APACHE`, `LICENSE-GPL-3.0`, `LICENSE-MIT`, `README.txt` and `SHA256SUMS.txt`. All five listed SHA-256 entries must be correct, with no nested ZIP, sidecar DLL or copyrighted game content.
+4. Ensure `CyberGladiatorsFix.exe --version` matches `1.0.0-<8-char source SHA>`.
+5. Create `CyberGladiatorsFix-v1.0.0-Windows-x64.zip`, unpack and independently check all six files byte-for-byte. Generate `CyberGladiatorsFix-v1.0.0-Windows-x64.zip.sha256`.
+6. Check that `main` still points to the build commit, create or verify the `v1.0.0` tag at that **exact same commit**, and publish the stable GitHub Release using [reviewed notes](RELEASE_NOTES_v1.0.0.md), the checked ZIP and ZIP checksum. The workflow then checks the Release's tag, public status and attachments.
 
-On Linux with the six files extracted, verify hashes without altering any file:
+The separate normal CI also runs automatically on the newly created `v1.0.0` tag; it checks that the tag version equals `Cargo.toml`. The manual publisher's fresh, fully tested build is the authoritative uploaded release artifact. The tag-triggered CI is an additional independent build, not a prerequisite for uploading or substituting the already verified artifact. The Rust build is **not guaranteed bit-for-bit reproducible** across independent runners; do not swap the release ZIP with an unrelated rebuild.
 
-~~~bash
-sha256sum -c SHA256SUMS.txt
-~~~
+## 4. Final checks
 
-On Windows PowerShell, compare `(Get-FileHash .\CyberGladiatorsFix.exe -Algorithm SHA256).Hash.ToLowerInvariant()` with the executable row in `SHA256SUMS.txt` (and repeat for the other four rows).
+Open [Releases](https://github.com/legluondunet/CyberGladiatorsFix/releases), verify the v1.0.0 ZIP and its `.sha256` are attached and downloadable, and ensure the tag matches the source SHA reported by `--version`.
 
-## 4. Minimal final game smoke test
+As a final host acceptance check, download the *actual release ZIP*, run `--verify`, launch twice and check the original intro, menu signature, audio and graceful exit. Check at least one native Windows 11 host if possible. The GitHub Actions runner does **not** possess an authenticated retail CD and cannot reproduce real gameplay, so field acceptance remains necessary. Any post-publication regression should receive a focused follow-up issue/patch release rather than silent modification of the published assets.
 
-Use the exact distribution build, not an older PR artifact:
-
-1. Launch the verified original US or FR game via the one EXE, preferably once from a fresh writable folder with CUE/BIN and once after removing the source images.
-2. Confirm original MCI intro (natural finish or space skip), desktop display mode unchanged, 4:3 game output, input and Alt+Tab.
-3. Verify the unobtrusive `CyberGladiatorsFix v1.0.0-XXXXXXXX` signature is aligned to the **upper-right original 4:3 border** and is hidden during combat; check at least one native Windows 11 host and review the previously accepted US/FR Wine runs.
-4. Confirm mandatory FLAC CD audio, ~60 FPS after stabilization, clean process exit, and **non-overwriting `.bak` archive** of any mismatched old `glide.dll`, with bundled verified GameFrame **retained** after exit. Re-launch the same EXE and confirm `action=keep_existing` without a new backup.
-5. Check `CyberGladiatorsFix.log` for `GAMEFRAME_MENU_SIGNATURE placement=upper_right_edge_4px_transparent`, `CYBER_MENU_SIGNATURE_PROBE` visibility transition, `CYBER_MENU_SIGNATURE_STYLE`, `GAMEFRAME_GLIDE_POLICY action=keep_existing` (on identical second run), `GAME_EXIT exit_status=exit code: 0` and `SESSION END success`. The log proves instrumentation, not visual fidelity: visual acceptance remains a human check.
-6. Run `--verify` after an initial installation and again after playing. Confirm only `[Video] SkipIntro` remains in the INI, FLAC and immutable resources use strict SHA-256, and game-writable `iq/` resources use presence-only verification after install. A missing IQ file or altered non-IQ resource must fail. **Do not publish** if a routine second launch is blocked; fix and repeat.
-
-## 5. Publish only after sign-off
-
-- Create a **draft** GitHub Release for `v1.0.0`, using reviewed [draft release notes](RELEASE_NOTES_v1.0.0.md).
-- Upload exactly the tag-built artifact ZIP (or six files) along with the checksums; document the source SHA, successful Actions run URL and tests performed. Review all links and license notices.
-- Mark it as a prerelease if broader host testing or known limitations warrant that designation. Decide this explicitly when publishing; the first release need not be called universal/stable.
-- Publish only on maintainer's explicit **release approval**.
-- After publishing, verify the public asset can be downloaded and that the published SHA256SUMS still matches; retain the tag and the release notes.
-
-Maintainer signature: **legluondunet assisted by ChatGPT (OpenAI)**.
+Maintainer: **legluondunet assisted by ChatGPT (OpenAI)**.

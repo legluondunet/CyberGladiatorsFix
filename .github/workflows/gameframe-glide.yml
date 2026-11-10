@@ -9,6 +9,8 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  # The one-click release publisher runs this exact, tested build as a reusable job.
+  workflow_call:
 
 permissions:
   contents: read
