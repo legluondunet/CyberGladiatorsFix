@@ -41,8 +41,8 @@ jobs:
             echo "::error::Unexpected dry_run input"
             exit 1
           fi
-          if [[ "$DRY_RUN" == "false" && "$CONFIRMATION" != "DELETE-WINDOWS-CI-RUNS" ]]; then
-            echo "::error::Deletion refused: confirmation must be DELETE-WINDOWS-CI-RUNS"
+          if [[ "$DRY_RUN" == "false" && "$CONFIRMATION" != "DELETE-GAMEFRAME-CI-RUNS" ]]; then
+            echo "::error::Deletion refused: confirmation must be DELETE-GAMEFRAME-CI-RUNS"
             exit 1
           fi
 
@@ -54,7 +54,7 @@ jobs:
 
           if [[ -z "$runs" ]]; then
             echo "No completed GameFrame CI runs to clean."
-            echo "No completed Windows CI runs found." >> "$GITHUB_STEP_SUMMARY"
+            echo "No completed GameFrame CI runs found." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
@@ -68,7 +68,7 @@ jobs:
             else
               gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id" >/dev/null
               deleted=$((deleted + 1))
-              echo "DELETED: Windows CI run $run_id"
+              echo "DELETED: GameFrame CI run $run_id"
               # Avoid a burst of GitHub API write requests.
               sleep 0.5
             fi
@@ -77,7 +77,7 @@ jobs:
           {
             echo "## GameFrame CI run cleanup"
             echo ""
-            echo "- Target: \`rust-fadelow-patcher.yml\` only"
+            echo "- Target: \`gameframe-glide.yml\` only"
             echo "- Completed runs found: $planned"
             echo "- Actually deleted: $deleted"
             echo "- Mode: $([[ "$DRY_RUN" == "true" ]] && echo preview || echo deletion)"
