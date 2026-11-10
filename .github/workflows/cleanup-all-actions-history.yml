@@ -1,0 +1,90 @@
+name: Purge all completed GitHub Actions history
+
+# Final manual-only history purge, separate from CI-only housekeeping.
+# This intentionally includes COMPLETED publication and cleanup workflow runs.
+# It never deletes commits, refs, tags, source files or GitHub Release assets.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview which completed runs will be deleted (recommended first)'
+        required: true
+        type: boolean
+        default: true
+      confirmation:
+        description: 'For deletion uncheck dry_run and enter DELETE-ALL-ACTIONS-HISTORY'
+        required: false
+        type: string
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: cybergladiatorsfix-purge-all-actions-history
+  cancel-in-progress: false
+
+jobs:
+  purge:
+    if: github.repository == 'legluondunet/CyberGladiatorsFix' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    name: Preview or delete all completed GitHub Actions runs
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Enumerate and optionally delete completed runs across all workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" ]]; then
+            echo "::error::Unexpected dry_run input"
+            exit 1
+          fi
+          if [[ "$DRY_RUN" == "false" && "$CONFIRMATION" != "DELETE-ALL-ACTIONS-HISTORY" ]]; then
+            echo "::error::Refusing deletion without DELETE-ALL-ACTIONS-HISTORY"
+            exit 1
+          fi
+
+          # Enumerate all workflow paths, including workflows removed from main.
+          # Gather ALL pages before deleting so deletion never shifts pagination.
+          # Exclude queued/running jobs (including this very purge run).
+          inventory="$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | select(.status == "completed") | [.id, .path] | @tsv')"
+
+          planned=0
+          deleted=0
+          if [[ -n "$inventory" ]]; then
+            while IFS=$'\t' read -r run_id path; do
+              [[ "$run_id" =~ ^[0-9]+$ && -n "$path" ]] || {
+                echo "::error::Invalid run ID or missing workflow path"
+                exit 1
+              }
+              if [[ "$run_id" == "$GITHUB_RUN_ID" ]]; then
+                echo "::error::Refusing self-deletion"
+                exit 1
+              fi
+
+              planned=$((planned + 1))
+              if [[ "$DRY_RUN" == "true" ]]; then
+                echo "PREVIEW: would delete completed run $run_id ($path)"
+              else
+                gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/$run_id" >/dev/null
+                deleted=$((deleted + 1))
+                echo "DELETED: completed run $run_id ($path)"
+                sleep 0.3
+              fi
+            done <<< "$inventory"
+          fi
+
+          {
+            echo "## Purge of completed GitHub Actions history"
+            echo ""
+            echo "- Mode: $([[ "$DRY_RUN" == "true" ]] && echo preview || echo deletion)"
+            echo "- Completed runs inventoried: $planned"
+            echo "- Completed runs deleted: $deleted"
+            echo "- GitHub Release v1.0.0, downloads, git tags, branches and source: untouched"
+            echo "- This purge's own run remains visible after completion; delete it separately in the web UI if zero runs are required"
+          } >> "$GITHUB_STEP_SUMMARY"
