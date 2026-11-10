@@ -1,0 +1,111 @@
+name: Cleanup branches (keep main)
+
+# Manual-only. Never triggered by pushes, PR merges, tags or releases.
+# This deletes Git branch references only. GitHub Releases and tags are untouched.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview branches only; do not delete anything (recommended first)'
+        required: true
+        type: boolean
+        default: true
+      confirmation:
+        description: 'To delete, uncheck dry_run and enter DELETE-ALL-EXCEPT-MAIN'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cybergladiatorsfix-manual-branch-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    if: github.repository == 'legluondunet/CyberGladiatorsFix' && github.ref == 'refs/heads/main'
+    name: Preview or delete all non-main branches
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DRY_RUN: ${{ inputs.dry_run }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - name: Inventory and optionally remove non-main Git branches
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$DRY_RUN" != "true" && "$DRY_RUN" != "false" ]]; then
+            echo "::error::Invalid dry_run value"
+            exit 1
+          fi
+          if [[ "$DRY_RUN" == "false" && "$CONFIRMATION" != "DELETE-ALL-EXCEPT-MAIN" ]]; then
+            echo "::error::Deletion refused: type DELETE-ALL-EXCEPT-MAIN"
+            exit 1
+          fi
+
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          if [[ "$default_branch" != "main" ]]; then
+            echo "::error::Default branch is no longer main; refusing to continue"
+            exit 1
+          fi
+
+          # Refuse to delete any branches while a pull request is open,
+          # including PRs opened after this cleanup workflow was reviewed.
+          open_prs="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" --jq '.[].number')"
+          if [[ -n "$open_prs" ]]; then
+            echo "::error::Open pull requests detected; review them before deleting branches: $open_prs"
+            exit 1
+          fi
+
+          # Fail closed when any other branch is protected.
+          protected="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/branches?per_page=100" --jq '.[] | select(.name != "main" and .protected == true) | .name')"
+          if [[ -n "$protected" ]]; then
+            echo "::error::Non-main protected branches found; refusing to remove them: $protected"
+            exit 1
+          fi
+
+          # Snapshot the complete branch inventory BEFORE any deletion.
+          targets="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/branches?per_page=100" --jq '.[] | select(.name != "main") | .name')"
+          planned=0
+          deleted=0
+          if [[ -n "$targets" ]]; then
+            while IFS= read -r branch; do
+              [[ -n "$branch" && "$branch" != "main" ]] || {
+                echo "::error::Unsafe branch name in deletion inventory"
+                exit 1
+              }
+              planned=$((planned + 1))
+              if [[ "$DRY_RUN" == "true" ]]; then
+                echo "PREVIEW: would delete branch $branch"
+              else
+                # Branch names may include slashes, such as fix/example.
+                # Use the Git refs endpoint, not a wildcard or tag endpoint.
+                gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/$branch" >/dev/null
+                deleted=$((deleted + 1))
+                echo "DELETED: branch $branch"
+                sleep 0.3
+              fi
+            done <<< "$targets"
+          fi
+
+          if [[ "$DRY_RUN" == "false" ]]; then
+            remaining="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/branches?per_page=100" --jq '.[] | select(.name != "main") | .name')"
+            if [[ -n "$remaining" ]]; then
+              echo "::error::Some non-main branches remain: $remaining"
+              exit 1
+            fi
+          fi
+
+          {
+            echo "## CyberGladiatorsFix branch cleanup"
+            echo ""
+            echo "- Repository: \`${GITHUB_REPOSITORY}\`"
+            echo "- Preserved branch: \`main\`"
+            echo "- Non-main branches found: $planned"
+            echo "- Branches actually deleted: $deleted"
+            echo "- Mode: $([[ "$DRY_RUN" == "true" ]] && echo preview || echo deletion)"
+            echo "- Tag v1.0.0, published Releases, and their assets: untouched"
+          } >> "$GITHUB_STEP_SUMMARY"
