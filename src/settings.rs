@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Only user-selectable settings belong in CyberGladiatorsFix.ini.
-//! Required FLAC/CDDA and strict IQ integrity are internal, always-on policy.
+//! CDDA and immutable retail SHA-256 checks are mandatory. Game-writable
+//! IQ files are strictly verified on first install, then checked for presence.
 use std::fs::{self,OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -109,7 +110,7 @@ pub fn ensure(game:&Path)->Result<(),String>{
                 return Err(format!("Cannot finalize obsolete INI cleanup (old config retained): {e}"));
             }
             if let Some(root)=game.parent(){
-                crate::show("INI_CLEANUP removed_legacy_sections=Audio,Integrity preserved_SkipIntro=1 cdda_fixed=1 iq_verify=strict",root);
+                crate::show("INI_CLEANUP removed_legacy_sections=Audio,Integrity preserved_SkipIntro=1 cdda_fixed=1 iq_verify=presence_only_after_install",root);
             }
             Ok(())
         },

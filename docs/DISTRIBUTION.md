@@ -48,9 +48,11 @@ Game installation:
 
 Music is stored under music/TrackNN.flac, not the game root. An old
 verified root-level FLAC installation migrates automatically without
-lossy re-encoding. The old manifest is archived. Original IQ resources
-remain untouched, and their SHA-256 verification is ALWAYS strict at
-launch and with --verify. The WinMM FLAC bridge is always enabled.
+lossy re-encoding. The old manifest is archived. The launcher never alters IQ files. All IQ resources are SHA-256 verified
+during initial staged installation. The game can rewrite them: on later
+launches and with --verify, every manifest-listed IQ file must exist as
+a regular file (not a symlink), but size and digest may differ. All other
+retail resources, original EXE, FLAC and DLLs retain strict checks. The WinMM FLAC bridge is always enabled.
 
 CyberGladiatorsFix.ini contains only the user-selectable [Video]
 SkipIntro option. Old [Audio] and [Integrity] sections are automatically
@@ -111,7 +113,7 @@ Alt+Tab and uninterrupted movie. Other systems are not guaranteed.
 Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
   CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
-  CyberGladiatorsFix.exe --verify        strict SHA-256 check
+  CyberGladiatorsFix.exe --verify        strict non-IQ files; IQ presence
   CyberGladiatorsFix.exe --inspect-disc original.cue   read-only CD inspection
   CyberGladiatorsFix.exe --max-graphics  max game settings
   CyberGladiatorsFix.exe --check-bundle  embedded DLL checks

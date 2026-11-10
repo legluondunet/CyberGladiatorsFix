@@ -105,7 +105,7 @@ The **CyberGladiatorsFix/CyberGladiatorsFix.ini** text file is distinct from the
 
 - **[Video] SkipIntro=0** — play the original introduction (default).
 
-**CDDA/FLAC playback is required** and enabled automatically. **IQ data integrity and all original retail resource SHA-256 checks are always strict**, both at launch and with `--verify`; no opt-out or special user setting exists. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
+**CDDA/FLAC playback is required** and enabled automatically. **All retail CD resources, including `iq/`, are strictly SHA-256 checked during the initial staged installation.** The game may subsequently rewrite `iq/` files: on later launches and with `--verify` every manifest-listed IQ file must exist as a regular file, but its size and hash are no longer compared. Other original assets, the EXE and backup, FLAC and embedded DLLs remain strictly checked. Original IQ hashes remain in the manifest and the launcher never overwrites these files; no opt-out or extra INI setting exists. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
 
 A single **CyberGladiatorsFix.log**, next to the EXE, records the system and display configuration, effective game options, integrity checks, video/Glide/FLAC behavior and normal or abnormal exit. No separate video player log is created.
 

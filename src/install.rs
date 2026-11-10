@@ -386,6 +386,30 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
 }
 
 #[cfg(test)]
+mod iq_staging_policy_tests {
+    use super::*;
+    #[test]
+    fn first_install_still_hashes_every_original_iq_file(){
+        let dir=std::env::temp_dir().join(format!("CyberIQStaging-{}",
+            std::process::id()));
+        let _=fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("iq")).unwrap();
+        let iq=dir.join("iq").join("iq40.dat");
+        let original=b"original";
+        fs::write(&iq,original).unwrap();
+        let manifest=format!("# CyberGladiatorsFix manifest v1\niq/iq40.dat\t{}\t{}\n",
+            original.len(),crate::patch::digest(original));
+        assert!(verify_staged_manifest(&dir,&manifest).is_ok());
+        fs::write(&iq,b"modified").unwrap();
+        assert!(verify_staged_manifest(&dir,&manifest).unwrap_err()
+            .contains("Staged file SHA-256 mismatch: iq/iq40.dat"));
+        fs::remove_file(&iq).unwrap();
+        assert!(verify_staged_manifest(&dir,&manifest).is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[cfg(test)]
 mod disc_key_tests {
     use super::*;
     #[test]

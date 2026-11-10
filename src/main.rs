@@ -31,7 +31,7 @@ Usage:
   CyberGladiatorsFix.exe               Auto-detect verified installed game or CUE/BIN, install if missing, then play
   CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
-  CyberGladiatorsFix.exe --verify      Strict original retail manifest and patches
+  CyberGladiatorsFix.exe --verify      Strict immutable assets and executable; IQ presence
   CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only US/FR CD fingerprint (no installation)
   CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
   CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
@@ -50,11 +50,14 @@ One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
 Any older or unknown glide.dll is renamed to an unused .bak backup before
 the bundled verified GameFrame is installed; that GameFrame remains after exit.
 Original lossless CD music is stored in music/TrackNN.flac.
-No original game data is distributed. IQ data is never silently changed.
+No original game data is distributed. The launcher never rewrites IQ data.
+During first installation original IQ files undergo strict SHA-256 checks.
+Afterwards --verify and automatic launches require IQ files to be present
+as regular files, without comparing size or digest. All other retail
+assets, original EXE and audio remain strictly integrity checked.
 
 A fresh, single CyberGladiatorsFix.log appears beside the launcher.
-CDDA/FLAC music is always on. Retail asset and IQ integrity is always
-strictly SHA-256 verified, including --verify and automatic launches.
+CDDA/FLAC music is always on.
 The user INI contains only [Video] SkipIntro.
 Both US and French retail discs are authenticated by exact EXE and resource
 hashes before installing or patching. A single-BIN raw disc with a verified

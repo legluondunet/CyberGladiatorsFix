@@ -304,11 +304,12 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
     )).map_err(|e|e.to_string())?;
     let game=root.join(install::DIR);
     if game.is_dir() {
-        // Read the single user choice. Required CDDA and strict IQ checks
+        // Read the single user choice. CDDA and immutable CD SHA-256 checks
+        // are mandatory; installed game-writable IQ files require presence only.
         // are hardcoded, independent of any legacy INI switches.
         match settings::read(&game) {
             Ok(skip)=>write_line(&mut file,"CONFIG",&format!(
-                "SkipIntro={} CDDA=required IQ_integrity=strict CDDA_FORMAT=FLAC/44100Hz/16bit/stereo",
+                "SkipIntro={} CDDA=required IQ_integrity=presence_only_after_install original_IQ_sha256=checked_on_first_install CDDA_FORMAT=FLAC/44100Hz/16bit/stereo",
                 u8::from(skip)
             )).map_err(|e|e.to_string())?,
             Err(_)=>write_line(&mut file,"CONFIG",
