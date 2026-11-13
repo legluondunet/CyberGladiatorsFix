@@ -342,6 +342,14 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
         safe_env_flag("PROTON_USE_WINED3D"),
         if std::env::var_os("WINEDEBUG").is_some(){"set (value omitted)"}else{"unset"}
     )).map_err(|e|e.to_string())?;
+    // The explicit unchecked path must not even probe installed resource
+    // existence or read game preferences just to fill a diagnostic header.
+    if matches!(args,[one] if one.to_str()==Some("--launch-no-verify")){
+        write_line(&mut file,"CONFIG",
+            "unchecked_launch=1 file_presence_scan=skipped integrity_hashes=skipped settings_probe=skipped")
+            .map_err(|e|e.to_string())?;
+        return file.sync_all().map_err(|e|format!("Cannot commit log header: {e}"));
+    }
     let game=root.join(install::DIR);
     if game.is_dir() {
         // Read the single user choice. CDDA and immutable CD SHA-256 checks
