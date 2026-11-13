@@ -479,7 +479,7 @@ pub unsafe extern "system" fn mciSendStringA(
     }
     // One monotonic total-call duration for each non-polled video command.
     // The very frequent "status movie mode" queries are intentionally
-    // excluded to keep the single session log small.
+    // excluded to keep the in-game session log small.
     if let Some(ref text)=command {
         let lower=text.trim().to_ascii_lowercase();
         if (lower.starts_with("open ")||lower.starts_with("play movie")
