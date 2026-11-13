@@ -43,6 +43,7 @@ If an installation exists but does not pass its checks, the launcher refuses to 
 ~~~text
 CyberGladiators/
   CyberGladiatorsFix.exe
+  CyberGladiatorsFix_installer.log
   CyberGladiatorsFix.log
   original-disc.cue
   original-disc*.bin
@@ -111,7 +112,12 @@ The **CyberGladiatorsFix/CyberGladiatorsFix.ini** text file is distinct from the
 
 **CDDA/FLAC playback is required** and enabled automatically. **All retail CD resources, including `iq/`, are strictly SHA-256 checked during the initial staged installation.** The game may subsequently rewrite `iq/` files: on later launches and with `--verify` every manifest-listed IQ file must exist as a regular file, but its size and hash are no longer compared. Other original assets, the EXE and backup, FLAC and embedded DLLs remain strictly checked. Original IQ hashes remain in the manifest and the launcher never overwrites these files; no opt-out or extra INI setting exists. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
 
-A single **CyberGladiatorsFix.log**, next to the EXE, records the system and display configuration, effective game options, integrity checks, video/Glide/FLAC behavior and normal or abnormal exit. No separate video player log is created.
+Two logs next to **CyberGladiatorsFix.exe** separate the installer/launcher from the running game:
+
+- **`CyberGladiatorsFix_installer.log`**: refreshed for each installer, verification or launcher invocation; records system/display configuration, retail edition checks, SHA-256 verification, setup, game launch and exit status.
+- **`CyberGladiatorsFix.log`**: refreshed **only when the game launches**; records WinMM/CDDA/FLAC, GameFrame Glide, DirectDraw and video diagnostics. A standalone `--verify`, `--install-only`, `--help` or `--version` must not clear this log.
+
+The two files contain the same **session ID** for a given game launch. Both follow the same naming and lifecycle under native Windows and Wine/Proton. GameFrame and WinMM share the game log; no third video-player log is created.
 
 ### Compatibility and safety
 
