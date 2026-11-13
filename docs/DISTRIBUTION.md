@@ -71,7 +71,7 @@ glide.dll.<16-character-SHA256>.bak, then a numbered .bak if necessary.
 After the game exits, GameFrame stays installed and the backup remains
 available for manual recovery; it is NOT automatically restored.
 Operations, original and embedded SHA-256 digests, selected archive path
-and any collision fallback are recorded in CyberGladiatorsFix.log.
+and any collision fallback are recorded in CyberGladiatorsFix_installer.log.
 No size limit or PE32-validity check is imposed on the old DLL: only the
 bundled GameFrame is required to be a validated PE32/SHA-256 file.
 Symlinks are archived as links, without following their targets;
@@ -103,8 +103,10 @@ Start from your own CUE/BIN next to the EXE, not from an installed game.
 Let the full intro AVI play, verify music, input, focus and 4:3 scene;
 then exit normally. Start the EXE a second time without the CD files
 to verify installed-game detection, and check that glide.dll persists.
-Review the ONE CyberGladiatorsFix.log next to the launcher. No special
-command, environment variable or INI option is needed for the shared
+Review both CyberGladiatorsFix_installer.log (launcher/install/verification)
+and CyberGladiatorsFix.log (WinMM/CDDA and GameFrame gameplay) beside the EXE.
+They carry the same session ID on a game launch; --verify leaves the game log
+untouched. No special command, environment variable or INI option is needed for the shared
 DirectDraw/MCI engine. All four US/FR × Windows 11/Wine-staging 11.17 combinations have now
 been field-tested on normal, no-flag launch. FR/Wine was also checked
 against a clean original CYBERG.cue install, repeat launch, video skip,
