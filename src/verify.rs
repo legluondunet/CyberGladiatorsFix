@@ -229,9 +229,10 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
         "NGLIDE_BACKEND","NGLIDE_REFRESH","NGLIDE_RESOLUTION","NGLIDE_ASPECT",
         "NGLIDE_VSYNC","NGLIDE_GAMMA","NGLIDE_SPLASH",
     ] {cmd.env_remove(key);}
-    let log=diagnostics::location(root);
-    cmd.env("CYBER_LOG_FILE",&log);
-    cmd.env("GLIDE_LOG",&log);
+    let runtime_log=diagnostics::runtime_location(root);
+    cmd.env("CYBER_LOG_FILE",&runtime_log);
+    cmd.env("GLIDE_LOG",&runtime_log);
+    cmd.env("CYBER_SESSION_ID",diagnostics::session_id());
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");
     cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
@@ -262,13 +263,15 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     cmd.env("CYBER_AVI_FULLSCREEN","1");
     cmd.env("CYBER_AVI_SMOOTH_TEST","1");
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
-    crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=unified",root);
+    crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=separate_runtime",root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (embedded_verified_build)"));
     diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro={} EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(skip_intro),u8::from(enable_cdda)));
     // The original FR backup's SHA-256 and PE32 structure have been pinned.
     // Inspect plausible x86 COM vtable callsites before spawning the game,
     // without modifying any file, display mode or COM object.
     if native_fr {crate::fr_ddraw_static::inspect(root,&exe);}
+    // Prepare the independent game/DLL log only after launch prerequisites pass.
+    diagnostics::start_runtime_session(root)?;
     cmd.spawn().map_err(|e|format!("Unable to start Cyber Gladiators through GameFrame: {e}"))
 }
 
@@ -415,7 +418,7 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
     // Never emit an extra DXVK *_d3d9.log beside game files during normal
     // gameplay. DXVK documents LOG_PATH=none to disable file creation.
     // Explicit diagnostic renderer runs override it with a private temp
-    // path, then fold their logs into CyberGladiatorsFix.log on exit.
+    // path, then fold their logs into the installer diagnostic report on exit.
     cmd.env("DXVK_LOG_PATH","none");
     // The user's inherited shell environment must not accidentally activate
     // our invasive 1996 transition probes in the ordinary game path.
@@ -459,6 +462,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             crate::show(&format!("INTRO_NATIVE repair=enabled only_when_WineD3D_ANSI_WndProc_and_verified_game_class; renderer={}",if backend_override==Some("2"){"nGlide_Vulkan"}else{"nGlide_D3D9"}),root);
         }
     }
+    // The DLL log is not touched by --verify, --install-only or non-launch commands.
+    diagnostics::start_runtime_session(root)?;
     if trace {
         // Diagnoses graphics/exception handling without modifying game bytes
         // or the Wine prefix. The trace is opt-in, stored beside the patcher,
@@ -522,8 +527,8 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             // The option is never enabled on ordinary --launch.
             cmd.env("CYBER_GLIDE_PASSTHRU_NOOP","1");
         }
-        let log=diagnostics::location(root);
-        if log.is_symlink(){return Err("Refusing symlink session log".into());}
+        let log=diagnostics::runtime_location(root);
+        if log.is_symlink(){return Err("Refusing symlink runtime log".into());}
         let mut output=fs::OpenOptions::new().append(true)
             .open(&log).map_err(|e|format!("Cannot append Wine trace to session log: {e}"))?;
         // Proton consumes this option before starting Wine; we record the
@@ -551,8 +556,10 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
             }
         }
     }
-    // All DLL/CDDA logs go directly into the launcher-adjacent session log.
-    cmd.env("CYBER_LOG_FILE",diagnostics::location(root));
+    // The independent game/DLL log shares this session ID with the installer.
+    cmd.env("CYBER_LOG_FILE",diagnostics::runtime_location(root));
+    cmd.env("GLIDE_LOG",diagnostics::runtime_location(root));
+    cmd.env("CYBER_SESSION_ID",diagnostics::session_id());
     // Module digests identify exactly which locally installed compatibility
     // stack is running. Hash only files already verified as regular assets.
     for (label,path) in [
