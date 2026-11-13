@@ -1,4 +1,6 @@
-# Release readiness and final source audit — candidate v1.0.0
+# Archived release readiness — v1.0.0
+
+> **Historical record:** this document describes the first public v1.0.0 release and its earlier field-testing state. For the current maintenance release, use [v1.0.1 readiness](RELEASE_READINESS_v1.0.1.md), [v1.0.1 release notes](RELEASE_NOTES_v1.0.1.md), and the [active publication procedure](RELEASE_PROCESS.md). The v1.0.0 release has since been published and remains unchanged.
 
 Source acceptance recorded after merged PR #12 (`dc8aa6a4`) and documentation PR #13 (`60263016`). This version-only preparation does not alter the previously field-tested video, audio or gameplay code. The intended first public version is **v1.0.0**; this document **does not authorize a tag, GitHub Release publication, or a claim of universal hardware compatibility**. The final release commit will change if this audit PR merges.
 
