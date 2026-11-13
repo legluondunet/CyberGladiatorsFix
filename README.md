@@ -90,14 +90,23 @@ The historical A/B command aliases remain compatible with old test scripts, but 
 ## Commands
 
 ~~~text
-CyberGladiatorsFix.exe               Auto-install/verify and play
-CyberGladiatorsFix.exe <disc.cue>    Use specified CUE/BIN image
-CyberGladiatorsFix.exe --install-only   Install/upgrade without starting game
-CyberGladiatorsFix.exe --launch-no-verify   Start installed CYBER.EXE directly; skip presence/integrity checks and all repairs
-CyberGladiatorsFix.exe --verify      Strict integrity check
+CyberGladiatorsFix.exe                     Auto-install / verify / play
+CyberGladiatorsFix.exe --install-only      Install or safely upgrade; do not play
+CyberGladiatorsFix.exe --launch-no-verify  Launch directly, bypass checks/repairs
+CyberGladiatorsFix.exe --verify            Read-only integrity checks
+CyberGladiatorsFix.exe --inspect image.iso
+CyberGladiatorsFix.exe --inspect image.cue [track.bin|track.img]
+CyberGladiatorsFix.exe --verbose           Detailed diagnostics (combinable)
 CyberGladiatorsFix.exe --version
-CyberGladiatorsFix.exe --help
+CyberGladiatorsFix.exe --help              Also -h
 ~~~
+
+For unknown retail discs, `--inspect` creates **CyberGladiatorsFix_inspect.log**
+beside the launcher. Supply this report to help add support for new editions;
+the inspection never installs or launches the game. Normal installation
+automatically discovers a neighboring CUE/BIN; positional `<disc.cue>` launch
+arguments have been removed. The optional `--verbose` modifier may be placed
+before or after a command.
 
 For normal use only a double-click is necessary. The legacy nGlide diagnostics remain internally available but are not part of the recommended experience.
 
