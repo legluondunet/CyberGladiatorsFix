@@ -56,7 +56,10 @@ Afterwards --verify and automatic launches require IQ files to be present
 as regular files, without comparing size or digest. All other retail
 assets, original EXE and audio remain strictly integrity checked.
 
-A fresh, single CyberGladiatorsFix.log appears beside the launcher.
+Two independent logs appear beside the launcher:
+  CyberGladiatorsFix_installer.log (installer, verification and launcher)
+  CyberGladiatorsFix.log (WinMM/CDDA and GameFrame game process).
+Both contain the same session ID when a game session is started.
 CDDA/FLAC music is always on.
 The user INI contains only [Video] SkipIntro.
 Both US and French retail discs are authenticated by exact EXE and resource
@@ -87,10 +90,12 @@ fn wait_game(mut child:std::process::Child,root:&Path)->Result<(),String>{
     let pid=child.id();
     let start=std::time::Instant::now();
     let status=child.wait().map_err(|e|e.to_string())?;
-    show(&format!(
+    let event=format!(
         "GAME_EXIT pid={pid} exit_status={status} elapsed_ms={}",
         start.elapsed().as_millis()
-    ),root);
+    );
+    show(&event,root);
+    diagnostics::log_runtime(root,"SESSION",&event);
     if !status.success(){return Err(format!("Game exited with status {status}"));}
     Ok(())
 }
@@ -101,8 +106,12 @@ fn wait_diagnostic(mut child:std::process::Child,root:&Path)->Result<(),String>{
     show(&format!(
         "DIAGNOSTIC_EXIT pid={pid} exit_status={status} elapsed_ms={} session_log={}",
         start.elapsed().as_millis(),
-        diagnostics::location(root).display()
+        diagnostics::runtime_location(root).display()
     ),root);
+    diagnostics::log_runtime(root,"SESSION",&format!(
+        "DIAGNOSTIC_EXIT pid={pid} exit_status={status} session_id={}",
+        diagnostics::session_id()
+    ));
     if !status.success(){
         return Err(format!("Game exited with status {status}; see CyberGladiatorsFix.log"));
     }
@@ -234,6 +243,9 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
         None
     };
     let child=verify::launch_gameframe(root)?;
+    diagnostics::log_runtime(root,"SESSION",&format!(
+        "GAME_STARTED pid={} session_id={}",child.id(),diagnostics::session_id()
+    ));
     show(&format!(
         "INTRO_NATIVE GAME_STARTED pid={} renderer=GameFrame-OpenGL gameframe=1 native_video_4x3=1 first_present_handoff=1 music_flac={} WndProc_repair=disabled",
         child.id(),u8::from(enable_cdda)
@@ -507,7 +519,7 @@ mod diagnostics_tests {
             "--install-only","--verify","--inspect-disc","--max-graphics",
             "--check-bundle","--version","--help",
             "music/TrackNN.flac","CyberGladiatorsFix.dll",
-            "CyberGladiatorsFix.log","GameFrame"]{
+            "CyberGladiatorsFix_installer.log","CyberGladiatorsFix.log","GameFrame"]{
             assert!(HELP.contains(expected),"{expected}");
         }
         assert!(!HELP.contains("--launch"));
