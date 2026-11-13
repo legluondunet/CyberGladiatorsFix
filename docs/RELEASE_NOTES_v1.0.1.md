@@ -82,10 +82,25 @@ CyberGladiatorsFix.exe -h
   presentation, showed the menu signature, played CDDA and exited
   normally (code 0). The captured session used a video skip, so it does
   not prove an uninterrupted full introduction.
+- The **v1.0.1 candidate `1.0.1-691f03b3`** was also tested on
+  **13 November 2026** with an *existing* USA installation under Wine 11.17.
+  Normal-launch integrity pre/post-checks passed (255 immutable SHA-256
+  matches and 100 writable IQ files present); the installed GameFrame and
+  CDDA modules were kept because their hashes matched the embedded build.
+  The native 4:3 introduction started and was skipped with Enter, the
+  transition to the first OpenGL frame and menu signature succeeded,
+  the audio bridge decoded track 12 and started waveOut, and the game
+  exited normally (code 0 after 6.18 seconds). The two logs shared a
+  session ID. This was a **short smoke test**, not a new installation
+  or proof of complete introduction, extended 60 FPS gameplay or
+  Alt+Tab behavior; the explicit `--verify`, `--install-only` and
+  `--launch-no-verify` paths remain to be field-tested.
+- [Windows CI for the exact v1.0.1 test candidate](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/43476299506)
+  succeeded (97 launcher tests, 54 WinMM/CDDA tests and GameFrame/WinMM
+  build and loader checks). CI does not play the retail game.
 - Earlier v1.0.0 project field tests covered US/FR on native Windows 11
-  and Wine. **The tagged 1.0.1 binary still requires a final smoke test**
-  on actual retail media; automated GitHub Actions builds do not run
-  the copyrighted game. These results are not universal OS/GPU guarantees.
+  and Wine. **The final tagged 1.0.1 binary still requires a smoke test**
+  on actual retail media; these results are not universal OS/GPU guarantees.
 
 ## Package, licensing and publication
 
