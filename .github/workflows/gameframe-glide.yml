@@ -108,11 +108,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "GameFrame launcher unit tests failed" }
           & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --help
           if ($LASTEXITCODE -ne 0) { throw "GameFrame help smoke failed" }
-          & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle
-          if ($LASTEXITCODE -ne 0) { throw "Embedded WinMM/GameFrame bundle mismatch" }
-          $output = (& 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle | Out-String)
-          if ($output -notmatch 'open_source_glide_embedded=1') { throw "GameFrame must be embedded into the one EXE" }
-          Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
+          # The former --check-bundle CLI command was removed. The bundle is
+          # still hash-verified by Rust unit tests and this source-pinned build.
+          Write-Host "Embedded GameFrame/WinMM hashes verified by cargo test; GameFrame SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
 
       - name: Check version and strict verification preserve separate installer/game logs
         shell: pwsh
@@ -143,6 +141,36 @@ jobs:
           }
           if (Test-Path $gameLog) { throw '--help unexpectedly created the game/DLL log' }
           Write-Host 'Strict verify + installer log + no game log + read-only help: PASS'
+          exit 0
+
+      - name: Check unchecked launch skips install and file preflights
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          $dir = Split-Path -Parent $exe
+          $game = Join-Path $dir 'CyberGladiatorsFix'
+          $gameLog = Join-Path $dir 'CyberGladiatorsFix.log'
+          $installerLog = Join-Path $dir 'CyberGladiatorsFix_installer.log'
+          if (Test-Path $game) { throw 'Unexpected game files before unchecked-launch smoke test' }
+          $output = (& $exe --launch-no-verify 2>&1 | Out-String)
+          if ($LASTEXITCODE -eq 0) { throw 'Unchecked launch unexpectedly succeeded without CYBER.EXE' }
+          if (Test-Path $game) { throw 'Unchecked launch unexpectedly installed or created game files' }
+          if (!(Test-Path $gameLog) -or !(Test-Path $installerLog)) {
+            throw 'Unchecked launch must use separate installer and game logs'
+          }
+          $body = Get-Content -Raw $installerLog
+          foreach ($part in @('FAST_LAUNCH mode=no_verify', 'Unable to start existing CYBER.EXE without verification')) {
+            if (!$body.Contains($part)) { throw "Unchecked launch missing expected evidence: $part" }
+          }
+          if ($body -match 'AUTO_INTEGRITY_PRECHECK|AUTO_INTEGRITY_POSTCHECK|AUTO_DISC_FOUND|GAMEFRAME_BRIDGE_CHECK') {
+            throw 'Unchecked launch unexpectedly performed file preflight, extraction or DLL checks'
+          }
+          $help = (& $exe --help | Out-String)
+          foreach ($removed in @('--max-graphics','--check-bundle','--upgrade-cdda')) {
+            if ($help.Contains($removed)) { throw "Removed CLI option remains: $removed" }
+          }
+          Write-Host 'Unchecked launch bypasses file preflights; removed options absent: PASS'
           exit 0
 
       - name: Check FR CUE inspection does not install or patch anything
