@@ -117,8 +117,7 @@ Useful commands:
   CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
   CyberGladiatorsFix.exe --verify        strict non-IQ files; IQ presence
   CyberGladiatorsFix.exe --inspect-disc original.cue   read-only CD inspection
-  CyberGladiatorsFix.exe --max-graphics  max game settings
-  CyberGladiatorsFix.exe --check-bundle  embedded DLL checks
+  CyberGladiatorsFix.exe --launch-no-verify  run installed game without file verification or repair
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
