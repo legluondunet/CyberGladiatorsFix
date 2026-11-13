@@ -22,6 +22,9 @@ mod autostart;
 
 use std::ffi::OsString;
 use std::fs;
+use std::fs::{File,OpenOptions};
+use std::io::Write;
+use isomage::{detect_and_parse_filesystem,TreeNode};
 use std::path::{Path,PathBuf};
 
 const NAME:&str="CyberGladiatorsFix";
@@ -29,15 +32,14 @@ const HELP:&str=r"CyberGladiatorsFix — open-source Windows x64 installer and l
 
 Usage:
   CyberGladiatorsFix.exe               Auto-detect verified installed game or CUE/BIN, install if missing, then play
-  CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
+  CyberGladiatorsFix.exe --inspect image.iso
+  CyberGladiatorsFix.exe --inspect image.cue [track.bin|track.img]
+  CyberGladiatorsFix.exe --launch-no-verify   Launch installed game without any file integrity or presence preflight
   CyberGladiatorsFix.exe --verify      Strict immutable assets and executable; IQ presence
-  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only US/FR CD fingerprint (no installation)
-  CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
-  CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
-  CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
+  CyberGladiatorsFix.exe --verbose     Detailed diagnostics (combinable)
   CyberGladiatorsFix.exe --version
-  CyberGladiatorsFix.exe --help
+  CyberGladiatorsFix.exe --help       (also -h)
 
 No launch argument is required. On first use, keep the original .cue
 and its .bin track files next to this EXE. CYBER.EXE and retail data are
@@ -54,7 +56,8 @@ No original game data is distributed. The launcher never rewrites IQ data.
 During first installation original IQ files undergo strict SHA-256 checks.
 Afterwards --verify and automatic launches require IQ files to be present
 as regular files, without comparing size or digest. All other retail
-assets, original EXE and audio remain strictly integrity checked.
+assets, original EXE and audio remain strictly integrity checked in normal mode.
+The opt-in --launch-no-verify bypasses installation, file preflights and repairs.
 
 Two independent logs appear beside the launcher:
   CyberGladiatorsFix_installer.log (installer, verification and launcher)
@@ -314,6 +317,87 @@ fn diagnose_dxvk(root:&Path,wndproc_repair:bool)->Result<(),String>{
     show("DXVK_ROOTCAUSE END; EXCEPTION_CAPTURE alone is not a symbolized call stack; see DXVK_STACK_CANDIDATES and DXVK_FAULT_CODE, then use WineDbg if necessary",root);
     result
 }
+/// Unsupported-CD support report, without game installation, edition
+/// matching, runtime logging or changes to the supplied ISO/CUE/BIN/IMG.
+fn inspect_disc(root:&Path,args:&[OsString],verbose:bool)->Result<(),String>{
+    if args.len()<2 || args.len()>3{return Err("Usage: --inspect image.iso | image.cue [track.bin|track.img]".into());}
+    let image=PathBuf::from(&args[1]);
+    let image=if image.is_absolute(){image}else{root.join(image)};
+    let is_cue=image.extension().is_some_and(|e|e.eq_ignore_ascii_case("cue"));
+    let is_iso=image.extension().is_some_and(|e|e.eq_ignore_ascii_case("iso"));
+    if !is_cue && !is_iso{return Err("Inspect input must be an ISO or CUE".into());}
+    let raw=if let Some(arg)=args.get(2){
+        if !is_cue {return Err("BIN/IMG override requires CUE".into());}
+        let candidate=PathBuf::from(arg);
+        let candidate=if candidate.is_absolute(){candidate}else{root.join(candidate)};
+        if !candidate.extension().is_some_and(|e|e.eq_ignore_ascii_case("bin") ||
+                                                   e.eq_ignore_ascii_case("img")){
+            return Err("Explicit track must be BIN or IMG".into());
+        }
+        Some(candidate)
+    }else{None};
+    let destination=root.join("CyberGladiatorsFix_inspect.log");
+    if fs::symlink_metadata(&destination).is_ok_and(|m|!m.is_file() || m.file_type().is_symlink()){
+        return Err("Inspect log path must be a regular file".into());
+    }
+    let mut report=OpenOptions::new().create(true).write(true).truncate(true)
+        .open(&destination).map_err(|e|format!("Cannot write inspect log: {e}"))?;
+    writeln!(report,"CyberGladiatorsFix INSPECT v1\nSource={}\nTrack={}",
+        image.display(),raw.as_ref().map(|p|p.display().to_string()).unwrap_or_default())
+        .map_err(|e|e.to_string())?;
+    let result=(||->Result<(),String>{
+        let m=fs::symlink_metadata(&image).map_err(|e|e.to_string())?;
+        if !m.is_file() || m.file_type().is_symlink(){return Err("Source image is not a regular file".into());}
+        if let Some(ref selected)=raw {
+            let m=fs::symlink_metadata(selected).map_err(|e|e.to_string())?;
+            if !m.is_file() || m.file_type().is_symlink(){return Err("Explicit track is not a regular file".into());}
+        }
+        let normalized=if is_cue {
+            let tracks=cue::tracks(&image)?;
+            writeln!(report,"CUE_TRACKS={}",tracks.len()).map_err(|e|e.to_string())?;
+            for track in tracks {
+                writeln!(report,"TRACK={:02}\tMODE={}\tFILE={}\tINDEX01={}",
+                    track.number,track.mode,track.file.replace(['\r','\n','\t'],"_"),track.index01)
+                    .map_err(|e|e.to_string())?;
+            }
+            Some(cue::normalize_with_data(&image,root,raw.as_deref())?)
+        }else{None};
+        let data=normalized.as_ref().map(|x|x.0.as_path()).unwrap_or(&image);
+        let mut file=File::open(data).map_err(|e|e.to_string())?;
+        let len=file.metadata().map_err(|e|e.to_string())?.len();
+        let tree=detect_and_parse_filesystem(&mut file,&data.to_string_lossy())
+            .map_err(|e|format!("Unknown/invalid CD filesystem: {e}"))?;
+        writeln!(report,"DataBytes={len}\nPATH\tSIZE_BYTES\tOFFSET\tTYPE")
+            .map_err(|e|e.to_string())?;
+        fn walk(node:&TreeNode,path:&Path,depth:usize,count:&mut usize,
+                out:&mut File,verbose:bool)->Result<(),String>{
+            if depth>40{return Err("Inspect filesystem nesting limit reached".into());}
+            for child in &node.children{
+                *count+=1;
+                if *count>25000{return Err("Inspect file count limit reached".into());}
+                let name=child.name.replace(['\r','\n','\t'],"_");
+                let relative=path.join(name);
+                let kind=if child.is_directory{"DIRECTORY"}else{"FILE"};
+                writeln!(out,"{}\t{}\t{}\t{}",relative.display(),child.size,
+                    child.file_location.unwrap_or(0),kind).map_err(|e|e.to_string())?;
+                if verbose{println!("INSPECT: {} bytes={} {}",relative.display(),child.size,kind);}
+                if child.is_directory{walk(child,&relative,depth+1,count,out,verbose)?;}
+            }
+            Ok(())
+        }
+        let mut count=0;
+        walk(&tree,Path::new(""),0,&mut count,&mut report,verbose)?;
+        writeln!(report,"Entries={count}\nINSPECT_RESULT=COMPLETE")
+            .map_err(|e|e.to_string())?;
+        Ok(())
+    })();
+    if let Err(ref failure)=result{
+        let _=writeln!(report,"INSPECT_RESULT=FAILED\nError={failure}");
+    }
+    report.flush().map_err(|e|e.to_string())?;
+    println!("Inspection report: {}",destination.display());
+    result
+}
 fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
     let version=format!("{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"));
     match args{
@@ -331,32 +415,19 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             show(&format!("AUTO_INSTALL_ONLY verified: {}",verify::verify(root)?),root);
             return Ok(());
         },
-        [one] if one.to_str().is_some_and(|s|s.to_ascii_lowercase().ends_with(".cue"))=>{
-            let _lock=autostart::lock(root)?;
-            let source=PathBuf::from(one);
-            autostart::prepare(root,Some(&source))?;
-            return user_gameframe_launch(root);
-        },
-        [one] if one.to_str()==Some("--inspect-disc")=>{
-            let cue=install::find_cue(root)?;
-            return install::inspect_disc(&cue,root);
-        },
-        [one,two] if one.to_str()==Some("--inspect-disc")=>{
-            return install::inspect_disc(&PathBuf::from(two),root);
-        },
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
-        [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
+        [one] if matches!(one.to_str(),Some("--help"|"-h"))=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
         [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
         [one] if one.to_str()==Some("--dxvk-wndproc-repair-test")=>return diagnose_dxvk(root,true),
-        [one] if one.to_str()==Some("--check-bundle")=>{
-            let report=bundle::describe()?;
-            show(&report,root);
-            return Ok(());
-        },
         [one] if one.to_str()==Some("--verify")=>{let r=verify::verify(root)?;show(&r,root);return Ok(());},
-        [one] if one.to_str()==Some("--max-graphics")=>{
-            let r=graphics::maximize_saved(&root.join(install::DIR))?;
-            show(&r,root);return Ok(());
+        [one] if one.to_str()==Some("--launch-no-verify")=>{
+            // Explicit opt-in: do not scan the installation, hash any file,
+            // install/repair modules, or even check whether assets are present.
+            let _lock=autostart::lock(root)?;
+            show("FAST_LAUNCH mode=no_verify installation=skipped integrity=skipped presence=skipped module_repair=skipped",root);
+            let child=verify::launch_gameframe_unchecked(root)?;
+            show(&format!("FAST_LAUNCH GAME_STARTED pid={}",child.id()),root);
+            return wait_game(child,root);
         },
         [one] if one.to_str()==Some("--launch")=>{
             // Backward-compatible alias for the exact same one-click path.
@@ -447,20 +518,18 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             return user_launch(root,false,true,false),
         _=>{},
     }
-    let upgrade_cdda=matches!(args,[one] if one.to_str()==Some("--upgrade-cdda"));
-    if !upgrade_cdda && (args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>1){
-        return Err(format!("Invalid option(s).\n{HELP}"));
+    if !args.is_empty(){
+        return Err(format!("Invalid option(s). Positional CUE/ISO media and unknown flags are not supported; use --inspect for diagnostics.\n{HELP}"));
     }
     let target=root.join(install::DIR);
     if target.is_symlink(){return Err("Refusing symlink game directory".into());}
     if target.exists(){
-        if !args.is_empty() && !upgrade_cdda{return Err("Installation already exists: refusal to overwrite".into());}
+        if !args.is_empty(){return Err("Installation already exists: refusal to overwrite".into());}
         let exe=target.join("cyber.exe");
         // Validate the text settings before modifying the game binary.
         settings::ensure(&target)?;
         let skip_intro=settings::read(&target)?;
-        let enable_cdda=settings::CDDA_ENABLED;
-        cdda::try_install_with_consent(root,&target,upgrade_cdda)?;
+        cdda::try_install(root,&target)?;
         let status=patch::apply(&exe)?;
         let audio=patch::set_cdda(&exe,true)?;
         let intro=patch::set_skip_intro(&exe,skip_intro)?;
@@ -469,10 +538,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         show("Installation ready (game not started). Launch with: CyberGladiatorsFix.exe --launch",root);
         return Ok(());
     }
-    if upgrade_cdda{return Err("--upgrade-cdda requires an existing game installation".into());}
-    let input=if let Some(arg)=args.first(){PathBuf::from(arg)}else{
-        install::find_cue(&std::env::current_dir().map_err(|e|e.to_string())?)?
-    };
+    let input=install::find_cue(root)?;
     require_cue(&input)?;
     show(&format!("Selected CUE sheet: {}",input.display()),root);
     let status=install::install(&input,&target,root)?;
@@ -482,14 +548,30 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
 fn main(){
     let root=std::env::current_exe().ok().and_then(|p|p.parent().map(Path::to_path_buf))
         .unwrap_or_else(||PathBuf::from("."));
-    let args:Vec<OsString>=std::env::args_os().skip(1).collect();
-    // --help and --version are read-only queries; do not erase the last
-    // diagnostic session just to display the CLI documentation.
-    let read_only=matches!(args.as_slice(),[one] if matches!(one.to_str(),Some("--help"|"--version")));
+    let original:Vec<OsString>=std::env::args_os().skip(1).collect();
+    if original.iter().filter(|arg|*arg=="--verbose").count()>1 {
+        eprintln!("{NAME}: --verbose specified twice");std::process::exit(2);
+    }
+    let verbose=original.iter().any(|arg|arg=="--verbose");
+    let args:Vec<OsString>=original.into_iter().filter(|arg|arg!="--verbose").collect();
+    if args.first().is_some_and(|a|a=="--inspect"){
+        if let Err(e)=inspect_disc(&root,&args,verbose){
+            eprintln!("{NAME}: inspection error: {e}");std::process::exit(2);
+        }
+        return;
+    }
+    // Help, version and explicit --inspect do not reset the installation log.
+    let read_only=matches!(args.as_slice(),[one] if matches!(one.to_str(),Some("--help"|"-h"|"--version")));
     if !read_only {
         if let Err(e)=diagnostics::start_session(&root,&args){
             eprintln!("{NAME}: ERROR: {e}");
             std::process::exit(1);
+        }
+        if verbose {
+            let msg=format!("VERBOSE mode=on source=launcher game_dir={} running_under_wine={}",
+                root.join(install::DIR).display(),!diagnostics::is_native_windows());
+            diagnostics::log(&root,"VERBOSE",&msg);
+            println!("{msg}");
         }
     }
     if let Err(e)=dispatch(&args,&root){
@@ -514,15 +596,29 @@ mod diagnostics_tests {
         }
     }
     #[test]
+    fn removed_disc_inspection_commands_are_rejected(){
+        let root=Path::new("C:/CyberGladiatorsFix-test-nonexistent");
+        for arguments in [
+            vec![OsString::from("--inspect-disc")],
+            vec![OsString::from("--inspect-disc"),OsString::from("game.cue")],
+        ] {
+            let err=dispatch(&arguments,root).unwrap_err();
+            assert!(err.starts_with("Invalid option(s)."),"{err}");
+        }
+    }
+    #[test]
     fn help_lists_only_one_click_controls(){
         for expected in ["CyberGladiatorsFix.exe               Auto-detect",
-            "--install-only","--verify","--inspect-disc","--max-graphics",
-            "--check-bundle","--version","--help",
+            "--install-only","--launch-no-verify","--verify",
+            "--version","--help",
             "music/TrackNN.flac","CyberGladiatorsFix.dll",
             "CyberGladiatorsFix_installer.log","CyberGladiatorsFix.log","GameFrame"]{
             assert!(HELP.contains(expected),"{expected}");
         }
-        assert!(!HELP.contains("--launch"));
+        for removed in ["--inspect-disc","--max-graphics","--check-bundle","--upgrade-cdda"]{
+            assert!(!HELP.contains(removed),"{removed}");
+        }
+        assert!(!HELP.lines().any(|line| line.trim()=="CyberGladiatorsFix.exe --launch"));
         assert!(!HELP.contains("--us-virtual-ddraw-test"));
         assert!(!HELP.contains("--avi-in-game-window"));
         assert!(!HELP.contains("--nglide-vulkan"));

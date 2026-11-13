@@ -108,11 +108,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "GameFrame launcher unit tests failed" }
           & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --help
           if ($LASTEXITCODE -ne 0) { throw "GameFrame help smoke failed" }
-          & 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle
-          if ($LASTEXITCODE -ne 0) { throw "Embedded WinMM/GameFrame bundle mismatch" }
-          $output = (& 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe' --check-bundle | Out-String)
-          if ($output -notmatch 'open_source_glide_embedded=1') { throw "GameFrame must be embedded into the one EXE" }
-          Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
+          # The former --check-bundle CLI command was removed. The bundle is
+          # still hash-verified by Rust unit tests and this source-pinned build.
+          Write-Host "Embedded GameFrame/WinMM hashes verified by cargo test; GameFrame SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
 
       - name: Check version and strict verification preserve separate installer/game logs
         shell: pwsh
@@ -145,42 +143,56 @@ jobs:
           Write-Host 'Strict verify + installer log + no game log + read-only help: PASS'
           exit 0
 
-      - name: Check FR CUE inspection does not install or patch anything
+      - name: Check unchecked launch skips install and file preflights
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
           $dir = Split-Path -Parent $exe
-          $cue = Join-Path $env:RUNNER_TEMP 'cyber-fr-cue-fixture.cue'
-          @'
-          FILE "CYBERG.BIN" BINARY
-            TRACK 01 MODE1/2352
-              INDEX 01 00:00:00
-            TRACK 02 AUDIO
-              PREGAP 00:02:00
-              INDEX 01 07:09:65
-            TRACK 03 AUDIO
-              INDEX 00 08:29:68
-              INDEX 01 08:31:68
-          '@ | Set-Content $cue -Encoding ascii
-          $output = (& $exe --inspect-disc $cue 2>&1 | Out-String)
-          if ($LASTEXITCODE -eq 0) {
-            throw 'Inspection succeeded without CYBERG.BIN; missing image must be reported'
+          $game = Join-Path $dir 'CyberGladiatorsFix'
+          $gameLog = Join-Path $dir 'CyberGladiatorsFix.log'
+          $installerLog = Join-Path $dir 'CyberGladiatorsFix_installer.log'
+          if (Test-Path $game) { throw 'Unexpected game files before unchecked-launch smoke test' }
+          $output = (& $exe --launch-no-verify 2>&1 | Out-String)
+          if ($LASTEXITCODE -eq 0) { throw 'Unchecked launch unexpectedly succeeded without CYBER.EXE' }
+          if (Test-Path $game) { throw 'Unchecked launch unexpectedly installed or created game files' }
+          if (!(Test-Path $gameLog) -or !(Test-Path $installerLog)) {
+            throw 'Unchecked launch must use separate installer and game logs'
           }
-          $log = Join-Path $dir 'CyberGladiatorsFix_installer.log'
-          if (!(Test-Path $log)) { throw 'Inspection failed without installer session log' }
-          $body = Get-Content -Raw $log
-          foreach ($part in @('DISC_INSPECT', 'tracks=3 audio_tracks=2', 'DISC_TRACK number=03', '[SESSION] END failure')) {
-            if (!$body.Contains($part)) { throw "Inspection log missing: $part" }
+          $body = Get-Content -Raw $installerLog
+          foreach ($part in @('FAST_LAUNCH mode=no_verify', 'Unable to start existing CYBER.EXE without verification')) {
+            if (!$body.Contains($part)) { throw "Unchecked launch missing expected evidence: $part" }
           }
-          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
-            throw 'Read-only inspection unexpectedly installed a game directory'
+          if ($body -match 'AUTO_INTEGRITY_PRECHECK|AUTO_INTEGRITY_POSTCHECK|AUTO_DISC_FOUND|GAMEFRAME_BRIDGE_CHECK') {
+            throw 'Unchecked launch unexpectedly performed file preflight, extraction or DLL checks'
           }
-          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix-disc.tmp.iso')) {
-            throw 'Read-only inspection unexpectedly left a temporary ISO'
+          $help = (& $exe --help | Out-String)
+          foreach ($removed in @('--inspect-disc','--max-graphics','--check-bundle','--upgrade-cdda')) {
+            if ($help.Contains($removed)) { throw "Removed CLI option remains: $removed" }
           }
-          Remove-Item $cue -Force
-          Write-Host 'Read-only FR CUE inspect without BIN: PASS'
+          Write-Host 'Unchecked launch bypasses file preflights; removed options absent: PASS'
+          exit 0
+
+      - name: Check retired disc inspection commands are rejected without side effects
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          $dir = Split-Path -Parent $exe
+          $game = Join-Path $dir 'CyberGladiatorsFix'
+          $help = (& $exe --help | Out-String)
+          if ($help.Contains('--inspect-disc')) { throw 'Retired disc inspection command is still advertised' }
+          foreach ($arguments in @(
+            ,@('--inspect-disc'),
+            ,@('--inspect-disc', 'missing-image.cue')
+          )) {
+            $result = (& $exe @arguments 2>&1 | Out-String)
+            if ($LASTEXITCODE -eq 0 -or !$result.Contains('Invalid option(s).')) {
+              throw "Retired inspection form was not rejected: $($arguments -join ' ')"
+            }
+            if (Test-Path $game) { throw 'Retired inspection unexpectedly installed a game' }
+          }
+          Write-Host 'Both removed disc inspection commands rejected without installation: PASS'
           exit 0
 
       - name: Verify one-click auto-discovery fails safely without a retail CD

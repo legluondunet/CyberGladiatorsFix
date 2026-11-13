@@ -36,7 +36,7 @@ On first run the launcher searches for the supported CD image, identifies the or
 
 If an installation exists but does not pass its checks, the launcher refuses to run rather than deleting or silently replacing user files. Only one CUE image in the launcher's directory is accepted without an explicit path. **Standalone ISO input is not supported yet.** Data-only dumps cannot provide the original CD music.
 
-**CUE/BIN compatibility:** Some single-BIN CD dumps (including the supplied CYBER.cue/CYBER.bin) store an actual two-second zero-filled pause before the first audio track but omit its INDEX 00. For a 2352-byte raw data track followed by AUDIO in the same BIN, CyberGladiatorsFix recognizes **exactly 150 consecutive all-zero sectors immediately preceding the first audio INDEX 01**. It excludes only that verified pause from the extracted ISO data; the original CUE and BIN are never modified, CDDA remains bounded by each declared INDEX 01, and every remaining data-sector sync/mode plus the authenticated retail EXE and resource hashes must still pass strict validation. Nonzero or malformed sectors are never silently skipped. Use --inspect-disc CYBER.cue to verify a disc read-only before installation.
+**CUE/BIN compatibility:** Some single-BIN CD dumps (including the supplied CYBER.cue/CYBER.bin) store an actual two-second zero-filled pause before the first audio track but omit its INDEX 00. For a 2352-byte raw data track followed by AUDIO in the same BIN, CyberGladiatorsFix recognizes **exactly 150 consecutive all-zero sectors immediately preceding the first audio INDEX 01**. It excludes only that verified pause from the extracted ISO data; the original CUE and BIN are never modified, CDDA remains bounded by each declared INDEX 01, and every remaining data-sector sync/mode plus the authenticated retail EXE and resource hashes must still pass strict validation. Nonzero or malformed sectors are never silently skipped. For installation, the original CUE/BIN image is authenticated automatically before any game files are installed.
 
 ## Installed layout
 
@@ -90,19 +90,29 @@ The historical A/B command aliases remain compatible with old test scripts, but 
 ## Commands
 
 ~~~text
-CyberGladiatorsFix.exe               Auto-install/verify and play
-CyberGladiatorsFix.exe <disc.cue>    Use specified CUE/BIN image
-CyberGladiatorsFix.exe --install-only   Install/upgrade without starting game
-CyberGladiatorsFix.exe --verify      Strict integrity check
-CyberGladiatorsFix.exe --inspect-disc original.cue    Read-only disc inspection
-CyberGladiatorsFix.exe --max-graphics
-CyberGladiatorsFix.exe --check-bundle
-CyberGladiatorsFix.exe --upgrade-cdda
+CyberGladiatorsFix.exe                     Auto-install / verify / play
+CyberGladiatorsFix.exe --install-only      Install or safely upgrade; do not play
+CyberGladiatorsFix.exe --launch-no-verify  Launch directly, bypass checks/repairs
+CyberGladiatorsFix.exe --verify            Read-only integrity checks
+CyberGladiatorsFix.exe --inspect image.iso
+CyberGladiatorsFix.exe --inspect image.cue [track.bin|track.img]
+CyberGladiatorsFix.exe --verbose           Detailed diagnostics (combinable)
 CyberGladiatorsFix.exe --version
-CyberGladiatorsFix.exe --help
+CyberGladiatorsFix.exe --help              Also -h
 ~~~
 
+For unknown retail discs, `--inspect` creates **CyberGladiatorsFix_inspect.log**
+beside the launcher. Supply this report to help add support for new editions;
+the inspection never installs or launches the game. Normal installation
+automatically discovers a neighboring CUE/BIN; positional `<disc.cue>` launch
+arguments have been removed. The optional `--verbose` modifier may be placed
+before or after a command.
+
 For normal use only a double-click is necessary. The legacy nGlide diagnostics remain internally available but are not part of the recommended experience.
+
+**Unchecked launch (opt-in):** `--launch-no-verify` starts the already-installed `CyberGladiatorsFix/cyber.exe` directly. It does **not** search for a disc, install files, validate the manifest, hash assets, check whether resources exist, patch the EXE or update/replace DLLs. The OS may still fail to start if the executable or working directory is absent; the game may fail later if dependencies are missing. For known US/FR executable sizes, it passes the same GameFrame/DirectDraw runtime options without validating their hashes; unknown sizes do not receive edition-specific memory profiles. Use normal launch or `--verify` to investigate installation problems.
+
+**Automatic graphics:** New installations create the game's original 32-byte `cyber.ini` with maximum 640×480 internal resolution and detail 3/3. Existing user settings are not overwritten just to force a preference. There is no separate graphics CLI switch. Older or unknown WinMM/CDDA DLLs are preserved in SHA-qualified backups before the normal installer's automatic replacement; existing backups are never silently overwritten.
 
 ## Configuration and integrity
 
@@ -110,7 +120,7 @@ The **CyberGladiatorsFix/CyberGladiatorsFix.ini** text file is distinct from the
 
 - **[Video] SkipIntro=0** — play the original introduction (default).
 
-**CDDA/FLAC playback is required** and enabled automatically. **All retail CD resources, including `iq/`, are strictly SHA-256 checked during the initial staged installation.** The game may subsequently rewrite `iq/` files: on later launches and with `--verify` every manifest-listed IQ file must exist as a regular file, but its size and hash are no longer compared. Other original assets, the EXE and backup, FLAC and embedded DLLs remain strictly checked. Original IQ hashes remain in the manifest and the launcher never overwrites these files; no opt-out or extra INI setting exists. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
+**CDDA/FLAC playback is required** and enabled automatically. **All retail CD resources, including `iq/`, are strictly SHA-256 checked during the initial staged installation.** The game may subsequently rewrite `iq/` files: on later launches and with `--verify` every manifest-listed IQ file must exist as a regular file, but its size and hash are no longer compared. Other original assets, the EXE and backup, FLAC and embedded DLLs remain strictly checked **during normal launches and `--verify`**. Original IQ hashes remain in the manifest and the launcher never overwrites these files; the explicit `--launch-no-verify` shortcut skips preflight verification for an existing game, without adding an INI option. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
 
 Two logs next to **CyberGladiatorsFix.exe** separate the installer/launcher from the running game:
 
