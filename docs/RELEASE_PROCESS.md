@@ -1,40 +1,78 @@
-# First public release: one-click GitHub Actions publication — v1.0.0
+# CyberGladiatorsFix v1.0.1 — guarded maintenance release process
 
-CyberGladiatorsFix follows the same **manually approved, automated publication** model as ScorchedPlanetFix. Merging a PR or pushing a tag **never publishes a GitHub Release**. The release manager explicitly initiates the dedicated publisher workflow after source/field acceptance.
+The previously published **v1.0.0** GitHub Release and its assets are immutable
+historical artifacts. This procedure publishes **v1.0.1** separately, without
+changing the earlier release. Merging or pushing code **never** publishes
+automatically.
 
-## 1. Preconditions
+## 1. Approval and pre-publication gates
 
-- The final reviewed code is merged into `main`. The original retail images supported by this version remain **US and FR CUE/BIN**, not unverified DE/other editions.
-- Confirm `Cargo.toml` has `version = "1.0.0"`; no known release-blocking issues remain.
-- Prior authenticated retail field tests on Windows 11 and Wine-staging 11.17 validate installation, the original movie (including skip), full-screen 4:3, Alt+Tab, FLAC music, 60 FPS, menu signature and normal exit.
-- The US/Wine test on the merged `bc55394e` build verified `--verify` and a normal game exit with **100 IQ files checked for safe presence** and **255 remaining resources strictly hashed**; original IQ data may be rewritten by the retail game.
-- The release manager has explicitly approved public publication.
+1. Merge the v1.0.1 preparation PR into `main` after a reviewed, green
+   Windows CI: pinned GameFrame x86, embedded WinMM x86, launcher x64,
+   unit tests, 32-bit DLL exports/loader and one-file packaging.
+2. Confirm `Cargo.toml` contains `version = "1.0.1"`, that `main`
+   has not advanced unexpectedly, that tag/release `v1.0.1` do not exist,
+   and that v1.0.0 remains available.
+3. Test original **US and FR** CUE/BIN media on native Windows 11 and Wine
+   as possible. Check fresh install, repeated normal launch, `--install-only`,
+   `--verify`, `--launch-no-verify`, video skip, 4:3 image/menus,
+   signature, Alt+Tab, FLAC audio, normal exit, DLL backup retention and
+   two correlated logs. `--inspect` must be read-only; `--verbose`
+   must combine with commands.
+4. Record any unavailable field-test combinations explicitly; a green CI
+   run alone does not establish real-game compatibility.
+5. Obtain explicit maintainer approval to publish this version. Do not
+   trigger the release workflow in response to merely approving the PR.
 
-## 2. Start publication entirely in the GitHub web interface
+## 2. Manually start the approved publisher
 
-1. Open [**Publish CyberGladiatorsFix v1.0.0**](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/publish-v1.0.0.yml).
-2. Click **Run workflow**, select **main**.
-3. Enter **`publish-v1.0.0`** in the `confirm` field, then click **Run workflow**.
+Open [Publish CyberGladiatorsFix v1.0.1](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/publish-v1.0.1.yml),
+choose **Run workflow** on **main**, and enter exactly
+`publish-v1.0.1` in the confirmation field.
 
-**This is the only manual publishing action.** There is no need to create a tag, draft Release, upload a ZIP, copy SHA-256 hashes or run `git` locally. Do not run this workflow until the release is ready to go public.
+This is the only publishing action needed: GitHub Actions builds, checks,
+tags and uploads the resulting package. Never run the workflow before the
+real-game acceptance decision.
 
-The publisher refuses any branch other than `main`, a wrong confirmation phrase, a mismatched `Cargo.toml` version, an existing v1.0.0 release, an unexpected SHA or a branch that advances during publication. It uses `contents: write` for the designated release workflow only.
+## 3. Automatic publishing safeguards
 
-## 3. GitHub Actions performs all release checks
+The guarded `publish-v1.0.1.yml` workflow:
 
-1. Invoke the same [Windows GameFrame build/CI workflow](../.github/workflows/gameframe-glide.yml) as a **reusable workflow**, building the verified source commit fresh in this release run. This compiles and tests the x86 open-source Glide DLL, bundled x86 WinMM, the Windows x64 launcher, native loader, CLI/no-CD checks and package structure.
-2. Download the successful build's **six-file** artifact within the same workflow run.
-3. Confirm the exact six allowed files: `CyberGladiatorsFix.exe`, `LICENSE-APACHE`, `LICENSE-GPL-3.0`, `LICENSE-MIT`, `README.txt` and `SHA256SUMS.txt`. All five listed SHA-256 entries must be correct, with no nested ZIP, sidecar DLL or copyrighted game content.
-4. Ensure `CyberGladiatorsFix.exe --version` matches `1.0.0-<8-char source SHA>`.
-5. Create `CyberGladiatorsFix-v1.0.0-Windows-x64.zip`, unpack and independently check all six files byte-for-byte. Generate `CyberGladiatorsFix-v1.0.0-Windows-x64.zip.sha256`.
-6. Check that `main` still points to the build commit, create or verify the `v1.0.0` tag at that **exact same commit**, and publish the stable GitHub Release using [reviewed notes](RELEASE_NOTES_v1.0.0.md), the checked ZIP and ZIP checksum. The workflow then checks the Release's tag, public status and attachments.
+1. Runs only for the repository `legluondunet/CyberGladiatorsFix`,
+   **main**, and the exact confirmation string. It reuses
+   `gameframe-glide.yml` for a fresh Windows x64/x86 build and tests of
+   the dispatch source commit.
+2. Requires an unchanged checkout/source SHA and `main` commit, Cargo
+   version 1.0.1, absent v1.0.1 release, and an existing v1.0.0 release.
+   The previous release is never overwritten.
+3. Downloads the freshly built artifact from this workflow execution.
+   It must contain **exactly six flat files**: `CyberGladiatorsFix.exe`,
+   `README.txt`, `LICENSE-GPL-3.0`, `LICENSE-APACHE`,
+   `LICENSE-MIT` and `SHA256SUMS.txt`.
+4. Checks five SHA-256 entries for the other files, verifies that
+   `CyberGladiatorsFix.exe --version` prints
+   `CyberGladiatorsFix 1.0.1-<first-eight-source-SHA>`, packages
+   `CyberGladiatorsFix-v1.0.1-Windows-x64.zip`, extracts it for
+   byte-for-byte validation and writes
+   `CyberGladiatorsFix-v1.0.1-Windows-x64.zip.sha256`.
+5. Appends final ZIP/EXE digests to the reviewed
+   `docs/RELEASE_NOTES_v1.0.1.md` content. Rechecks `main`,
+   creates an immutable `v1.0.1` tag at the exact verified commit
+   (or rejects a different pre-existing tag), and publishes a new
+   GitHub Release with ZIP and SHA-256. The workflow then inspects
+   release status and both assets.
 
-The separate normal CI also runs automatically on the newly created `v1.0.0` tag; it checks that the tag version equals `Cargo.toml`. The manual publisher's fresh, fully tested build is the authoritative uploaded release artifact. The tag-triggered CI is an additional independent build, not a prerequisite for uploading or substituting the already verified artifact. The Rust build is **not guaranteed bit-for-bit reproducible** across independent runners; do not swap the release ZIP with an unrelated rebuild.
+The normal tag-triggered CI run is an additional verification, **not**
+the artifact that should replace the publisher's validated package.
+Independent Windows hosted builds are not guaranteed bit-for-bit identical.
 
-## 4. Final checks
+## 4. Post-publication acceptance
 
-Open [Releases](https://github.com/legluondunet/CyberGladiatorsFix/releases), verify the v1.0.0 ZIP and its `.sha256` are attached and downloadable, and ensure the tag matches the source SHA reported by `--version`.
+Open [CyberGladiatorsFix Releases](https://github.com/legluondunet/CyberGladiatorsFix/releases).
+Verify `v1.0.1` is public/latest, both attached files download, the
+separate ZIP checksum matches, and `--version` identifies the tag
+commit. Confirm the original v1.0.0 ZIP and checksum are still accessible.
 
-As a final host acceptance check, download the *actual release ZIP*, run `--verify`, launch twice and check the original intro, menu signature, audio and graceful exit. Check at least one native Windows 11 host if possible. The GitHub Actions runner does **not** possess an authenticated retail CD and cannot reproduce real gameplay, so field acceptance remains necessary. Any post-publication regression should receive a focused follow-up issue/patch release rather than silent modification of the published assets.
-
-Maintainer: **legluondunet assisted by ChatGPT (OpenAI)**.
+Finally test the **published ZIP**, not just an earlier CI artifact, on
+actual game media. If a regression appears, raise a separate issue/fix
+release rather than silently modifying the immutable published files.

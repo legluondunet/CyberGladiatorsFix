@@ -112,6 +112,8 @@ been field-tested on normal, no-flag launch. FR/Wine was also checked
 against a clean original CYBERG.cue install, repeat launch, video skip,
 Alt+Tab and uninterrupted movie. Other systems are not guaranteed.
 
+For the current v1.0.1 maintenance release, refer to [v1.0.1 release notes](RELEASE_NOTES_v1.0.1.md) and the [release process](RELEASE_PROCESS.md). The historical v1.0.0 package remains available unchanged.
+
 Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
   CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
@@ -123,7 +125,7 @@ Useful commands:
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
-GitHub Actions artifacts are temporary test packages (currently retained 14 days), NOT public releases. Public distribution requires the reviewed tag-built six-file package attached to a GitHub Release. The CI workflow does not publish releases automatically.
+GitHub Actions artifacts are temporary test packages (retained 30 days), NOT public releases. Public distribution requires the reviewed tag-built six-file package attached to a GitHub Release. The CI workflow does not publish releases automatically.
 The baseline implementation and audit were merged into main on 2026-11-06.
 Merged PR #6 introduced the common owned-COM DirectDraw/MCI engine,
 selected automatically on normal launch, plus the verified original US

@@ -1,6 +1,6 @@
 # Pre-release code audit — CyberGladiatorsFix
 
-Status: proposed cleanup; **not** a new release or a substitute for real-game smoke tests.
+Status: cleanup merged in PR #25; this audit is not a substitute for real-game smoke tests. See [v1.0.1 readiness](RELEASE_READINESS_v1.0.1.md).
 
 ## Baseline and scope
 
