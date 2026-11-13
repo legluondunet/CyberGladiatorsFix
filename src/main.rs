@@ -31,11 +31,9 @@ Usage:
   CyberGladiatorsFix.exe               Auto-detect verified installed game or CUE/BIN, install if missing, then play
   CyberGladiatorsFix.exe <disc.cue>    Install verified retail CD and play
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
+  CyberGladiatorsFix.exe --launch-no-verify   Launch installed game without any file integrity or presence preflight
   CyberGladiatorsFix.exe --verify      Strict immutable assets and executable; IQ presence
   CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only US/FR CD fingerprint (no installation)
-  CyberGladiatorsFix.exe --max-graphics  Maximize verified game graphics preferences
-  CyberGladiatorsFix.exe --check-bundle  Check both embedded x86 DLLs and SHA-256
-  CyberGladiatorsFix.exe --upgrade-cdda  Explicit approval for unknown legacy DLL replacement
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
@@ -54,7 +52,8 @@ No original game data is distributed. The launcher never rewrites IQ data.
 During first installation original IQ files undergo strict SHA-256 checks.
 Afterwards --verify and automatic launches require IQ files to be present
 as regular files, without comparing size or digest. All other retail
-assets, original EXE and audio remain strictly integrity checked.
+assets, original EXE and audio remain strictly integrity checked in normal mode.
+The opt-in --launch-no-verify bypasses installation, file preflights and repairs.
 
 Two independent logs appear beside the launcher:
   CyberGladiatorsFix_installer.log (installer, verification and launcher)
@@ -348,15 +347,15 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
         [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
         [one] if one.to_str()==Some("--dxvk-wndproc-repair-test")=>return diagnose_dxvk(root,true),
-        [one] if one.to_str()==Some("--check-bundle")=>{
-            let report=bundle::describe()?;
-            show(&report,root);
-            return Ok(());
-        },
         [one] if one.to_str()==Some("--verify")=>{let r=verify::verify(root)?;show(&r,root);return Ok(());},
-        [one] if one.to_str()==Some("--max-graphics")=>{
-            let r=graphics::maximize_saved(&root.join(install::DIR))?;
-            show(&r,root);return Ok(());
+        [one] if one.to_str()==Some("--launch-no-verify")=>{
+            // Explicit opt-in: do not scan the installation, hash any file,
+            // install/repair modules, or even check whether assets are present.
+            let _lock=autostart::lock(root)?;
+            show("FAST_LAUNCH mode=no_verify installation=skipped integrity=skipped presence=skipped module_repair=skipped",root);
+            let child=verify::launch_gameframe_unchecked(root)?;
+            show(&format!("FAST_LAUNCH GAME_STARTED pid={}",child.id()),root);
+            return wait_game(child,root);
         },
         [one] if one.to_str()==Some("--launch")=>{
             // Backward-compatible alias for the exact same one-click path.
@@ -447,20 +446,19 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             return user_launch(root,false,true,false),
         _=>{},
     }
-    let upgrade_cdda=matches!(args,[one] if one.to_str()==Some("--upgrade-cdda"));
-    if !upgrade_cdda && (args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>1){
+    if args.iter().any(|x|x.to_string_lossy().starts_with("--"))||args.len()>1{
         return Err(format!("Invalid option(s).\n{HELP}"));
     }
     let target=root.join(install::DIR);
     if target.is_symlink(){return Err("Refusing symlink game directory".into());}
     if target.exists(){
-        if !args.is_empty() && !upgrade_cdda{return Err("Installation already exists: refusal to overwrite".into());}
+        if !args.is_empty(){return Err("Installation already exists: refusal to overwrite".into());}
         let exe=target.join("cyber.exe");
         // Validate the text settings before modifying the game binary.
         settings::ensure(&target)?;
         let skip_intro=settings::read(&target)?;
         let enable_cdda=settings::CDDA_ENABLED;
-        cdda::try_install_with_consent(root,&target,upgrade_cdda)?;
+        cdda::try_install(root,&target)?;
         let status=patch::apply(&exe)?;
         let audio=patch::set_cdda(&exe,true)?;
         let intro=patch::set_skip_intro(&exe,skip_intro)?;
@@ -469,7 +467,6 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         show("Installation ready (game not started). Launch with: CyberGladiatorsFix.exe --launch",root);
         return Ok(());
     }
-    if upgrade_cdda{return Err("--upgrade-cdda requires an existing game installation".into());}
     let input=if let Some(arg)=args.first(){PathBuf::from(arg)}else{
         install::find_cue(&std::env::current_dir().map_err(|e|e.to_string())?)?
     };
@@ -516,11 +513,14 @@ mod diagnostics_tests {
     #[test]
     fn help_lists_only_one_click_controls(){
         for expected in ["CyberGladiatorsFix.exe               Auto-detect",
-            "--install-only","--verify","--inspect-disc","--max-graphics",
-            "--check-bundle","--version","--help",
+            "--install-only","--launch-no-verify","--verify","--inspect-disc",
+            "--version","--help",
             "music/TrackNN.flac","CyberGladiatorsFix.dll",
             "CyberGladiatorsFix_installer.log","CyberGladiatorsFix.log","GameFrame"]{
             assert!(HELP.contains(expected),"{expected}");
+        }
+        for removed in ["--max-graphics","--check-bundle","--upgrade-cdda"]{
+            assert!(!HELP.contains(removed),"{removed}");
         }
         assert!(!HELP.contains("--launch"));
         assert!(!HELP.contains("--us-virtual-ddraw-test"));
