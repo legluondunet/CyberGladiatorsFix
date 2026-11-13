@@ -157,12 +157,12 @@ fn report_dxvk_evidence(root:&Path,dxvk_log_dir:Option<PathBuf>){
                             let is_d3d9=label.to_ascii_lowercase().ends_with("_d3d9.log");
                             if is_d3d9 {
                                 show(&format!("DXVK_EVIDENCE D3D9_LOG_FOUND: {} ({} bytes); direct renderer version evidence follows",label,bytes.len()),root);
-                                diagnostics::log(root,"DXVK_D3D9",&String::from_utf8_lossy(&bytes));
+                                diagnostics::log_runtime(root,"DXVK_D3D9",&String::from_utf8_lossy(&bytes));
                             }else{
                                 // The presence of a ddraw.log is not, alone,
                                 // positive identification of D7VK.
                                 show(&format!("VIDEO_PROVIDER_EVIDENCE DDRAW_OR_D3D7_LOG_FOUND: {} ({} bytes); verify provider/version in contents",label,bytes.len()),root);
-                                diagnostics::log(root,"LEGACY_DDRAW",&String::from_utf8_lossy(&bytes));
+                                diagnostics::log_runtime(root,"LEGACY_DDRAW",&String::from_utf8_lossy(&bytes));
                             }
                         },
                         Err(e)=>{
