@@ -674,7 +674,7 @@ mod unchecked_launch_tests {
         assert!(!root.exists());
         let child_env=cmd.get_envs().collect::<Vec<_>>();
         assert!(child_env.iter().any(|(key,value)|
-            key=="CYBER_LOG_FILE" &&
+            *key=="CYBER_LOG_FILE" &&
             value.is_some_and(|v|v.to_string_lossy().ends_with("CyberGladiatorsFix.log"))
         ));
     }
