@@ -166,6 +166,12 @@ fn infer_unindexed_zero_audio_pregap(
 }
 
 pub fn normalize(cue:&Path, temp_dir:&Path)->Result<TempIso,String>{
+    normalize_with_data(cue,temp_dir,None)
+}
+/// Read-only disc sources, optional explicitly selected BIN/IMG data track
+/// for unsupported-CD diagnostics. No rewrite of the supplied CUE.
+pub fn normalize_with_data(cue:&Path, temp_dir:&Path,
+                           data_override:Option<&Path>)->Result<TempIso,String>{
     let tracks=tracks(cue)?;
     let data=&tracks[0];
     let (sector_size,start)=match data.mode.as_str(){
@@ -174,7 +180,18 @@ pub fn normalize(cue:&Path, temp_dir:&Path)->Result<TempIso,String>{
         "MODE2/2352"=>(2352usize,24usize),
         _=>return Err("First CUE track is not a supported CD-ROM data track".into()),
     };
-    let bin=bin_path(cue,&data.file)?.ok_or_else(||format!("Data BIN missing: {}",data.file))?;
+    let bin=if let Some(path)=data_override {
+        if !path.extension().is_some_and(|e|e.eq_ignore_ascii_case("bin") || e.eq_ignore_ascii_case("img")){
+            return Err("Explicit data track must be BIN or IMG".into());
+        }
+        let m=fs::symlink_metadata(path).map_err(|e|e.to_string())?;
+        if !m.is_file() || m.file_type().is_symlink() {
+            return Err("Explicit BIN/IMG is not a regular file".into());
+        }
+        path.to_path_buf()
+    }else{
+        bin_path(cue,&data.file)?.ok_or_else(||format!("Data BIN missing: {}",data.file))?
+    };
     let mut input=File::open(&bin).map_err(|e|e.to_string())?;
     let len=input.metadata().map_err(|e|e.to_string())?.len();
     if len==0||len>8*1024*1024*1024||len%sector_size as u64!=0{
