@@ -155,6 +155,80 @@ pub fn launch_native_avi_repaired(root:&Path,trace:bool,logo:bool,avi_4x3:bool,s
 fn default_owned_virtual_for_edition(edition:&str)->bool{
     matches!(edition,"US"|"FR")
 }
+/// Explicit, opt-in game launch without preflight. No installer, manifest,
+/// file-presence sweep, SHA-256 hashing, EXE patching or DLL replacement.
+/// Executable length is used *only* to select the correct US/FR runtime
+/// address profile; a missing/unrecognized EXE is left to the OS loader.
+/// Never accept a caller-provided CYBER_GAME_EDITION as a substitute.
+fn unchecked_gameframe_command(root:&Path)->Command{
+    let game=root.join(DIR);
+    let exe=game.join("cyber.exe");
+    let mut cmd=Command::new(&exe);
+    cmd.current_dir(&game);
+
+    let runtime_log=diagnostics::runtime_location(root);
+    cmd.env("CYBER_LOG_FILE",&runtime_log);
+    cmd.env("GLIDE_LOG",&runtime_log);
+    cmd.env("CYBER_SESSION_ID",diagnostics::session_id());
+    cmd.env("GLIDE_FPS_LIMIT","60");
+    cmd.env("CYBER_CDDA_MUSIC","1");
+    cmd.env("DXVK_LOG_PATH","none");
+
+    // Normal GameFrame/DirectDraw behavior is available to either original
+    // edition even if one of its resources changed. Do not hash any file.
+    // Unknown EXE sizes are NOT passed through edition-specific address hooks.
+    let edition=match fs::metadata(&exe).ok().map(|metadata|metadata.len()){
+        Some(size) if size==crate::patch::LEN as u64=>Some("US"),
+        Some(size) if size==crate::fr_patch::LEN as u64=>Some("FR"),
+        _=>None,
+    };
+    for key in [
+        "CYBER_GLIDE_TRACE","CYBER_GLIDE_HOOK_DISABLED","CYBER_GLIDE_PASSTHRU_NOOP",
+        "CYBER_WNDPROC_REPAIR_TEST","CYBER_WNDPROC_REPAIR",
+        "CYBER_VULKAN_PASSIVE_FAULT_PROBE","CYBER_VULKAN_EARLY_HOST_RELEASE",
+        "CYBER_VULKAN_AUTO_FULLSCREEN","CYBER_VIDEO_CLOSE_DELAY_MS",
+        "NGLIDE_BACKEND","NGLIDE_REFRESH","NGLIDE_RESOLUTION","NGLIDE_ASPECT",
+        "NGLIDE_VSYNC","NGLIDE_GAMMA","NGLIDE_SPLASH",
+        "CYBER_FR_VIRTUAL_DDRAW","CYBER_US_WINE_VIRTUAL_DDRAW",
+        "CYBER_US_NATIVE_VIRTUAL_DDRAW","CYBER_WINE_DDRAW_NATIVE_FORWARD",
+        "CYBER_GAME_EDITION","CYBER_VIRTUAL_DDRAW","CYBER_GAMEFRAME_TEST",
+        "CYBER_GAMEFRAME_AVI_FIRST_PRESENT","CYBER_AVI_FULLSCREEN",
+        "CYBER_AVI_SMOOTH_TEST","CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",
+    ]{cmd.env_remove(key);}
+    if let Some(edition)=edition{
+        cmd.env("CYBER_GAME_EDITION",edition);
+        cmd.env("CYBER_VIRTUAL_DDRAW","1");
+        cmd.env("CYBER_GAMEFRAME_TEST","1");
+        cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
+        cmd.env("CYBER_AVI_FULLSCREEN","1");
+        cmd.env("CYBER_AVI_SMOOTH_TEST","1");
+        cmd.env("CYBER_GAMEFRAME_ALT_TAB_NATIVE_FIX",
+            if diagnostics::is_native_windows(){"1"}else{"0"});
+    }
+    if let Some((w,h))=diagnostics::primary_desktop_size(){
+        cmd.env("CYBER_GAMEFRAME_DESKTOP_SIZE",format!("{w}x{h}"));
+    }else{
+        cmd.env_remove("CYBER_GAMEFRAME_DESKTOP_SIZE");
+    }
+    cmd.env("CYBER_GAMEFRAME_MENU_SIGNATURE",format!(
+        "CyberGladiatorsFix v{}-{}",env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT")
+    ));
+    cmd
+}
+
+/// Spawn the existing game directly. The OS reports a missing/invalid EXE
+/// through spawn(); other missing game assets are for the game to handle.
+/// Does not even read the user INI or the installed manifest.
+pub fn launch_gameframe_unchecked(root:&Path)->Result<Child,String>{
+    let mut cmd=unchecked_gameframe_command(root);
+    // The game log is a separate session; a failed spawn never clears the
+    // installer's log, and --verify never touches the previous game log.
+    diagnostics::start_runtime_session(root)?;
+    cmd.spawn().map_err(|e|format!(
+        "Unable to start existing CYBER.EXE without verification: {e}"
+    ))
+}
+
 pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     let game=root.join(DIR);
     settings::ensure(&game)?;
@@ -580,6 +654,30 @@ fn launch_with_renderer_test(root:&Path,logo:bool,trace:bool,passthru_noop:bool,
         u8::from(logo),u8::from(dxvk_defer_surface),u8::from(trace)
     ));
     cmd.spawn().map_err(|e|format!("Unable to start CYBER.EXE: {e}"))
+}
+
+#[cfg(test)]
+mod unchecked_launch_tests {
+    use super::*;
+
+    #[test]
+    fn unchecked_launch_builds_command_without_existing_game_directory(){
+        let root=std::env::temp_dir().join(format!(
+            "CyberGladiators-unchecked-nonexistent-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()
+        ));
+        assert!(!root.exists());
+        let cmd=unchecked_gameframe_command(&root);
+        assert_eq!(cmd.get_program(),root.join(DIR).join("cyber.exe").as_os_str());
+        assert!(!root.exists());
+        let child_env=cmd.get_envs().collect::<Vec<_>>();
+        assert!(child_env.iter().any(|(key,value)|
+            key=="CYBER_LOG_FILE" &&
+            value.is_some_and(|v|v.to_string_lossy().ends_with("CyberGladiatorsFix.log"))
+        ));
+    }
 }
 
 #[cfg(test)]
