@@ -52,7 +52,7 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or $head -cne $env:TAG_COMMIT) { throw 'Checked-out source SHA changed' }
           $latest = (gh api "repos/$env:GITHUB_REPOSITORY/branches/main" --jq '.commit.sha').Trim()
           if ($LASTEXITCODE -ne 0 -or $latest -cne $env:TAG_COMMIT) { throw 'main changed or wrong selected SHA; restart publication' }
-          if (!(Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"1\.0\.0"\s*$' -Quiet)) {
+          if (!(Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"1\.0\.1"\s*$' -Quiet)) {
             throw 'Refusing mismatched or pre-release package version; require stable 1.0.1'
           }
           gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json tagName 2>$null | Out-Null
