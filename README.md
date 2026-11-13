@@ -43,6 +43,7 @@ If an installation exists but does not pass its checks, the launcher refuses to 
 ~~~text
 CyberGladiators/
   CyberGladiatorsFix.exe
+  CyberGladiatorsFix_installer.log
   CyberGladiatorsFix.log
   original-disc.cue
   original-disc*.bin
@@ -69,7 +70,7 @@ GameFrame renders the original **640×480** Glide game at the current display re
 
 **Windows/Wine DirectDraw compatibility:** The original game requests exclusive DirectDraw **640×480×16** before the AVI. The default verified-edition launcher uses one **owned COM DirectDraw v1 adapter** that preserves the logical surface/mode state without requesting a physical monitor-mode change. It is not a fake success return or a system-wide vtable patch. A previous Wine-only native-dimension forwarding mechanism remains in legacy diagnostics but is not selected during normal launch. The same MCI/WM_PAINT video renderer serves both platforms; focus adaptations are chosen internally from the host runtime.
 
-The one EXE embeds and validates both x86 DLLs before writing them. **At launch, any existing `glide.dll` that differs from the embedded verified GameFrame version (unknown, older or malformed) is preserved as `glide.dll.bak`**, and GameFrame is installed to launch the game. **After exit, the newer GameFrame `glide.dll` remains installed; the previous version is kept in its backup**, not automatically restored. If `glide.dll.bak` already exists, the launcher never overwrites it: it chooses `glide.dll.<SHA-256-prefix>.bak`, or a numbered `.bak` variant if necessary. All backup/install/retention operations and hashes appear in the single log. An unknown file is archived regardless of its size or contents; symbolic links are moved aside without following them. Only a directory named `glide.dll` is rejected. The embedded GameFrame itself remains SHA-256/PE32 validated. Details: [Glide backup policy](docs/GLIDE_BACKUP_POLICY.md).
+The one EXE embeds and validates both x86 DLLs before writing them. **At launch, any existing `glide.dll` that differs from the embedded verified GameFrame version (unknown, older or malformed) is preserved as `glide.dll.bak`**, and GameFrame is installed to launch the game. **After exit, the newer GameFrame `glide.dll` remains installed; the previous version is kept in its backup**, not automatically restored. If `glide.dll.bak` already exists, the launcher never overwrites it: it chooses `glide.dll.<SHA-256-prefix>.bak`, or a numbered `.bak` variant if necessary. All backup/install/retention operations and hashes appear in `CyberGladiatorsFix_installer.log`. An unknown file is archived regardless of its size or contents; symbolic links are moved aside without following them. Only a directory named `glide.dll` is rejected. The embedded GameFrame itself remains SHA-256/PE32 validated. Details: [Glide backup policy](docs/GLIDE_BACKUP_POLICY.md).
 
 ## Automatic common DirectDraw / MCI engine
 
@@ -111,7 +112,12 @@ The **CyberGladiatorsFix/CyberGladiatorsFix.ini** text file is distinct from the
 
 **CDDA/FLAC playback is required** and enabled automatically. **All retail CD resources, including `iq/`, are strictly SHA-256 checked during the initial staged installation.** The game may subsequently rewrite `iq/` files: on later launches and with `--verify` every manifest-listed IQ file must exist as a regular file, but its size and hash are no longer compared. Other original assets, the EXE and backup, FLAC and embedded DLLs remain strictly checked. Original IQ hashes remain in the manifest and the launcher never overwrites these files; no opt-out or extra INI setting exists. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
 
-A single **CyberGladiatorsFix.log**, next to the EXE, records the system and display configuration, effective game options, integrity checks, video/Glide/FLAC behavior and normal or abnormal exit. No separate video player log is created.
+Two logs next to **CyberGladiatorsFix.exe** separate the installer/launcher from the running game:
+
+- **`CyberGladiatorsFix_installer.log`**: refreshed for each installer, verification or launcher invocation; records system/display configuration, retail edition checks, SHA-256 verification, setup, game launch and exit status.
+- **`CyberGladiatorsFix.log`**: refreshed **only when the game launches**; records WinMM/CDDA/FLAC, GameFrame Glide, DirectDraw and video diagnostics. A standalone `--verify`, `--install-only`, `--help` or `--version` must not clear this log.
+
+The two files contain the same **session ID** for a given game launch. Both follow the same naming and lifecycle under native Windows and Wine/Proton. GameFrame and WinMM share the game log; no third video-player log is created.
 
 ### Compatibility and safety
 

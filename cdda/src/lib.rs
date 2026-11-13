@@ -17,7 +17,7 @@ mod ddraw_native;
 
 /// Called by the experimental project-owned C++ DirectDraw v1 adapter.
 /// Diagnostic strings are internal fixed literals/formatting, not input from
-/// the game, and are appended to the existing unified session log.
+/// the game, and are appended to the independently initialized game log.
 #[no_mangle]
 pub unsafe extern "C" fn cyber_virtual_ddraw_trace(message:*const c_char){
     if message.is_null(){return;}
@@ -109,6 +109,7 @@ struct Controller {
 }
 static CONTROLLER:OnceLock<Mutex<Option<Controller>>>=OnceLock::new();
 static TRACE_SESSION:OnceLock<()>=OnceLock::new();
+static LOG_SESSION:OnceLock<()>=OnceLock::new();
 
 fn controller()->&'static Mutex<Option<Controller>> {
     CONTROLLER.get_or_init(||Mutex::new(None))
@@ -124,15 +125,23 @@ fn game_dir()->PathBuf {
         .unwrap_or_else(||PathBuf::from("."))
 }
 fn log(message:&str){
-    // Launcher overrides this path with its own adjacent session log. If
-    // CYBER.EXE was started directly (without the launcher), still use the
-    // conventional parent of the game folder; never create a CDDA-only log.
+    // The launcher passes the independent game-runtime log location. Direct
+    // CYBER.EXE launches retain the conventional parent-folder fallback.
     let path=std::env::var_os("CYBER_LOG_FILE").map(PathBuf::from)
         .unwrap_or_else(||{
             let game=game_dir();
             game.parent().unwrap_or(&game).join("CyberGladiatorsFix.log")
         });
     if let Ok(mut f)=OpenOptions::new().append(true).create(true).open(path){
+        // Mark this process only once. Even if the game starts multiple
+        // WinMM threads, every message can be attributed to the launcher run.
+        LOG_SESSION.get_or_init(||{
+            let id=std::env::var("CYBER_SESSION_ID").ok()
+                .filter(|s|!s.is_empty() && s.len()<=96 &&
+                    s.bytes().all(|c|c.is_ascii_alphanumeric()||c==b'-'))
+                .unwrap_or_else(||"direct-launch".to_string());
+            let _=writeln!(f,"[CDDA] SESSION session_id={id} game_pid={}",std::process::id());
+        });
         let _=writeln!(f,"[CDDA] {message}");
     }
 }
@@ -386,7 +395,7 @@ pub unsafe extern "system" fn mciSendStringA(
     let entry=std::time::Instant::now();
     mark_trace_session_once();
     // Report the shared owned-COM DirectDraw state once at the first
-    // native MCI command, in the same unified session log.
+    // native MCI command, in the independent game log.
     ddraw_native::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
@@ -470,7 +479,7 @@ pub unsafe extern "system" fn mciSendStringA(
     }
     // One monotonic total-call duration for each non-polled video command.
     // The very frequent "status movie mode" queries are intentionally
-    // excluded to keep the single session log small.
+    // excluded to keep the in-game session log small.
     if let Some(ref text)=command {
         let lower=text.trim().to_ascii_lowercase();
         if (lower.starts_with("open ")||lower.starts_with("play movie")

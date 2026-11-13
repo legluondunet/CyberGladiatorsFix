@@ -114,7 +114,7 @@ jobs:
           if ($output -notmatch 'open_source_glide_embedded=1') { throw "GameFrame must be embedded into the one EXE" }
           Write-Host "Matched GameFrame Glide SHA256=$env:CYBER_GAMEFRAME_GLIDE_SHA256"
 
-      - name: Check version and strict no-install verification preserve the one-session log
+      - name: Check version and strict verification preserve separate installer/game logs
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Continue'
@@ -126,19 +126,23 @@ jobs:
           }
           & $exe --verify 2>&1 | Out-Null
           if ($LASTEXITCODE -eq 0) { throw 'Strict --verify unexpectedly succeeded without retail assets' }
-          $log = Join-Path (Split-Path -Parent $exe) 'CyberGladiatorsFix.log'
-          if (!(Test-Path $log)) { throw 'Strict --verify failed without a session log' }
+          $dir = Split-Path -Parent $exe
+          $log = Join-Path $dir 'CyberGladiatorsFix_installer.log'
+          $gameLog = Join-Path $dir 'CyberGladiatorsFix.log'
+          if (!(Test-Path $log)) { throw 'Strict --verify failed without an installer log' }
+          if (Test-Path $gameLog) { throw '--verify unexpectedly created the game/DLL log' }
           $body = Get-Content -Raw $log
           foreach ($part in @('[SESSION] BEGIN', '[SYSTEM]', '[CONFIG]', '[SESSION] END failure')) {
-            if (!$body.Contains($part)) { throw "Unified log missing: $part" }
+            if (!$body.Contains($part)) { throw "Installer log missing: $part" }
           }
           $hash = (Get-FileHash $log -Algorithm SHA256).Hash
           & $exe --help | Out-Null
           if ($LASTEXITCODE -ne 0) { throw 'Help smoke test failed' }
           if ((Get-FileHash $log -Algorithm SHA256).Hash -ne $hash) {
-            throw '--help unexpectedly changed the prior unified session log'
+            throw '--help unexpectedly changed the prior installer session log'
           }
-          Write-Host 'Strict verify + one log + read-only help: PASS'
+          if (Test-Path $gameLog) { throw '--help unexpectedly created the game/DLL log' }
+          Write-Host 'Strict verify + installer log + no game log + read-only help: PASS'
           exit 0
 
       - name: Check FR CUE inspection does not install or patch anything
@@ -163,8 +167,8 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             throw 'Inspection succeeded without CYBERG.BIN; missing image must be reported'
           }
-          $log = Join-Path $dir 'CyberGladiatorsFix.log'
-          if (!(Test-Path $log)) { throw 'Inspection failed without unified session log' }
+          $log = Join-Path $dir 'CyberGladiatorsFix_installer.log'
+          if (!(Test-Path $log)) { throw 'Inspection failed without installer session log' }
           $body = Get-Content -Raw $log
           foreach ($part in @('DISC_INSPECT', 'tracks=3 audio_tracks=2', 'DISC_TRACK number=03', '[SESSION] END failure')) {
             if (!$body.Contains($part)) { throw "Inspection log missing: $part" }
@@ -198,8 +202,8 @@ jobs:
           if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
             throw 'Automatic installer created a game directory without a valid CD'
           }
-          if (!(Test-Path (Join-Path $dir 'CyberGladiatorsFix.log'))) {
-            throw 'Automatic launch did not produce its unified session log'
+          if (!(Test-Path (Join-Path $dir 'CyberGladiatorsFix_installer.log'))) {
+            throw 'Automatic launch did not produce its installer session log'
           }
           Write-Host 'One-click auto-discovery no-CD refusal: PASS'
           # The expected native EXE exit was nonzero; reset it explicitly,
