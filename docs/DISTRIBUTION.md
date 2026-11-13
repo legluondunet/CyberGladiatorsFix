@@ -112,6 +112,8 @@ been field-tested on normal, no-flag launch. FR/Wine was also checked
 against a clean original CYBERG.cue install, repeat launch, video skip,
 Alt+Tab and uninterrupted movie. Other systems are not guaranteed.
 
+For the current v1.0.1 maintenance release, refer to [v1.0.1 release notes](RELEASE_NOTES_v1.0.1.md) and the [release process](RELEASE_PROCESS.md). The historical v1.0.0 package remains available unchanged.
+
 Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
   CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
