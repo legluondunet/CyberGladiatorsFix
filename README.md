@@ -93,16 +93,18 @@ The historical A/B command aliases remain compatible with old test scripts, but 
 CyberGladiatorsFix.exe               Auto-install/verify and play
 CyberGladiatorsFix.exe <disc.cue>    Use specified CUE/BIN image
 CyberGladiatorsFix.exe --install-only   Install/upgrade without starting game
+CyberGladiatorsFix.exe --launch-no-verify   Start installed CYBER.EXE directly; skip presence/integrity checks and all repairs
 CyberGladiatorsFix.exe --verify      Strict integrity check
 CyberGladiatorsFix.exe --inspect-disc original.cue    Read-only disc inspection
-CyberGladiatorsFix.exe --max-graphics
-CyberGladiatorsFix.exe --check-bundle
-CyberGladiatorsFix.exe --upgrade-cdda
 CyberGladiatorsFix.exe --version
 CyberGladiatorsFix.exe --help
 ~~~
 
 For normal use only a double-click is necessary. The legacy nGlide diagnostics remain internally available but are not part of the recommended experience.
+
+**Unchecked launch (opt-in):** `--launch-no-verify` starts the already-installed `CyberGladiatorsFix/cyber.exe` directly. It does **not** search for a disc, install files, validate the manifest, hash assets, check whether resources exist, patch the EXE or update/replace DLLs. The OS may still fail to start if the executable or working directory is absent; the game may fail later if dependencies are missing. For known US/FR executable sizes, it passes the same GameFrame/DirectDraw runtime options without validating their hashes; unknown sizes do not receive edition-specific memory profiles. Use normal launch or `--verify` to investigate installation problems.
+
+**Automatic graphics:** New installations create the game's original 32-byte `cyber.ini` with maximum 640×480 internal resolution and detail 3/3. Existing user settings are not overwritten just to force a preference. There is no separate graphics CLI switch. Older or unknown WinMM/CDDA DLLs are preserved in SHA-qualified backups before the normal installer's automatic replacement; existing backups are never silently overwritten.
 
 ## Configuration and integrity
 
@@ -110,7 +112,7 @@ The **CyberGladiatorsFix/CyberGladiatorsFix.ini** text file is distinct from the
 
 - **[Video] SkipIntro=0** — play the original introduction (default).
 
-**CDDA/FLAC playback is required** and enabled automatically. **All retail CD resources, including `iq/`, are strictly SHA-256 checked during the initial staged installation.** The game may subsequently rewrite `iq/` files: on later launches and with `--verify` every manifest-listed IQ file must exist as a regular file, but its size and hash are no longer compared. Other original assets, the EXE and backup, FLAC and embedded DLLs remain strictly checked. Original IQ hashes remain in the manifest and the launcher never overwrites these files; no opt-out or extra INI setting exists. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
+**CDDA/FLAC playback is required** and enabled automatically. **All retail CD resources, including `iq/`, are strictly SHA-256 checked during the initial staged installation.** The game may subsequently rewrite `iq/` files: on later launches and with `--verify` every manifest-listed IQ file must exist as a regular file, but its size and hash are no longer compared. Other original assets, the EXE and backup, FLAC and embedded DLLs remain strictly checked **during normal launches and `--verify`**. Original IQ hashes remain in the manifest and the launcher never overwrites these files; the explicit `--launch-no-verify` shortcut skips preflight verification for an existing game, without adding an INI option. Legacy `[Audio]`/`[Integrity]` sections are removed automatically on startup while preserving `[Video] SkipIntro` and unrelated user text.
 
 Two logs next to **CyberGladiatorsFix.exe** separate the installer/launcher from the running game:
 
