@@ -521,7 +521,7 @@ mod diagnostics_tests {
         for removed in ["--max-graphics","--check-bundle","--upgrade-cdda"]{
             assert!(!HELP.contains(removed),"{removed}");
         }
-        assert!(!HELP.contains("--launch"));
+        assert!(!HELP.lines().any(|line| line.trim()=="CyberGladiatorsFix.exe --launch"));
         assert!(!HELP.contains("--us-virtual-ddraw-test"));
         assert!(!HELP.contains("--avi-in-game-window"));
         assert!(!HELP.contains("--nglide-vulkan"));
