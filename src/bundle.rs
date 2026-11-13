@@ -50,22 +50,6 @@ pub fn verify()->Result<(),String>{
     Ok(())
 }
 pub fn hash(bytes:&[u8])->String{format!("{:x}",Sha256::digest(bytes))}
-pub fn describe()->Result<String,String>{
-    verify()?;
-    let mut summary=format!(
-        "EMBEDDED_BUNDLE x86_WinMM_video_CDDA_DLL_bytes={} sha256={} separate_intro_exe=0",
-        CDDA_DLL.len(),hash(CDDA_DLL)
-    );
-    if GAMEFRAME_GLIDE_DLL.is_empty(){
-        summary.push_str(" open_source_glide_embedded=0 proprietary_nGlide_embedded=0");
-    }else{
-        summary.push_str(&format!(
-            " open_source_glide_embedded=1 gameframe_glide_dll_bytes={} gameframe_sha256={} one_exe_distribution=1 proprietary_nGlide_embedded=0",
-            GAMEFRAME_GLIDE_DLL.len(),hash(GAMEFRAME_GLIDE_DLL)
-        ));
-    }
-    Ok(summary)
-}
 #[cfg(test)]
 mod tests{
     use super::*;

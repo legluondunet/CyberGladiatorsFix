@@ -31,42 +31,9 @@ fn check(path:&Path)->Result<(),String>{
     }
     Ok(())
 }
-// Exact SHA-256 hashes of previously distributed *project-owned* 32-bit
-// DLL binaries, verified against the archived GitHub Actions ZIP files.
-// Only these known versions may be replaced automatically. The two oldest
-// were broken: their WinMM forwarding exports looped infinitely (EB FE).
-// Do not silently overwrite a third-party, modified or unknown DLL.
 const BROKEN_BRIDGES:[&str;2]=[
     "055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71", // v0.2.1
     "d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb", // prototype
-];
-const KNOWN_RELEASED_BRIDGES:[&str;24]=[
-    "3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29", // forwarder validation ZIP
-    "567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0", // v0.2.2
-    "acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13", // v0.2.3
-    "a0c93deff6981d34dd3cd964a0666d958f59c65ad3c8efe0bc2c09fd8e03d3d4", // v0.2.4
-    "23b5ddba39763d5626796ed94b82ba8d17422751a4aac1f3edea0276f7b6a666", // v0.2.5
-    "42df88a0aa88f1cfd24048d02df13478b4435af4d2d8ed4b53443fe334fc7af2", // v0.2.6
-    "6d4ffd7ca461b5e41b0bf1ac3cda898d343284febe3085c4e1a40f832defbc6d", // v0.2.7, verified ZIP
-    "abf5c9d60ff20d0dc5816c742fbc04ca8a1226385b45fe375288a52d96c9dfca", // v0.2.8, verified ZIP
-    "a95c5787f3a9b5dc101e673777111257fcf0482bf4dce8340cb5b91b00f5026a", // v0.2.9, verified ZIP
-    // Additional first-party GitHub Actions archives, exact DLL bytes
-    // downloaded and SHA-256 checked (not guessed from version numbers).
-    "dc305f22d37906ff964b9f382dd48034e5f92cd8ba733e80733fa085499c98cc", // CI run 80 (v0.2.7 intermediate)
-    "00e184c0a23a1c8cf6ae3ab53c503f49a446357ebf6b7bdce75e354581f790db", // CI run 81 (v0.2.8 intermediate)
-    "5825f1a5197dbb9f023b64cada5a5f576b15e2208c8054d9ae3301e64b6aa80f", // CI run 82 (v0.2.8 intermediate)
-    "77b267074e1f3369afe739f9fccfd3e56a90feeeb30ad5ee5bc760afa5665fcb", // CI run 83 (v0.2.8 intermediate)
-    "416ee060d20d221cbfd82d7f20e7db6f88a453de84125af6fe571d0942b1d7ba", // CI run 84 (v0.2.8 intermediate)
-    "18be076cc930991808881e0647cdf2a2b011e3c735ee68671f9b98ab443eb679", // CI run 85 (v0.2.8 intermediate)
-    "f7b26be8cf206e19b80c6418477804b6d25aaef4952e90b75bf7491506c54ab8", // CI run 87 (v0.2.8 diagnostic) USER INSTALLED
-    "74767b741163f3a6424ec3f4b6d100df35c676f5095af53ff45c8792ad3e01da", // CI run 88 (v0.2.9 intermediate)
-    "4a95a4185838ee5b2f6e3c279f17507fef69315d9d35478aed68bde488309e9c", // CI run 90 (v0.2.9 intermediate)
-    "22103e79824f21907fdf55d0e46eda840bfa812123d446df4056a0bd3dc69ac7", // CI run 91 (v0.2.9 intermediate)
-    "66bb6ecc7ba294fbdecd5e0d4888e8dfd4a8bc531fd2718959244325b6095778", // CI run 92 (v0.2.9 intermediate)
-    "c1284c8ad3544ff774c62ec4adbf44cbc9d5b6f010e266e3e112b1510c93279a", // v0.2.10 verified ZIP
-    "c1e9d05936d627c09e4e4d3eaa54d46f0818687f5f3d0affd67ca2e7da754c40", // v0.2.11, archive-verified ZIP
-    "3d816b5f213a328ccb5b4a3a278c8650c1f304d6d91df555901f975faf1ea90a", // v0.2.12, verified ZIP (matches user log)
-    "451f7fc3715ac39428779943e24ac823de42eef31d2e80077ad2899269e4066c", // preceding first-party test DLL; bundled/installed equality confirmed by diagnostic log
 ];
 /// In normal builds the exact DLL is compiled into CyberGladiatorsFix.exe.
 /// Unit tests retain a file-backed fixture to exercise upgrade and rollback.
@@ -100,39 +67,10 @@ fn digest(path:&Path)->Result<String,String>{
 /// A same-version EXE/DLL pairing is required for diagnostic telemetry.
 /// Older x86 DLLs can have the same file name and valid PE header yet lack
 /// both the required environment switch and the in-memory NO-OP hook.
-fn has_noop_capability(bytes:&[u8])->bool{
-    [b"CYBER_GLIDE_PASSTHRU_NOOP".as_slice(),b"PASSTHRU BYPASSED mode=1".as_slice()]
-        .into_iter().all(|needle|bytes.windows(needle.len()).any(|window|window==needle))
-}
-/// For a pass-through A/B test both the launcher-supplied and installed
-/// x86 DLLs must be byte-identical. Otherwise an older installed proxy can
-/// silently execute the non-NOOP nGlide function and invalidate the test.
-pub fn matching_installed_hash(root:&Path,game:&Path)->Result<String,String>{
-    let source=source_bytes(root)?;
-    let installed=game.join(DLL_NAME);
-    validate_bytes(&source)?;
-    check(&installed)?;
-    if !has_noop_capability(&source){
-        return Err(format!(
-            "Diagnostic cancelled: x86 {DLL_NAME} beside the patcher does not contain the pass-through NO-OP capability. Use both files from the same current Windows ZIP; no CD extraction is needed."
-        ));
-    }
-    let expected=format!("{:x}",Sha256::digest(&source));
-    let actual=digest(&installed)?;
-    if actual!=expected{
-        return Err(format!(
-            "Diagnostic cancelled: installed CDDA DLL SHA-256 {actual} differs from patcher DLL SHA-256 {expected}. No pass-through test can be trusted with different DLLs."
-        ));
-    }
-    Ok(actual)
-}
 fn broken(hash:&str)->bool{BROKEN_BRIDGES.contains(&hash)}
-fn replaceable_known_release(hash:&str)->bool {
-    broken(hash)||KNOWN_RELEASED_BRIDGES.contains(&hash)
-}
 // A locally recorded digest is an integrity receipt, not a signature or
-// proof of publisher identity. Unknown pre-receipt DLLs require explicit
-// one-time consent; subsequent upgrades can verify the installed bytes.
+// proof of publisher identity. Automatic upgrades always preserve the prior
+// DLL in a SHA-qualified backup and fail closed on a malformed receipt.
 fn read_receipt(game:&Path)->Result<Option<String>,String>{
     let path=game.join(RECEIPT_NAME);
     if !path.exists() && !path.is_symlink(){return Ok(None);}
@@ -177,9 +115,6 @@ fn record_receipt(game:&Path,hash:&str)->Result<(),String>{
         return Err(format!("Cannot install CDDA receipt: {e}"));
     }
     Ok(())
-}
-fn allows_upgrade(existing:&str,receipt:Option<&str>,consent:bool)->bool{
-    consent || replaceable_known_release(existing) || receipt==Some(existing)
 }
 fn prior_version_backup(game:&Path,hash:&str)->std::path::PathBuf {
     // Deterministic per-version backup: does not conflict with the existing
@@ -245,13 +180,10 @@ fn install_new(source:&[u8],target:&Path,expected:&str)->Result<(),String>{
     }
     Ok(())
 }
+/// Install or upgrade with SHA-qualified, non-overwriting backup and rollback.
+/// Unknown valid x86 DLLs are preserved before replacement; no CLI approval
+/// is required, and a malformed receipt still blocks modification.
 pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
-    // There is no interactive/CLI upgrade command: the launcher now uses
-    // the existing SHA-qualified backup-and-rollback transaction to replace
-    // old or unknown valid x86 bridge DLLs without overwriting their backups.
-    try_install_with_consent(root,game,true)
-}
-pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),String>{
     let source=source_bytes(root)?;
     validate_bytes(&source)?;
     let wanted=format!("{:x}",Sha256::digest(&source));
@@ -267,22 +199,14 @@ pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),S
     }
     check(&target)?;
     let existing=digest(&target)?;
-    let receipt=read_receipt(game)?;
+    // Validate any existing receipt before touching a DLL or its backup.
+    read_receipt(game)?;
     if existing==wanted{
-        // The current embedded DLL is authoritative. If a receipt is missing,
-        // establish it only after matching its exact SHA-256.
-        if allows_upgrade(&existing,receipt.as_deref(),consent){
-            record_receipt(game,&existing)?;
-        }
+        record_receipt(game,&existing)?;
         return Ok(());
     }
-    if !allows_upgrade(&existing,receipt.as_deref(),consent){
-        return Err(format!(
-            "Existing {DLL_NAME} has an unrecognized SHA-256 ({existing}); refusing to overwrite without preserving a verified backup."
-        ));
-    }
-    // Upgrade any recognized older project-owned DLL, even if it was not one
-    // of the original broken builds. Preserve the exact prior version under
+    // Upgrade an older or unknown valid x86 bridge DLL. Preserve the exact
+    // prior version under
     // a unique hash-qualified backup; never overwrite previous backups.
     let staged=game.join("CyberGladiatorsFix.dll.updating.tmp");
     let backup=prior_version_backup(game,&existing);
@@ -327,15 +251,6 @@ pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),S
 mod tests {
     use super::*;
     #[test]
-    fn diagnostic_bridge_requires_noop_markers(){
-        let capable=b"CYBER_GLIDE_PASSTHRU_NOOP abc PASSTHRU BYPASSED mode=1";
-        let old=b"CYBER_GLIDE_TRACE abc PASSTHRU BEGIN mode=1";
-        assert!(has_noop_capability(capable));
-        assert!(!has_noop_capability(old));
-        assert!(!has_noop_capability(b"CYBER_GLIDE_PASSTHRU_NOOP"));
-        assert!(!has_noop_capability(b"PASSTHRU BYPASSED mode=1"));
-    }
-    #[test]
     fn dll_name_is_consistent_with_game_import_patch(){
         assert_eq!(DLL_NAME,"CyberGladiatorsFix.dll");
         assert_eq!(DLL_NAME.len()+1,23);
@@ -345,38 +260,6 @@ mod tests {
         assert!(broken("055e634eb9f9472978ce930eabf38b0d8790542df7fceba1e8c9d61876462f71"));
         assert!(broken("d9cb494e83bb0e8552f238ceddbe048a7a0ab8afae585c853b5c3a0d7858bdbb"));
         assert!(!broken("71c8cb080a8d11001a91c370d2248dd9819cfd00b4b919cd7bbcb7699a96eedb"));
-    }
-    #[test]
-    fn recognizes_archive_verified_prior_dll_versions(){
-        for (hash,release) in [
-            ("567e748733018c8ae91c1f31e6e90f30abebbf33cf838ea4a90e7aeeeeb055d0","v0.2.2"),
-            ("acb07fcd2bfe789eae5927a9ab1730563a73948bb9aaaed2fc4e95c97c21df13","v0.2.3"),
-            ("a0c93deff6981d34dd3cd964a0666d958f59c65ad3c8efe0bc2c09fd8e03d3d4","v0.2.4"),
-            ("23b5ddba39763d5626796ed94b82ba8d17422751a4aac1f3edea0276f7b6a666","v0.2.5"),
-            ("42df88a0aa88f1cfd24048d02df13478b4435af4d2d8ed4b53443fe334fc7af2","v0.2.6"),
-            ("6d4ffd7ca461b5e41b0bf1ac3cda898d343284febe3085c4e1a40f832defbc6d","v0.2.7"),
-            ("abf5c9d60ff20d0dc5816c742fbc04ca8a1226385b45fe375288a52d96c9dfca","v0.2.8"),
-            ("a95c5787f3a9b5dc101e673777111257fcf0482bf4dce8340cb5b91b00f5026a","v0.2.9"),
-            ("3f0e0a17aa86fd61c2d52a3341251b3c4e9e03fb08cbb1664f50f2a630d33b29","forwarder validation"),
-            ("dc305f22d37906ff964b9f382dd48034e5f92cd8ba733e80733fa085499c98cc","CI run 80 (v0.2.7 intermediate)"),
-            ("00e184c0a23a1c8cf6ae3ab53c503f49a446357ebf6b7bdce75e354581f790db","CI run 81 (v0.2.8 intermediate)"),
-            ("5825f1a5197dbb9f023b64cada5a5f576b15e2208c8054d9ae3301e64b6aa80f","CI run 82 (v0.2.8 intermediate)"),
-            ("77b267074e1f3369afe739f9fccfd3e56a90feeeb30ad5ee5bc760afa5665fcb","CI run 83 (v0.2.8 intermediate)"),
-            ("416ee060d20d221cbfd82d7f20e7db6f88a453de84125af6fe571d0942b1d7ba","CI run 84 (v0.2.8 intermediate)"),
-            ("18be076cc930991808881e0647cdf2a2b011e3c735ee68671f9b98ab443eb679","CI run 85 (v0.2.8 intermediate)"),
-            ("f7b26be8cf206e19b80c6418477804b6d25aaef4952e90b75bf7491506c54ab8","CI run 87 (v0.2.8 diagnostic) USER INSTALLED"),
-            ("74767b741163f3a6424ec3f4b6d100df35c676f5095af53ff45c8792ad3e01da","CI run 88 (v0.2.9 intermediate)"),
-            ("4a95a4185838ee5b2f6e3c279f17507fef69315d9d35478aed68bde488309e9c","CI run 90 (v0.2.9 intermediate)"),
-            ("22103e79824f21907fdf55d0e46eda840bfa812123d446df4056a0bd3dc69ac7","CI run 91 (v0.2.9 intermediate)"),
-            ("66bb6ecc7ba294fbdecd5e0d4888e8dfd4a8bc531fd2718959244325b6095778","CI run 92 (v0.2.9 intermediate)"),
-            ("c1284c8ad3544ff774c62ec4adbf44cbc9d5b6f010e266e3e112b1510c93279a","v0.2.10 verified ZIP"),
-            ("c1e9d05936d627c09e4e4d3eaa54d46f0818687f5f3d0affd67ca2e7da754c40","v0.2.11 verified ZIP"),
-            ("3d816b5f213a328ccb5b4a3a278c8650c1f304d6d91df555901f975faf1ea90a","v0.2.12 verified ZIP"),
-            ("451f7fc3715ac39428779943e24ac823de42eef31d2e80077ad2899269e4066c","first-party trace build, matching local pair"),
-        ] {
-            assert!(replaceable_known_release(hash),"{release}");
-            assert!(!broken(hash),"{release} was not an infinite-loop build");
-        }
     }
     #[test]
     fn keeps_distinct_backup_files_for_prior_versions(){
@@ -411,14 +294,14 @@ mod tests {
         fs::write(&saved,&old).unwrap();
         // This was the collision that previously prevented the user
         // from upgrading their game DLL on a subsequent cycle.
-        try_install_with_consent(&root,&game,true).unwrap();
+        try_install(&root,&game).unwrap();
         assert_eq!(fs::read(&target).unwrap(),new);
         assert_eq!(fs::read(&saved).unwrap(),old);
         assert_eq!(read_receipt(&game).unwrap().as_deref(),Some(digest(&source).unwrap().as_str()));
         assert!(!game.join("CyberGladiatorsFix.dll.rollback.tmp").exists());
         assert!(!game.join("CyberGladiatorsFix.dll.updating.tmp").exists());
         // Idempotence: running the same ZIP again is safe.
-        try_install_with_consent(&root,&game,true).unwrap();
+        try_install(&root,&game).unwrap();
         assert_eq!(fs::read(&saved).unwrap(),old);
         fs::remove_dir_all(root).unwrap();
     }
@@ -458,20 +341,6 @@ mod tests {
         assert!(mismatch.contains(&hash));
         assert_eq!(fs::read(&backup).unwrap(),data);
         fs::remove_dir_all(dir).unwrap();
-    }
-    #[test]
-    fn never_auto_overwrites_unknown_dll(){
-        assert!(!replaceable_known_release("f9b9b6f601e5986d46d1f672fbbd010ca93dafb8087182b55a0fbf7f4ad8ce4d"));
-        assert!(replaceable_known_release(BROKEN_BRIDGES[0]));
-    }
-    #[test]
-    fn receipt_matches_only_the_exact_installed_digest(){
-        let old="5c5e1b4e21c7964364846cb811a3263ca0285d394a5e35f348c7450a463c735c";
-        let next="451f7fc3715ac39428779943e24ac823de42eef31d2e80077ad2899269e4066c";
-        assert!(!allows_upgrade(old,None,false));
-        assert!(allows_upgrade(old,None,true));
-        assert!(allows_upgrade(old,Some(old),false));
-        assert!(!allows_upgrade(old,Some(next),false));
     }
     #[test]
     fn receipt_roundtrip_and_malformed_rejected(){

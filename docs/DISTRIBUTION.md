@@ -116,6 +116,9 @@ Useful commands:
   CyberGladiatorsFix.exe                 auto-install/verify and play
   CyberGladiatorsFix.exe --install-only  install/upgrade but do not play
   CyberGladiatorsFix.exe --verify        strict non-IQ files; IQ presence
+  CyberGladiatorsFix.exe --inspect image.iso
+  CyberGladiatorsFix.exe --inspect image.cue [track.bin|track.img]
+  CyberGladiatorsFix.exe --verbose       optional detailed logging, combinable
   CyberGladiatorsFix.exe --launch-no-verify  run installed game without file verification or repair
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help

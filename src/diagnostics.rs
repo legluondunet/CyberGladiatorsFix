@@ -293,7 +293,7 @@ fn command_label(args:&[std::ffi::OsString])->String {
         .filter(|s|s.starts_with("--"))
         .filter(|s|s.len()<=64 && s.chars().all(|c|c.is_ascii_alphanumeric()||"-_=".contains(c)))
         .collect::<Vec<_>>();
-    if known.is_empty(){"install_from_disc".into()}else{known.join(" ")}
+    if known.is_empty(){"unsupported_arguments".into()}else{known.join(" ")}
 }
 fn write_line(file:&mut impl Write,component:&str,msg:&str)->io::Result<()>{
     for line in msg.lines() {
@@ -400,10 +400,11 @@ mod tests{
         assert_eq!(fs::read_to_string(&launcher).unwrap(),"LAUNCHER-MUST-SURVIVE");
         fs::remove_dir_all(dir).unwrap();
     }
-    #[test] fn only_known_cli_switches_enter_log(){
+    #[test] fn current_cli_labels_and_private_paths_are_handled_safely(){
         assert_eq!(command_label(&[]),"install_or_update");
-        assert_eq!(command_label(&["--launch".into(),"--trace".into()]),"--launch --trace");
-        assert_eq!(command_label(&["C:\\Users\\private\\game.cue".into()]),"install_from_disc");
+        assert_eq!(command_label(&["--install-only".into()]),"--install-only");
+        assert_eq!(command_label(&["--launch-no-verify".into()]),"--launch-no-verify");
+        assert_eq!(command_label(&["C:\\Users\\private\\game.cue".into()]),"unsupported_arguments");
     }
     #[test] fn log_values_cannot_inject_newlines(){
         assert_eq!(clean("Adapter\\n[ERROR] forged"),"Adapter\\n[ERROR] forged");
