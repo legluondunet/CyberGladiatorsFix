@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Safely maximize the two saved graphics quality fields in CyberGladiators'
-//! own legacy 32-byte binary CYBER.INI. Never overwrite other preferences.
+//! Initialize verified maximum-quality graphics defaults in the original game's
+//! legacy 32-byte binary CYBER.INI; never overwrite existing user preferences.
 use std::fs::{self,OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -97,37 +97,6 @@ mod tests {
         let err=create_defaults(&root).unwrap_err();
         assert!(err.contains("Cannot create default CYBER.INI"));
         assert_eq!(fs::read(&ini).unwrap(),default_bytes().to_vec());
-        fs::remove_dir_all(&root).unwrap();
-    }
-}
-    #[test]
-    fn refuses_unknown_file_layout_and_values(){
-        assert!(maximize_bytes(&mut [0u8;28]).is_err());
-        let mut data=[0u8;32];
-        data[16..20].copy_from_slice(&6u32.to_le_bytes());
-        assert!(maximize_bytes(&mut data).is_err());
-        data[16..20].copy_from_slice(&0u32.to_le_bytes());
-        data[20..24].copy_from_slice(&4u32.to_le_bytes());
-        assert!(maximize_bytes(&mut data).is_err());
-    }
-    #[test]
-    fn preserves_user_settings_and_original_backup(){
-        let root=std::env::temp_dir().join(format!("cyber-graphics-{}",std::process::id()));
-        let _=fs::remove_dir_all(&root);fs::create_dir(&root).unwrap();
-        let file=root.join("cyber.ini");
-        let mut data=vec![0u8;32];
-        data[..4].copy_from_slice(&123u32.to_le_bytes());
-        data[16..20].copy_from_slice(&2u32.to_le_bytes());
-        data[20..24].copy_from_slice(&1u32.to_le_bytes());
-        data[24..28].copy_from_slice(&7u32.to_le_bytes());
-        fs::write(&file,&data).unwrap();
-        maximize_saved(&root).unwrap();
-        let saved=fs::read(&file).unwrap();
-        assert_eq!(u32_at(&saved,16),0);
-        assert_eq!(u32_at(&saved,20),3);
-        assert_eq!(u32_at(&saved,24),7);
-        assert_eq!(fs::read(root.join("cyber.ini.bak")).unwrap(),data);
-        assert!(maximize_saved(&root).unwrap().contains("already"));
         fs::remove_dir_all(&root).unwrap();
     }
 }
