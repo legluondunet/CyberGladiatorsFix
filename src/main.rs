@@ -519,7 +519,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         _=>{},
     }
     if !args.is_empty(){
-        return Err(format!("Positional CUE/ISO and unknown options are not supported. Use --inspect for diagnostics.\n{HELP}"));
+        return Err(format!("Invalid option(s). Positional CUE/ISO media and unknown flags are not supported; use --inspect for diagnostics.\n{HELP}"));
     }
     let target=root.join(install::DIR);
     if target.is_symlink(){return Err("Refusing symlink game directory".into());}
