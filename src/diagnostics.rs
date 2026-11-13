@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! A single launcher-adjacent log for an invocation and its child processes.
+//! Separate launcher and game-process logs, correlated by a shared session ID.
 //! Only whitelisted, troubleshooting-relevant system data is recorded:
 //! never the machine name, username, MAC, registry identifiers or WINEPREFIX.
 use crate::{graphics,install,settings};
@@ -7,11 +7,55 @@ use std::ffi::{c_char,c_void,CStr};
 use std::fs::{self,OpenOptions};
 use std::io::{self,Write};
 use std::path::{Path,PathBuf};
-use std::sync::{Arc,atomic::{AtomicBool,Ordering}};
+use std::sync::{Arc,OnceLock,atomic::{AtomicBool,Ordering}};
 use std::thread::{self,JoinHandle};
 use std::time::Duration;
 
 pub const LOG_NAME:&str="CyberGladiatorsFix.log";
+pub const RUNTIME_LOG_NAME:&str="CyberGladiatorsFix-DLL.log";
+static SESSION_ID:OnceLock<String>=OnceLock::new();
+
+/// Stable for the whole launcher invocation, independent from the game PID.
+pub fn session_id()->&'static str{
+    SESSION_ID.get_or_init(||{
+        let nanos=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            .map(|duration|duration.as_nanos()).unwrap_or(0);
+        format!("{}-{nanos}",std::process::id())
+    }).as_str()
+}
+pub fn runtime_location(root:&Path)->PathBuf{root.join(RUNTIME_LOG_NAME)}
+
+fn check_log_path(path:&Path)->Result<(),String>{
+    if let Ok(meta)=fs::symlink_metadata(path) {
+        if !meta.is_file()||meta.file_type().is_symlink(){
+            return Err(format!("Refusing to overwrite non-regular or symlink log at {}",path.display()));
+        }
+    }
+    Ok(())
+}
+
+/// Start the game/DLL log only for an actual launch, never for --verify or
+/// --install-only. Pre-create it before spawning so early DLL/Glide messages
+/// cannot race the launcher or overwrite its separate diagnostic history.
+pub fn start_runtime_session(root:&Path)->Result<PathBuf,String>{
+    let path=runtime_location(root);
+    check_log_path(&path)?;
+    let mut f=OpenOptions::new().create(true).write(true).truncate(true)
+        .open(&path).map_err(|e|format!("Cannot initialize {}: {e}",path.display()))?;
+    write_line(&mut f,"SESSION",&format!(
+        "BEGIN session_id={} role=game-runtime launcher_pid={} version={}-{}",
+        session_id(),std::process::id(),env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT")
+    )).map_err(|e|e.to_string())?;
+    f.sync_all().map_err(|e|format!("Cannot commit runtime log header: {e}"))?;
+    Ok(path)
+}
+
+pub fn log_runtime(root:&Path,component:&str,msg:&str){
+    let path=runtime_location(root);
+    if let Ok(mut f)=OpenOptions::new().create(true).append(true).open(path) {
+        let _=write_line(&mut f,component,msg);
+    }
+}
 
 #[repr(C)]
 #[derive(Default)]
@@ -266,18 +310,14 @@ pub fn log(root:&Path,component:&str,msg:&str){
 pub fn location(root:&Path)->PathBuf{root.join(LOG_NAME)}
 pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
     let path=location(root);
-    if let Ok(meta)=fs::symlink_metadata(&path) {
-        if !meta.is_file()||meta.file_type().is_symlink(){
-            return Err(format!("Refusing to overwrite non-regular or symlink log at {}",path.display()));
-        }
-    }
+    check_log_path(&path)?;
     // Exactly one log per invocation. A future-run log never contains
     // cumulative traces from a previous experiment.
     let mut file=OpenOptions::new().create(true).write(true).truncate(true)
         .open(&path).map_err(|e|format!("Cannot initialize {}: {e}",path.display()))?;
     write_line(&mut file,"SESSION",&format!(
-        "BEGIN version={}-{} command={} pid={}",
-        env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"),
+        "BEGIN session_id={} role=launcher version={}-{} command={} pid={}",
+        session_id(),env!("CARGO_PKG_VERSION"),env!("CYBER_COMMIT"),
         command_label(args),std::process::id()
     )).map_err(|e|e.to_string())?;
     write_line(&mut file,"SYSTEM",&format!(
@@ -331,6 +371,27 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
 #[cfg(test)]
 mod tests{
     use super::*;
+
+    #[test] fn runtime_log_is_independent_and_rotates_on_next_launch(){
+        let dir=std::env::temp_dir().join(format!(
+            "CyberGladiatorsFix-log-test-{}-{}",std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_nanos()));
+        fs::create_dir(&dir).unwrap();
+        let launcher=location(&dir);
+        fs::write(&launcher,"LAUNCHER-MUST-SURVIVE").unwrap();
+        let runtime=runtime_location(&dir);
+        assert!(!runtime.exists());
+        start_runtime_session(&dir).unwrap();
+        assert_eq!(fs::read_to_string(&launcher).unwrap(),"LAUNCHER-MUST-SURVIVE");
+        assert!(fs::read_to_string(&runtime).unwrap().contains(
+            &format!("session_id={}",session_id())));
+        fs::write(&runtime,"OLD-RUNTIME-MUST-DISAPPEAR").unwrap();
+        start_runtime_session(&dir).unwrap();
+        assert!(!fs::read_to_string(&runtime).unwrap().contains("OLD-RUNTIME-MUST-DISAPPEAR"));
+        assert_eq!(fs::read_to_string(&launcher).unwrap(),"LAUNCHER-MUST-SURVIVE");
+        fs::remove_dir_all(dir).unwrap();
+    }
     #[test] fn only_known_cli_switches_enter_log(){
         assert_eq!(command_label(&[]),"install_or_update");
         assert_eq!(command_label(&["--launch".into(),"--trace".into()]),"--launch --trace");
