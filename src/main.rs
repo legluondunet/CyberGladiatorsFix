@@ -33,7 +33,6 @@ Usage:
   CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
   CyberGladiatorsFix.exe --launch-no-verify   Launch installed game without any file integrity or presence preflight
   CyberGladiatorsFix.exe --verify      Strict immutable assets and executable; IQ presence
-  CyberGladiatorsFix.exe --inspect-disc [disc.cue]   Read-only US/FR CD fingerprint (no installation)
   CyberGladiatorsFix.exe --version
   CyberGladiatorsFix.exe --help
 
@@ -336,13 +335,6 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             autostart::prepare(root,Some(&source))?;
             return user_gameframe_launch(root);
         },
-        [one] if one.to_str()==Some("--inspect-disc")=>{
-            let cue=install::find_cue(root)?;
-            return install::inspect_disc(&cue,root);
-        },
-        [one,two] if one.to_str()==Some("--inspect-disc")=>{
-            return install::inspect_disc(&PathBuf::from(two),root);
-        },
         [one] if one.to_str()==Some("--version")=>{println!("{NAME} {version}");return Ok(());},
         [one] if one.to_str()==Some("--help")=>{println!("{NAME} {version}\n{HELP}");return Ok(());},
         [one] if one.to_str()==Some("--dxvk-rootcause")=>return diagnose_dxvk(root,false),
@@ -510,15 +502,26 @@ mod diagnostics_tests {
         }
     }
     #[test]
+    fn removed_disc_inspection_commands_are_rejected(){
+        let root=Path::new("C:/CyberGladiatorsFix-test-nonexistent");
+        for arguments in [
+            vec![OsString::from("--inspect-disc")],
+            vec![OsString::from("--inspect-disc"),OsString::from("game.cue")],
+        ] {
+            let err=dispatch(&arguments,root).unwrap_err();
+            assert!(err.starts_with("Invalid option(s)."),"{err}");
+        }
+    }
+    #[test]
     fn help_lists_only_one_click_controls(){
         for expected in ["CyberGladiatorsFix.exe               Auto-detect",
-            "--install-only","--launch-no-verify","--verify","--inspect-disc",
+            "--install-only","--launch-no-verify","--verify",
             "--version","--help",
             "music/TrackNN.flac","CyberGladiatorsFix.dll",
             "CyberGladiatorsFix_installer.log","CyberGladiatorsFix.log","GameFrame"]{
             assert!(HELP.contains(expected),"{expected}");
         }
-        for removed in ["--max-graphics","--check-bundle","--upgrade-cdda"]{
+        for removed in ["--inspect-disc","--max-graphics","--check-bundle","--upgrade-cdda"]{
             assert!(!HELP.contains(removed),"{removed}");
         }
         assert!(!HELP.lines().any(|line| line.trim()=="CyberGladiatorsFix.exe --launch"));
