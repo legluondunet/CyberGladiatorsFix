@@ -11,8 +11,8 @@ use std::sync::{Arc,OnceLock,atomic::{AtomicBool,Ordering}};
 use std::thread::{self,JoinHandle};
 use std::time::Duration;
 
-pub const LOG_NAME:&str="CyberGladiatorsFix.log";
-pub const RUNTIME_LOG_NAME:&str="CyberGladiatorsFix-DLL.log";
+pub const LOG_NAME:&str="CyberGladiatorsFix_installer.log";
+pub const RUNTIME_LOG_NAME:&str="CyberGladiatorsFix.log";
 static SESSION_ID:OnceLock<String>=OnceLock::new();
 
 /// Stable for the whole launcher invocation, independent from the game PID.
