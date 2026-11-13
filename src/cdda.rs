@@ -246,7 +246,10 @@ fn install_new(source:&[u8],target:&Path,expected:&str)->Result<(),String>{
     Ok(())
 }
 pub fn try_install(root:&Path,game:&Path)->Result<(),String>{
-    try_install_with_consent(root,game,false)
+    // There is no interactive/CLI upgrade command: the launcher now uses
+    // the existing SHA-qualified backup-and-rollback transaction to replace
+    // old or unknown valid x86 bridge DLLs without overwriting their backups.
+    try_install_with_consent(root,game,true)
 }
 pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),String>{
     let source=source_bytes(root)?;
@@ -266,8 +269,8 @@ pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),S
     let existing=digest(&target)?;
     let receipt=read_receipt(game)?;
     if existing==wanted{
-        // Never silently bless a foreign, unrecognized DLL. The command
-        // --upgrade-cdda grants explicit approval to establish the receipt.
+        // The current embedded DLL is authoritative. If a receipt is missing,
+        // establish it only after matching its exact SHA-256.
         if allows_upgrade(&existing,receipt.as_deref(),consent){
             record_receipt(game,&existing)?;
         }
@@ -275,7 +278,7 @@ pub fn try_install_with_consent(root:&Path,game:&Path,consent:bool)->Result<(),S
     }
     if !allows_upgrade(&existing,receipt.as_deref(),consent){
         return Err(format!(
-            "Existing {DLL_NAME} has an unrecognized SHA-256 ({existing}); refusing to overwrite. Run --upgrade-cdda to explicitly approve a backed-up replacement of this x86 DLL."
+            "Existing {DLL_NAME} has an unrecognized SHA-256 ({existing}); refusing to overwrite without preserving a verified backup."
         ));
     }
     // Upgrade any recognized older project-owned DLL, even if it was not one
