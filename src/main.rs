@@ -401,7 +401,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let child=verify::launch_with_options(root,false,true,false,0,true)?;
             show(&format!(
                 "Started CYBER.EXE native Glide control (no probe, PID {}); Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix.log").display()
+                child.id(),diagnostics::runtime_location(root).display()
             ),root);
             return wait_diagnostic(child,root);
         },
@@ -432,7 +432,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             let mut child=verify::launch_with_video_delay(root,false,true,false,delay)?;
             show(&format!(
                 "Started CYBER.EXE video-close delay experiment ({delay} ms, PID {}); Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix.log").display()
+                child.id(),diagnostics::runtime_location(root).display()
             ),root);
             return wait_diagnostic(child,root);
         },
@@ -440,7 +440,7 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
             && two.to_str()==Some("--trace") && three.to_str()==Some("--passthru-noop")=>{
             let mut child=verify::launch(root,false,true,true)?;
             show(&format!("Started CYBER.EXE diagnostic pass-through NO-OP mode (PID {}); Wine trace at {}",
-                child.id(),root.join("CyberGladiatorsFix.log").display()),root);
+                child.id(),diagnostics::runtime_location(root).display()),root);
             return wait_diagnostic(child,root);
         },
         [one,two] if one.to_str()==Some("--launch") && two.to_str()==Some("--3dfx-logo")=>
