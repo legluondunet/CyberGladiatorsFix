@@ -457,7 +457,6 @@ fn dispatch(args:&[OsString],root:&Path)->Result<(),String>{
         // Validate the text settings before modifying the game binary.
         settings::ensure(&target)?;
         let skip_intro=settings::read(&target)?;
-        let enable_cdda=settings::CDDA_ENABLED;
         cdda::try_install(root,&target)?;
         let status=patch::apply(&exe)?;
         let audio=patch::set_cdda(&exe,true)?;
