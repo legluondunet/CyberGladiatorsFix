@@ -1,6 +1,6 @@
 [package]
 name = "cyber-gladiators-fix"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 rust-version = "1.95"
 description = "Windows x64 one-file installer and launcher for Cyber Gladiators (1996), with GameFrame Glide/OpenGL, native AVI and FLAC CD audio"
