@@ -166,12 +166,16 @@ fn infer_unindexed_zero_audio_pregap(
 }
 
 pub fn normalize(cue:&Path, temp_dir:&Path)->Result<TempIso,String>{
-    normalize_with_data(cue,temp_dir,None)
+    normalize_impl(cue,temp_dir,None,true)
 }
 /// Read-only disc sources, optional explicitly selected BIN/IMG data track
 /// for unsupported-CD diagnostics. No rewrite of the supplied CUE.
 pub fn normalize_with_data(cue:&Path, temp_dir:&Path,
                            data_override:Option<&Path>)->Result<TempIso,String>{
+    normalize_impl(cue,temp_dir,data_override,false)
+}
+fn normalize_impl(cue:&Path, temp_dir:&Path,
+                  data_override:Option<&Path>,emit_launcher_log:bool)->Result<TempIso,String>{
     let tracks=tracks(cue)?;
     let data=&tracks[0];
     let (sector_size,start)=match data.mode.as_str(){
@@ -204,10 +208,12 @@ pub fn normalize_with_data(cue:&Path, temp_dir:&Path,
             return Err("Invalid inferred CUE data-track boundary".into());
         }
         end=inferred;
-        crate::show(&format!(
-            "CUE_UNINDEXED_PREGAP inferred=1 following_audio_track={:02} zero_sectors={} boundary_sector={} original_index01_sector={} source_bin_unchanged=1",
-            tracks[1].number,UNINDEXED_AUDIO_PREGAP_SECTORS,end,tracks[1].index01
-        ),temp_dir);
+        if emit_launcher_log {
+            crate::show(&format!(
+                "CUE_UNINDEXED_PREGAP inferred=1 following_audio_track={:02} zero_sectors={} boundary_sector={} original_index01_sector={} source_bin_unchanged=1",
+                tracks[1].number,UNINDEXED_AUDIO_PREGAP_SECTORS,end,tracks[1].index01
+            ),temp_dir);
+        }
     }
     let output=temp_dir.join("CyberGladiatorsFix-disc.tmp.iso");
     let mut out=OpenOptions::new().create_new(true).write(true).open(&output)
