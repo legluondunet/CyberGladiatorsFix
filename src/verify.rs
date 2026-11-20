@@ -161,13 +161,6 @@ fn unchecked_gameframe_command(root:&Path)->Command{
     if let Some(edition)=edition{
         cmd.env("CYBER_GAME_EDITION",edition);
         cmd.env("CYBER_VIRTUAL_DDRAW","1");
-    // Test-only FR compatibility: original conditional profile guard remains
-    // active, and fix.dll supplies a relative game path only when the legacy
-    // Sierra [Config] CDROM lookup returned empty. No global ini changes.
-    cmd.env("CYBER_FR_PROFILE_FALLBACK",if edition=="FR"{"1"}else{"0"});
-    if edition=="FR" {
-        crate::show("FR_PROFILE_FALLBACK enabled=1 original_intro_guard=preserved no_system_ini_write=1",root);
-    }
         cmd.env("CYBER_GAMEFRAME_TEST","1");
         cmd.env("CYBER_GAMEFRAME_AVI_FIRST_PRESENT","1");
         cmd.env("CYBER_AVI_FULLSCREEN","1");

@@ -24,7 +24,7 @@ const CD_CHECK:(usize,[u8;5],[u8;5])=(
     0x4ad5,[0xe8,0x4c,0xff,0xff,0xff],[0xb8,0x01,0x00,0x00,0x00]
 );
 const INTRO_GATES:[(usize,[u8;2],[u8;2]);2]=[
-    (0x63f5,[0x74,0x2f],[0x74,0x2f]), // retain the original Config/CDROM JE
+    (0x63f5,[0x74,0x2f],[0x90,0x90]), // original AVI flow; safe runtime COM cleanup
     (0x6409,[0x7c,0x0c],[0x90,0x90])
 ];
 const SKIP_OFFSET:usize=0x63f5;
@@ -188,18 +188,18 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     let hash=digest(&data);
     if valid_patched(&hash){
         verify_exe(path)?;
-        // Repair the exact legacy NOP state on an existing installation.
-        // No extra backup: the authentic original remains CYBER.EXE.bak.
+        // Undo the prior experimental JE mode so users keep their AVI.
+        // The authentic original remains immutable in CYBER.EXE.bak.
         if !matches!(hash.as_str(),PATCHED_SKIP|SYSTEM_WINMM_SKIP)
-            && data[SKIP_OFFSET..SKIP_OFFSET+2]==INTRO_UNGUARDED_LEGACY {
+            && data[SKIP_OFFSET..SKIP_OFFSET+2]==INTRO_GUARDED {
             let mut repaired=data;
-            repaired[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_GUARDED);
+            repaired[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_UNGUARDED_LEGACY);
             if digest(&repaired)!=hash {
                 return Err("French intro guard repair failed SHA-256 verification".into());
             }
             replace_exe(path,&repaired)?;
             verify_exe(path)?;
-            return Ok("French original CDROM-lookup intro guard restored (verified)");
+            return Ok("French AVI intro branch re-enabled, guarded early COM cleanup (verified)");
         }
         return Ok("French edition already patched (verified)");
     }
@@ -271,26 +271,26 @@ pub fn set_skip_intro(path:&Path,skip:bool)->Result<&'static str,String>{
     let bridge=matches!(hash.as_str(),PATCHED|PATCHED_SKIP);
     let current_skip=matches!(hash.as_str(),PATCHED_SKIP|SYSTEM_WINMM_SKIP);
     if current_skip==skip{
-        // Also handle direct toggles of a pre-fix installed NOP default.
-        if !skip && original[SKIP_OFFSET..SKIP_OFFSET+2]==INTRO_UNGUARDED_LEGACY {
+        // Repair a prior test installation left in conditional-JE mode.
+        if !skip && original[SKIP_OFFSET..SKIP_OFFSET+2]==INTRO_GUARDED {
             let mut repaired=original;
-            repaired[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_GUARDED);
+            repaired[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_UNGUARDED_LEGACY);
             if digest(&repaired)!=hash {
                 return Err("French intro guard repair failed SHA-256 verification".into());
             }
             replace_exe(path,&repaired)?;
             verify_exe(path)?;
-            return Ok("French startup intro original conditional guard restored");
+            return Ok("French startup AVI intro enabled with guarded COM cleanup");
         }
         return Ok(if skip{"French startup intro already disabled"}else{"French startup intro already enabled"});
     }
     let mut data=original;
-    let old=if current_skip{INTRO_SKIPPED}else{INTRO_GUARDED};
+    let old=if current_skip{INTRO_SKIPPED}else{INTRO_UNGUARDED_LEGACY};
     if data[SKIP_OFFSET..SKIP_OFFSET+2]!=old{
         return Err("French intro branch unexpectedly changed; unchanged".into());
     }
     data[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(
-        &if skip{INTRO_SKIPPED}else{INTRO_GUARDED}
+        &if skip{INTRO_SKIPPED}else{INTRO_UNGUARDED_LEGACY}
     );
     if digest(&data)!=runtime_hash(skip,bridge){
         return Err("French intro toggle checksum mismatch; unchanged".into());
@@ -347,9 +347,9 @@ mod tests{
             assert!(valid_patched(hash));
         }}
     }
-    #[test] fn french_original_cdrom_lookup_guard_is_preserved(){
+    #[test] fn french_avi_intro_branch_is_enabled_by_default(){
         assert_eq!(INTRO_GATES[0].1,INTRO_GUARDED);
-        assert_eq!(INTRO_GATES[0].2,INTRO_GUARDED);
+        assert_eq!(INTRO_GATES[0].2,INTRO_UNGUARDED_LEGACY);
         assert_eq!(INTRO_GATES[1].2,[0x90,0x90]);
         assert_eq!(SKIP_OFFSET+2+0x2f,0x6426);
     }
@@ -360,9 +360,9 @@ mod tests{
         let mut guarded=original.clone();
         patch_original(&mut guarded).unwrap();
         assert!(has_known_patched_body(&guarded));
-        assert_eq!(guarded[SKIP_OFFSET..SKIP_OFFSET+2],INTRO_GUARDED);
+        assert_eq!(guarded[SKIP_OFFSET..SKIP_OFFSET+2],INTRO_UNGUARDED_LEGACY);
         let mut old=guarded.clone();
-        old[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_UNGUARDED_LEGACY);
+        old[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_GUARDED);
         assert_eq!(digest(&guarded),digest(&old));
         assert_ne!(patch::digest(&guarded),patch::digest(&old));
         // Don't canonicalize the explicit SkipIntro=1 state.
