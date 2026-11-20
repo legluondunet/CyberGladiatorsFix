@@ -75,7 +75,7 @@ Normal launch selects a shared DirectDraw/MCI/AVI path for both exact retail edi
 
 The new architecture was implemented in [merged PR #27](https://github.com/legluondunet/CyberGladiatorsFix/pull/27). [Windows CI after the merge](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44752207790) passed the source build, x86 DLL/loader, Rust tests and packaging, **not retail gameplay**.
 
-Under **Wine-staging 11.19**, authentic USA and French CUE/BIN sets installed and launched successfully with 4:3 AVI, GameFrame, FLAC/CDDA and normal exit. French Wine also confirmed `Log=0` leaves both logs unchanged on second launch and two consecutive `Log=1` sessions are not cumulative. **Native Windows gameplay with the v2 layout was not field-tested**; earlier native Windows validation belongs to older builds. A USA subsequent no-CD/Log=0 session and a final tagged v2.0.0 binary also remain unverified.
+Under **Wine-staging 11.19**, authentic USA and French CUE/BIN sets installed and launched successfully with 4:3 AVI, GameFrame, FLAC/CDDA and normal exit. The version-bumped **USA `2.0.0-0f86b592` candidate** also passed a fresh retail CUE/BIN installation and 53.6-second session including video focus recovery, FLAC and normal exit. French Wine confirmed `Log=0` leaves both logs unchanged on second launch and two consecutive `Log=1` sessions are not cumulative. **Native Windows gameplay with the v2 layout was not field-tested**; earlier native Windows validation belongs to older builds. A USA subsequent no-CD/Log=0 session and a final tagged v2.0.0 binary also remain unverified.
 
 The project supports only specifically verified original retail binaries and disc files; other editions, hardware and Wine/Proton versions are not guaranteed.
 

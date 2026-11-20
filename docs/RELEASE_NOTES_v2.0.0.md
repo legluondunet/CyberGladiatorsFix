@@ -41,10 +41,10 @@ Verified CUE/BIN extraction, one-click installation and launch, native MCI/Cinep
 
 - Merged [PR #27](https://github.com/legluondunet/CyberGladiatorsFix/pull/27) implemented the layout. Its [post-merge Windows CI](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44752207790) passed compilation, DLL checks, automated tests and packaging. CI does **not** run the retail game.
 - **French retail/Wine-staging 11.19**: new CUE/BIN install (343 original files, 14 FLAC), game launch, 4:3 AVI/GameFrame, music and normal exit. A second run with `Log=0` preserved logs; two consecutive `Log=1` runs created distinct, noncumulative logs.
-- **USA retail/Wine-staging 11.19**: new CUE/BIN install (342 original files, 14 FLAC), 4:3 AVI/GameFrame, CDDA and normal exit; initial logs produced with `Log=0`. A USA second no-disc run has not been independently documented.
-- **Native Windows gameplay using this new installation layout has not been field-tested.** Earlier Windows tests apply to older layouts. The Wine sessions used the PR #27 test build `1.0.1-53beda77` containing the new code, **not** a future tagged v2.0.0 binary.
+- **USA retail/Wine-staging 11.19, v2.0.0 candidate `2.0.0-0f86b592` (20 November 2026)**: original CUE/BIN fresh installation, 342 original files, 14 FLAC tracks, source EXE backup and game manifest verified; 4:3 AVI, video focus loss/recovery, GameFrame/OpenGL, CDDA tracks 12 and 7, steady ~59.5 FPS, clean exit (53.6 seconds, code 0). Both first-install logs were generated with default `Log=0`. A second USA no-disc run has not independently been tested.
+- **Native Windows gameplay using this new installation layout has not been field-tested.** Earlier Windows tests apply to older layouts. The earlier Wine sessions used the PR #27 test build `1.0.1-53beda77`. The new USA clean-install test used the version-bumped PR #28 build **`2.0.0-0f86b592`**, which also passed [Windows CI](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44754612481). This is **not** a test of the final tagged/published v2.0.0 binary.
 
-This version bump requires its own CI. Release publication also requires an **explicit separate maintainer approval**, not merely a merge. The package includes exactly one EXE, README, GPL/Apache/MIT licenses and SHA256SUMS. No original game files or unpacked DLLs.
+The version-bumped candidate passed Windows CI. Release publication also requires an **explicit separate maintainer approval**, not merely a merge. The package includes exactly one EXE, README, GPL/Apache/MIT licenses and SHA256SUMS. No original game files or unpacked DLLs.
 
 License: CyberGladiatorsFix and fix.dll GPL-3.0-or-later, GameFrame Apache-2.0, isomage MIT.
 

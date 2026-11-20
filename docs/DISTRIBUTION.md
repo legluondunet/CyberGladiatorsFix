@@ -93,7 +93,10 @@ Focus/Alt+Tab adaptations exist for Windows and Wine.
 
 After merged PR #27, original USA and French CUE/BIN installs, AVI,
 GameFrame and FLAC playback were successfully tested under Wine-staging
-11.19. FR also validated subsequent Log=0 and consecutive Log=1 sessions.
+11.19. The version-bumped USA candidate 2.0.0-0f86b592 also passed a
+fresh retail CUE/BIN install and 53.6-second session with video focus
+recovery, FLAC/CDDA and normal exit. FR additionally validated
+subsequent Log=0 and consecutive Log=1 sessions.
 Windows CI succeeded, including native DLL loader checks, but this new
 v2 installation layout has NOT been gameplay-tested under native Windows.
 A final tagged v2.0.0 release binary is not yet field-tested.
