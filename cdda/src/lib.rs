@@ -14,7 +14,7 @@ mod video_trace;
 mod glide_trace;
 mod exception_trace;
 mod ddraw_native;
-mod fr_cleanup;
+mod ddraw_cleanup;
 
 /// Called by the experimental project-owned C++ DirectDraw v1 adapter.
 /// Diagnostic strings are internal fixed literals/formatting, not input from
@@ -410,7 +410,7 @@ pub unsafe extern "system" fn mciSendStringA(
     // Report the shared owned-COM DirectDraw state once at the first
     // native MCI command, in the independent game log.
     ddraw_native::report_once();
-    fr_cleanup::report_once();
+    ddraw_cleanup::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
     };
@@ -525,7 +525,7 @@ forward_winmm!(mmioClose(h:Handle,flags:u32)->u32, 1);
 pub unsafe extern "system" fn mciSendCommandA(id:u32,message:u32,flags:usize,param:usize)->u32 {
     mark_trace_session_once();
     // Include cleanup-hook status even if the AVI is not reached.
-    fr_cleanup::report_once();
+    ddraw_cleanup::report_once();
     // Keep video services active even with music disabled: only the CD-audio
     // device uses the optional virtual FLAC implementation.
     if music_enabled() {
