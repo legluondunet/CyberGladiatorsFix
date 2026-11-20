@@ -18,6 +18,10 @@ const IMAGE_BASE:usize=0x0040_0000;
 const PAGE_READWRITE:u32=4;
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
 static INSTALLED:AtomicBool=AtomicBool::new(false);
+// Loader-safe installation diagnostic: 0 = constructor not called; 1 = disabled;
+// 2 = wrong edition; 3 = wrong PE; 4 = import layout mismatch;
+// 5 = unresolved IAT; 6 = VirtualProtect failed; 7 = hooked.
+static HOOK_STATE:AtomicU32=AtomicU32::new(0);
 static REPORTED:AtomicBool=AtomicBool::new(false);
 static CALLS:AtomicU32=AtomicU32::new(0);
 static FALLBACKS:AtomicU32=AtomicU32::new(0);
@@ -94,54 +98,83 @@ unsafe extern "system" fn profile_lookup(
     crate::log("FR_PROFILE_CDROM fallback=relative_game_directory original_return=0 no_global_ini_write=1");
     2
 }
+// These RVA values were verified directly from the 20 November 2026
+// authenticated French retail minidump, whose original backup is already
+// fail-closed SHA-256-checked by the launcher. The generic import walk in
+// the first candidate failed to attach (issue #30, log 3af698a9).
+// Validate the full KERNEL32 import-descriptor / ILT / function name before
+// writing exactly one game-owned IAT pointer. Never touch system DLLs.
+const FR_IMPORT_DESCRIPTOR_RVA:usize=0x3ed000;
+const FR_KERNEL32_ILT_RVA:u32=0x3ed08c;
+const FR_KERNEL32_DLL_RVA:u32=0x3ed3f4;
+const FR_KERNEL32_IAT_RVA:u32=0x3ed240;
+const FR_PROFILE_NAME_POINTER_RVA:usize=0x3ed140;
+const FR_PROFILE_NAME_RVA:u32=0x3ed754;
+const FR_PROFILE_IAT_RVA:usize=0x3ed2f4;
+fn profile_name_is_expected(raw_name:u32)->bool{raw_name==FR_PROFILE_NAME_RVA}
 unsafe fn hook()->bool{
     let base=GetModuleHandleA(std::ptr::null()) as usize;
-    if base!=IMAGE_BASE || read_u16(base)!=0x5a4d{return false;}
-    let pe=read_u32(base+0x3c) as usize;
-    if !(0x40..=0x100000).contains(&pe)||read_u32(base+pe)!=0x4550{return false;}
-    let opt=base+pe+24;
-    if read_u16(opt)!=0x10b{return false;}
-    let size=read_u32(opt+56) as usize;
-    if !(0x100000..=0x10000000).contains(&size){return false;}
-    let imports=read_u32(opt+104) as usize;
-    if !fits(size,imports,20){return false;}
-    for i in 0..128usize{
-        let descriptor=imports+i*20;
-        if !fits(size,descriptor,20){break;}
-        let source=read_u32(base+descriptor) as usize;
-        let dll=read_u32(base+descriptor+12) as usize;
-        let target=read_u32(base+descriptor+16) as usize;
-        if source==0&&target==0{break;}
-        if !matches_ascii(base,size,dll,b"kernel32.dll",true)
-            &&!matches_ascii(base,size,dll,b"kernelbase.dll",true){continue;}
-        if source==0||target==0{continue;}
-        for n in 0..4096usize{
-            let name_slot=source+n*4;
-            let target_slot=target+n*4;
-            if !fits(size,name_slot,4)||!fits(size,target_slot,4){break;}
-            let ordinal_or_name=read_u32(base+name_slot);
-            if ordinal_or_name==0{break;}
-            if ordinal_or_name&0x8000_0000!=0{continue;}
-            let Some(name)= (ordinal_or_name as usize).checked_add(2)else{continue};
-            if !matches_ascii(base,size,name,b"GetPrivateProfileStringA",false){continue;}
-            let slot=(base+target_slot) as *mut u32;
-            let original=slot.read();
-            if original==0 || original as usize==profile_lookup as usize {return false;}
-            let mut previous=0;
-            if VirtualProtect(slot.cast(),4,PAGE_READWRITE,&mut previous)==0{return false;}
-            ORIGINAL.store(original as usize,Ordering::Release);
-            slot.write_volatile(profile_lookup as usize as u32);
-            let mut restored=0;
-            let _=VirtualProtect(slot.cast(),4,previous,&mut restored);
-            return true;
-        }
+    if base!=IMAGE_BASE || read_u16(base)!=0x5a4d {
+        HOOK_STATE.store(3,Ordering::Release);return false;
     }
-    false
+    let pe=read_u32(base+0x3c) as usize;
+    if !(0x40..=0x100000).contains(&pe)||read_u32(base+pe)!=0x4550 {
+        HOOK_STATE.store(3,Ordering::Release);return false;
+    }
+    let opt=base+pe+24;
+    if read_u16(opt)!=0x10b {
+        HOOK_STATE.store(3,Ordering::Release);return false;
+    }
+    let size=read_u32(opt+56) as usize;
+    if !(FR_PROFILE_NAME_RVA as usize + 2 + b"GetPrivateProfileStringA".len() + 1..=0x10000000).contains(&size) {
+        HOOK_STATE.store(3,Ordering::Release);return false;
+    }
+    // Validate that this is the exact PE32 import descriptor layout we
+    // observed in the known FR retail crash dump, not another game.
+    let imports=read_u32(opt+104) as usize;
+    let descriptor=FR_IMPORT_DESCRIPTOR_RVA;
+    if imports!=descriptor
+        || !fits(size,descriptor,20)
+        || read_u32(base+descriptor)!=FR_KERNEL32_ILT_RVA
+        || read_u32(base+descriptor+12)!=FR_KERNEL32_DLL_RVA
+        || read_u32(base+descriptor+16)!=FR_KERNEL32_IAT_RVA
+        || !matches_ascii(base,size,FR_KERNEL32_DLL_RVA as usize,b"kernel32.dll",true)
+        || !fits(size,FR_PROFILE_NAME_POINTER_RVA,4)
+        || !profile_name_is_expected(read_u32(base+FR_PROFILE_NAME_POINTER_RVA))
+        || !matches_ascii(base,size,FR_PROFILE_NAME_RVA as usize+2,b"GetPrivateProfileStringA",false)
+        || !fits(size,FR_PROFILE_IAT_RVA,4)
+    {
+        HOOK_STATE.store(4,Ordering::Release);return false;
+    }
+    let slot=(base+FR_PROFILE_IAT_RVA) as *mut u32;
+    let original=slot.read();
+    // If the image's imports have not yet been fixed up by the loader,
+    // refuse to store a function address that is merely an image RVA.
+    if original==0 || (base..base+size).contains(&(original as usize))
+        || original as usize==profile_lookup as usize
+    {
+        HOOK_STATE.store(5,Ordering::Release);return false;
+    }
+    let mut old_protect=0;
+    if VirtualProtect(slot.cast(),4,PAGE_READWRITE,&mut old_protect)==0 {
+        HOOK_STATE.store(6,Ordering::Release);return false;
+    }
+    ORIGINAL.store(original as usize,Ordering::Release);
+    slot.write_volatile(profile_lookup as usize as u32);
+    let mut ignored=0;
+    let _=VirtualProtect(slot.cast(),4,old_protect,&mut ignored);
+    HOOK_STATE.store(7,Ordering::Release);
+    true
 }
-unsafe extern "C" fn initialize(){
+pub(crate) unsafe extern "C" fn initialize(){
+    if INSTALLED.load(Ordering::Acquire){return;}
     if !env_is_one(b"CYBER_GAMEFRAME_TEST\0")
-        || !env_is_fr()
-        || !env_is_one(b"CYBER_FR_PROFILE_FALLBACK\0"){return;}
+        || !env_is_one(b"CYBER_FR_PROFILE_FALLBACK\0"){
+        HOOK_STATE.store(1,Ordering::Release);return;
+    }
+    if !env_is_fr() {
+        HOOK_STATE.store(2,Ordering::Release);return;
+    }
     INSTALLED.store(hook(),Ordering::Release);
 }
 // This stage runs before the retail EXE's first profile lookup. It does no
@@ -158,7 +191,18 @@ pub fn report_once(){
             CALLS.load(Ordering::Relaxed),FALLBACKS.load(Ordering::Relaxed)
         ));
     }else{
-        crate::log("FR_PROFILE_HOOK installed=0 fallback=disabled_or_import_absent");
+        let reason=match HOOK_STATE.load(Ordering::Acquire){
+            0=>"early_initializer_not_called",
+            1=>"launcher_flag_missing",
+            2=>"edition_not_fr",
+            3=>"invalid_pe_image",
+            4=>"fr_import_signature_mismatch",
+            5=>"unresolved_or_already_hooked_IAT",
+            6=>"virtualprotect_failed",
+            7=>"installed_but_flag_out_of_sync",
+            _=>"unknown",
+        };
+        crate::log(&format!("FR_PROFILE_HOOK installed=0 reason={reason} init_stage={}",HOOK_STATE.load(Ordering::Acquire)));
     }
 }
 
@@ -172,6 +216,15 @@ mod tests{
         assert!(!matching_profile_call(b"Video",b"CDROM",b"sierra.ini"));
         assert!(!matching_profile_call(b"Config",b"CDROM",b"other.ini"));
         assert!(!matching_profile_call(b"Config",b"Other",b"sierra.ini"));
+    }
+    #[test]
+    fn french_import_profile_thunk_matches_verified_dump_offsets(){
+        // Verified 2026-11-20 French CYBER.EXE: KERNEL32 ILT entry 45.
+        assert_eq!(FR_PROFILE_NAME_POINTER_RVA,FR_KERNEL32_ILT_RVA as usize+45*4);
+        assert_eq!(FR_PROFILE_IAT_RVA,FR_KERNEL32_IAT_RVA as usize+45*4);
+        assert_eq!(FR_PROFILE_NAME_RVA,0x3ed754);
+        assert!(profile_name_is_expected(0x3ed754));
+        assert!(!profile_name_is_expected(0x3ed756));
     }
     #[test]
     fn only_empty_return_with_enough_room_gets_local_fallback(){

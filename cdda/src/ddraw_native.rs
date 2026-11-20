@@ -188,6 +188,10 @@ fn owned_virtual_profiles(requested:bool,fr:bool,us:bool,wine:bool)->(bool,bool,
 }
 unsafe extern "C" fn initialize(){
     INITIALIZED.store(true,Ordering::Release);
+    // One verified CRT initialization path for both owned IAT hooks.
+    // The earlier independent FR constructor did not attach on native
+    // Windows; this shared initializer is already used by DirectDraw.
+    crate::fr_profile::initialize();
     if !env_is_one(b"CYBER_GAMEFRAME_TEST\0"){return;}
     let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
     let wine=!ntdll.is_null()
