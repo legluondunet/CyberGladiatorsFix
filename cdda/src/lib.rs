@@ -14,6 +14,7 @@ mod video_trace;
 mod glide_trace;
 mod exception_trace;
 mod ddraw_native;
+mod fr_profile;
 
 /// Called by the experimental project-owned C++ DirectDraw v1 adapter.
 /// Diagnostic strings are internal fixed literals/formatting, not input from
@@ -409,6 +410,7 @@ pub unsafe extern "system" fn mciSendStringA(
     // Report the shared owned-COM DirectDraw state once at the first
     // native MCI command, in the independent game log.
     ddraw_native::report_once();
+    fr_profile::report_once();
     let Some(address)=system_proc(b"mciSendStringA\0") else {
         return MCIERR_UNSUPPORTED_FUNCTION;
     };
