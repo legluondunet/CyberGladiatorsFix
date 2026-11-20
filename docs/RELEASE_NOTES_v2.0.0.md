@@ -12,9 +12,12 @@ confirmed by the maintainer. However, a subsequent trial using the **same
 `0xc0000005`** after 6.638 seconds, after owned virtual DirectDraw
 `SetCooperativeLevel` and before opening the AVI. Both installer logs said
 `game installation not present yet`: the two attempts must not be presented
-as proof of a successful repeat launch of an existing installation. The
-faulting module/address is not yet known; proximity to a DirectDraw trace
-does not establish its root cause. Native Windows FR launch stability
+as proof of a successful repeat launch of an existing installation. Windows Event ID 1000 now identifies **cyber.exe** itself as the faulting
+module, with **RVA `0x23DF`** (`0xC0000005`, PID 37820 matching the game
+log). The verified FR PE layout maps this to probable on-disk raw offset
+`0x19DF` (VA `0x004023DF` at preferred image base). The CPU registers,
+faulting access address and stack are still unknown: proximity to a
+DirectDraw trace does not establish its root cause. Native Windows FR launch stability
 therefore remains **unresolved**, notwithstanding the successful first test.
 
 ## Breaking change: new installation required

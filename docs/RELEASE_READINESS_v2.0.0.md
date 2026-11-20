@@ -9,8 +9,9 @@ The version jump to **2.0.0** reflects a breaking directory layout introduced by
 [Issue #30](https://github.com/legluondunet/CyberGladiatorsFix/issues/30) records a later attempt with the same
 `2.0.0-2ae6cadb` binary that ended in **`0xc0000005`** after 6.638 seconds.
 The crash happened before AVI open, after the owned COM wrapper's
-`SetCooperativeLevel` was logged. The faulting instruction and module
-are **not identified**. Both attempts were treated as a new installation
+`SetCooperativeLevel` was logged. Event ID 1000 identifies **cyber.exe** as the faulting module at RVA
+**`0x23DF`** (probable file raw offset `0x19DF` for the verified FR PE).
+The instruction bytes, faulting access address and stack remain unknown. Both attempts were treated as a new installation
 (`game installation not present yet`), not a proven repeat launch.
 The earlier successful 30.8-second run and maintainer visual/audio/Alt+Tab
 acceptance remain valid **for that one run**, but cannot establish

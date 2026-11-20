@@ -81,7 +81,9 @@ The project supports only specifically verified original retail binaries and dis
 
 **Known v2.0.0 release blocker:** a later native Windows FR clean-install
 attempt with the same `2.0.0-2ae6cadb` executable ended in access
-violation `0xc0000005` before AVI startup. Both attempts were logged
+violation `0xc0000005` before AVI startup. Windows Event ID 1000 identifies
+`cyber.exe` as the faulting module at RVA `0x23DF`, while the root cause
+is not yet established. Both attempts were logged
 as new installations; the cause is still unknown. The successful FR
 native test does **not** establish consistent repeat-start stability.
 See [issue #30](https://github.com/legluondunet/CyberGladiatorsFix/issues/30). Publication remains on hold.
