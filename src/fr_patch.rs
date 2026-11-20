@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Strict, edition-specific patch state machine for the verified French retail CD.
 //! Never apply US offsets to this PE. Original French assets remain untouched.
-//! All executable states are identified by exact precomputed SHA-256 hashes.
+//! All executable states are identified by exact precomputed SHA-256 hashes
+//! after canonicalizing only verified project-owned patch bytes.
 use crate::patch;
 use std::fs::{self,OpenOptions};
 use std::io::Write;
@@ -23,10 +24,13 @@ const CD_CHECK:(usize,[u8;5],[u8;5])=(
     0x4ad5,[0xe8,0x4c,0xff,0xff,0xff],[0xb8,0x01,0x00,0x00,0x00]
 );
 const INTRO_GATES:[(usize,[u8;2],[u8;2]);2]=[
-    (0x63f5,[0x74,0x2f],[0x90,0x90]),
+    (0x63f5,[0x74,0x2f],[0x74,0x2f]), // retain the original Config/CDROM JE
     (0x6409,[0x7c,0x0c],[0x90,0x90])
 ];
 const SKIP_OFFSET:usize=0x63f5;
+const INTRO_GUARDED:[u8;2]=[0x74,0x2f];
+const INTRO_UNGUARDED_LEGACY:[u8;2]=[0x90,0x90];
+const INTRO_SKIPPED:[u8;2]=[0xeb,0x2f];
 const WINMM_NAME_PTR:usize=0x4e634;
 const WINMM_OLD_RVA:u32=0x3ed40c;
 const WINMM_NEW_RVA:u32=0x3edb00;
@@ -34,18 +38,32 @@ const WINMM_SLOT:usize=0x4f100;
 const BRIDGE_NAME:&[u8;24]=b"fix.dll\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 const PREVIOUS_BRIDGE_NAME:&[u8;24]=b"CyberGladiatorsFix.dll\0\0";
 
-// Keep precomputed FR retail hash pins: only canonicalize the owned import-name
-// slot from fix.dll to the formerly hash-validated bridge name.
+// Keep full-file French retail hash pins. The new guarded default differs
+// from the previous pinned patched state by the two project-owned bytes
+// at 0x63F5. Normalize only a recognized patch signature (both timing
+// edits, CD check and secondary intro gate) back to the legacy NOP bytes
+// before comparing the unchanged SHA-256 pins. Never normalize originals.
+fn has_known_patched_body(data:&[u8])->bool{
+    data.len()==LEN
+        && SPEED.iter().all(|(offset,_,new)|data[*offset..*offset+4]==*new)
+        && data[CD_CHECK.0..CD_CHECK.0+5]==CD_CHECK.2
+        && data[INTRO_GATES[1].0..INTRO_GATES[1].0+2]==INTRO_GATES[1].2
+}
 fn digest(data:&[u8])->String{
-    if data.len()==LEN {
-        let rva=u32::from_le_bytes(data[WINMM_NAME_PTR..WINMM_NAME_PTR+4].try_into().unwrap());
-        if rva==WINMM_NEW_RVA && &data[WINMM_SLOT..WINMM_SLOT+24]==BRIDGE_NAME {
-            let mut canonical=data.to_vec();
-            canonical[WINMM_SLOT..WINMM_SLOT+24].copy_from_slice(PREVIOUS_BRIDGE_NAME);
-            return patch::digest(&canonical);
-        }
+    if data.len()!=LEN{return patch::digest(data);}
+    let rva=u32::from_le_bytes(data[WINMM_NAME_PTR..WINMM_NAME_PTR+4].try_into().unwrap());
+    let bridge_owned=rva==WINMM_NEW_RVA && &data[WINMM_SLOT..WINMM_SLOT+24]==BRIDGE_NAME;
+    let guarded=data[SKIP_OFFSET..SKIP_OFFSET+2]==INTRO_GUARDED
+        && has_known_patched_body(data);
+    if !bridge_owned && !guarded{return patch::digest(data);}
+    let mut canonical=data.to_vec();
+    if bridge_owned {
+        canonical[WINMM_SLOT..WINMM_SLOT+24].copy_from_slice(PREVIOUS_BRIDGE_NAME);
     }
-    patch::digest(data)
+    if guarded {
+        canonical[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_UNGUARDED_LEGACY);
+    }
+    patch::digest(&canonical)
 }
 fn recognized(hash:&str)->bool{
     matches!(hash,ORIGINAL|PATCHED|PATCHED_SKIP|SYSTEM_WINMM|SYSTEM_WINMM_SKIP)
@@ -170,6 +188,19 @@ pub fn apply(path:&Path)->Result<&'static str,String>{
     let hash=digest(&data);
     if valid_patched(&hash){
         verify_exe(path)?;
+        // Repair the exact legacy NOP state on an existing installation.
+        // No extra backup: the authentic original remains CYBER.EXE.bak.
+        if !matches!(hash.as_str(),PATCHED_SKIP|SYSTEM_WINMM_SKIP)
+            && data[SKIP_OFFSET..SKIP_OFFSET+2]==INTRO_UNGUARDED_LEGACY {
+            let mut repaired=data;
+            repaired[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_GUARDED);
+            if digest(&repaired)!=hash {
+                return Err("French intro guard repair failed SHA-256 verification".into());
+            }
+            replace_exe(path,&repaired)?;
+            verify_exe(path)?;
+            return Ok("French original CDROM-lookup intro guard restored (verified)");
+        }
         return Ok("French edition already patched (verified)");
     }
     if hash!=ORIGINAL{
@@ -240,15 +271,26 @@ pub fn set_skip_intro(path:&Path,skip:bool)->Result<&'static str,String>{
     let bridge=matches!(hash.as_str(),PATCHED|PATCHED_SKIP);
     let current_skip=matches!(hash.as_str(),PATCHED_SKIP|SYSTEM_WINMM_SKIP);
     if current_skip==skip{
+        // Also handle direct toggles of a pre-fix installed NOP default.
+        if !skip && original[SKIP_OFFSET..SKIP_OFFSET+2]==INTRO_UNGUARDED_LEGACY {
+            let mut repaired=original;
+            repaired[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_GUARDED);
+            if digest(&repaired)!=hash {
+                return Err("French intro guard repair failed SHA-256 verification".into());
+            }
+            replace_exe(path,&repaired)?;
+            verify_exe(path)?;
+            return Ok("French startup intro original conditional guard restored");
+        }
         return Ok(if skip{"French startup intro already disabled"}else{"French startup intro already enabled"});
     }
     let mut data=original;
-    let old=if current_skip{[0xeb,0x2f]}else{[0x90,0x90]};
+    let old=if current_skip{INTRO_SKIPPED}else{INTRO_GUARDED};
     if data[SKIP_OFFSET..SKIP_OFFSET+2]!=old{
         return Err("French intro branch unexpectedly changed; unchanged".into());
     }
     data[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(
-        &if skip{[0xeb,0x2f]}else{[0x90,0x90]}
+        &if skip{INTRO_SKIPPED}else{INTRO_GUARDED}
     );
     if digest(&data)!=runtime_hash(skip,bridge){
         return Err("French intro toggle checksum mismatch; unchanged".into());
@@ -304,6 +346,29 @@ mod tests{
             let hash=runtime_hash(skip,bridge);
             assert!(valid_patched(hash));
         }}
+    }
+    #[test] fn french_original_cdrom_lookup_guard_is_preserved(){
+        assert_eq!(INTRO_GATES[0].1,INTRO_GUARDED);
+        assert_eq!(INTRO_GATES[0].2,INTRO_GUARDED);
+        assert_eq!(INTRO_GATES[1].2,[0x90,0x90]);
+        assert_eq!(SKIP_OFFSET+2+0x2f,0x6426);
+    }
+    #[test] fn canonical_hash_preserves_full_file_pins_for_guarded_fr(){
+        let original=sample();
+        assert!(!has_known_patched_body(&original));
+        assert_eq!(digest(&original),patch::digest(&original));
+        let mut guarded=original.clone();
+        patch_original(&mut guarded).unwrap();
+        assert!(has_known_patched_body(&guarded));
+        assert_eq!(guarded[SKIP_OFFSET..SKIP_OFFSET+2],INTRO_GUARDED);
+        let mut old=guarded.clone();
+        old[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_UNGUARDED_LEGACY);
+        assert_eq!(digest(&guarded),digest(&old));
+        assert_ne!(patch::digest(&guarded),patch::digest(&old));
+        // Don't canonicalize the explicit SkipIntro=1 state.
+        let mut skipped=guarded.clone();
+        skipped[SKIP_OFFSET..SKIP_OFFSET+2].copy_from_slice(&INTRO_SKIPPED);
+        assert_ne!(digest(&skipped),digest(&old));
     }
     #[test] fn french_intro_skip_targets_correct_epilogue(){
         assert_eq!(SKIP_OFFSET+2+0x2f,0x6426);
