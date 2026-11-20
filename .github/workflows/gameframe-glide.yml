@@ -149,7 +149,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
           $dir = Split-Path -Parent $exe
-          $game = Join-Path $dir 'CyberGladiatorsFix'
+          $game = Join-Path $dir 'game'
           $gameLog = Join-Path $dir 'CyberGladiatorsFix.log'
           $installerLog = Join-Path $dir 'CyberGladiatorsFix_installer.log'
           if (Test-Path $game) { throw 'Unexpected game files before unchecked-launch smoke test' }
@@ -179,7 +179,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
           $dir = Split-Path -Parent $exe
-          $game = Join-Path $dir 'CyberGladiatorsFix'
+          $game = Join-Path $dir 'game'
           $help = (& $exe --help | Out-String)
           if ($help.Contains('--inspect-disc')) { throw 'Retired disc inspection command is still advertised' }
           foreach ($arguments in @(
@@ -201,7 +201,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
           $dir = Split-Path -Parent $exe
-          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+          if (Test-Path (Join-Path $dir 'game')) {
             throw 'Test runner unexpectedly contains an installed game'
           }
           $text = (& $exe 2>&1 | Out-String)
@@ -211,7 +211,7 @@ jobs:
           if ($text -notmatch 'No installed game') {
             throw "Missing diagnostic for absent retail image: $text"
           }
-          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+          if (Test-Path (Join-Path $dir 'game')) {
             throw 'Automatic installer created a game directory without a valid CD'
           }
           if (!(Test-Path (Join-Path $dir 'CyberGladiatorsFix_installer.log'))) {

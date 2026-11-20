@@ -183,11 +183,11 @@ fn image_file(path:&Path)->Result<File,String>{
 /// The installed-game path is verified and launched without requiring the
 /// original disc image; the bundled WinMM bridge serves CD audio as FLAC.
 pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,String>{
-    if destination!=layout::game(root) {
-        return Err("Installation destination must be root/game".into());
-    }
     if !cue_path.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")) {
         return Err("Only a .cue sheet referencing one or more .bin files is supported".into());
+    }
+    if destination!=layout::game(root) {
+        return Err("Installation destination must be root/game".into());
     }
     // No upgrade/migration of old layouts. Never touch prior installations.
     for name in [layout::GAME,layout::MUSIC,layout::STATE,layout::DOCS,"CyberGladiatorsFix"]{
@@ -329,16 +329,16 @@ mod iq_staging_policy_tests {
         let dir=std::env::temp_dir().join(format!("CyberIQStaging-{}",
             std::process::id()));
         let _=fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("iq")).unwrap();
-        let iq=dir.join("iq").join("iq40.dat");
+        fs::create_dir_all(dir.join("game/iq")).unwrap();
+        let iq=dir.join("game/iq/iq40.dat");
         let original=b"original";
         fs::write(&iq,original).unwrap();
-        let manifest=format!("# CyberGladiatorsFix manifest v1\niq/iq40.dat\t{}\t{}\n",
+        let manifest=format!("# CyberGladiatorsFix manifest v1\ngame/iq/iq40.dat\t{}\t{}\n",
             original.len(),crate::patch::digest(original));
         assert!(verify_staged_manifest(&dir,&manifest).is_ok());
         fs::write(&iq,b"modified").unwrap();
         assert!(verify_staged_manifest(&dir,&manifest).unwrap_err()
-            .contains("Staged file SHA-256 mismatch: iq/iq40.dat"));
+            .contains("Staged file SHA-256 mismatch: game/iq/iq40.dat"));
         fs::remove_file(&iq).unwrap();
         assert!(verify_staged_manifest(&dir,&manifest).is_err());
         fs::remove_dir_all(&dir).unwrap();

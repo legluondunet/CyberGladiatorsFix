@@ -38,39 +38,55 @@ If an installation exists but does not pass its checks, the launcher refuses to 
 
 **CUE/BIN compatibility:** Some single-BIN CD dumps (including the supplied CYBER.cue/CYBER.bin) store an actual two-second zero-filled pause before the first audio track but omit its INDEX 00. For a 2352-byte raw data track followed by AUDIO in the same BIN, CyberGladiatorsFix recognizes **exactly 150 consecutive all-zero sectors immediately preceding the first audio INDEX 01**. It excludes only that verified pause from the extracted ISO data; the original CUE and BIN are never modified, CDDA remains bounded by each declared INDEX 01, and every remaining data-sector sync/mode plus the authenticated retail EXE and resource hashes must still pass strict validation. Nonzero or malformed sectors are never silently skipped. For installation, the original CUE/BIN image is authenticated automatically before any game files are installed.
 
-## Installed layout
+## Installation layout (next version, PR #27)
 
-~~~text
-CyberGladiators/
+The next **clean-install** architecture (in the draft PR) keeps only game
+assets and two required x86 DLLs beside `game/cyber.exe`. It will **not**
+migrate v1.0.1 layouts or change the previously published binary.
+
+```text
+<launcher directory>/
   CyberGladiatorsFix.exe
+  CyberGladiatorsFix.ini
   CyberGladiatorsFix_installer.log
   CyberGladiatorsFix.log
-  original-disc.cue
-  original-disc*.bin
-  CyberGladiatorsFix/
+  game/
     cyber.exe
-    CYBER.EXE.bak
-    glide.dll                     (GameFrame, x86)
-    CyberGladiatorsFix.dll       (WinMM/CDDA, x86)
-    CyberGladiatorsFix.ini
-    CyberGladiatorsFix.manifest
+    CYBER.EXE.bak      (verified original retail backup)
     cyber.ini
-    music/
-      Track02.flac
-      Track03.flac
-      ...
-    iq/
+    fix.dll            (WinMM + CDDA bridge)
+    glide.dll          (verified GameFrame)
     graphics/
-    ...                          (original game resources)
-~~~
+    iq/
+    ...                (other original game resources and saves)
+  music/
+    Track02.flac
+    ...
+    Track15.flac
+  state/
+    CyberGladiatorsFix.manifest
+    CyberGladiatorsFix.sha256
+    CyberGladiatorsFix.gameframe.sha256
+    CyberGladiatorsFix.install-receipt.txt
+  docs/
+    README.md
+    LICENSE-GPL-3.0
+    LICENSE-APACHE
+    LICENSE-MIT
+    CyberGladiatorsFix.ini.example
+    build-info.txt
+```
 
-The CD audio is extracted without resampling to **FLAC, 44.1 kHz, stereo, 16-bit**, in the **music/** directory. Existing verified root-level TrackNN.flac entries are migrated without re-encoding and their old manifest is backed up. Original IQ files are never modified by the launcher.
+The original US/FR CUE/BIN is only required for the first installation.
+Music uses a child-only absolute `CYBER_MUSIC_DIR` path supplied by the
+launcher, without changing the game's working directory. The installer's
+owned DLLs may be replaced on newer builds **without persistent .bak
+backups**; unknown foreign DLLs are never overwritten. The original
+`CYBER.EXE.bak` remains verified and retained.
 
-GameFrame renders the original **640×480** Glide game at the current display resolution, preserving the **4:3** aspect ratio with black side bars and a **60 FPS** frame limit. The original Cinepak AVI plays via the native WinMM/MCI player in a temporary fullscreen window. The handoff to the game is synchronized with the **first successful OpenGL SwapBuffers**, eliminating desktop flashes and the temporary 640×480 game window. A bounded timeout prevents a permanent black screen.
-
-**Windows/Wine DirectDraw compatibility:** The original game requests exclusive DirectDraw **640×480×16** before the AVI. The default verified-edition launcher uses one **owned COM DirectDraw v1 adapter** that preserves the logical surface/mode state without requesting a physical monitor-mode change. It is not a fake success return or a system-wide vtable patch. Previous Wine-only forwarding prototypes are not part of the supported launcher; only the shared validated DirectDraw adapter is selected. The same MCI/WM_PAINT video renderer serves both platforms; focus adaptations are chosen internally from the host runtime.
-
-The one EXE embeds and validates both x86 DLLs before writing them. **At launch, any existing `glide.dll` that differs from the embedded verified GameFrame version (unknown, older or malformed) is preserved as `glide.dll.bak`**, and GameFrame is installed to launch the game. **After exit, the newer GameFrame `glide.dll` remains installed; the previous version is kept in its backup**, not automatically restored. If `glide.dll.bak` already exists, the launcher never overwrites it: it chooses `glide.dll.<SHA-256-prefix>.bak`, or a numbered `.bak` variant if necessary. All backup/install/retention operations and hashes appear in `CyberGladiatorsFix_installer.log`. An unknown file is archived regardless of its size or contents; symbolic links are moved aside without following them. Only a directory named `glide.dll` is rejected. The embedded GameFrame itself remains SHA-256/PE32 validated. Details: [Glide backup policy](docs/GLIDE_BACKUP_POLICY.md).
+The published **v1.0.1** release still uses the older layout. The new layout
+requires a new empty installation folder. More details:
+[approved unified-layout plan](docs/UNIFIED_LAYOUT_PLAN.md).
 
 ## Automatic common DirectDraw / MCI engine
 

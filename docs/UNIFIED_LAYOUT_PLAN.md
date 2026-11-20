@@ -1,6 +1,6 @@
 # CyberGladiatorsFix — unified clean-install layout (approved architecture)
 
-Status: approved architecture; implementation pending. This document describes the target **new-install-only** layout. It does not describe what the current v1.0.1 binary already produces.
+Status: approved architecture; implementation in progress on PR #27. This document describes the target **new-install-only** layout. It does not describe what the current v1.0.1 binary already produces.
 
 ```text
 <folder containing CyberGladiatorsFix.exe>/

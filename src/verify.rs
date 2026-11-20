@@ -352,11 +352,11 @@ mod integrity_tests {
     use super::*;
     #[test]
     fn only_real_iq_directory_is_writable_after_install(){
-        for name in ["iq/iq40.dat","IQ/iq40.dat","iq/subdir/state.dat"]{
+        for name in ["game/iq/iq40.dat","game/iq/subdir/state.dat"]{
             assert!(is_game_writable_iq(name),"{name}");
         }
-        for name in ["iq","iq40.dat","iq_extra/a.dat","graphics/iq/iq40.dat",
-                     "music/Track02.flac","iq\\iq40.dat","iq/"]{
+        for name in ["game/iq","iq40.dat","game/iq_extra/a.dat","game/graphics/iq/iq40.dat",
+                     "music/Track02.flac","game\\iq\\iq40.dat","game/iq/"]{
             assert!(!is_game_writable_iq(name),"{name}");
         }
     }
@@ -370,18 +370,18 @@ mod integrity_tests {
         let clean=b"original";
         fs::write(&iq,clean).unwrap();
         let clean_hash=crate::patch::digest(clean);
-        assert_eq!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
+        assert_eq!(verify_installed_resource("game/iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
         fs::write(&iq,b"modified").unwrap(); // same size, different hash
-        assert_eq!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
+        assert_eq!(verify_installed_resource("game/iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
         fs::write(&iq,b"modified and longer").unwrap(); // different size, still the game's file
-        assert_eq!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
+        assert_eq!(verify_installed_resource("game/iq/iq40.dat",clean.len() as u64,&clean_hash,&iq),Ok(true));
         assert!(verify_installed_resource("graphics/shell.fnt",clean.len() as u64,&clean_hash,&iq)
             .unwrap_err().contains("Game asset has changed"));
         fs::remove_file(&iq).unwrap();
-        assert!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq)
+        assert!(verify_installed_resource("game/iq/iq40.dat",clean.len() as u64,&clean_hash,&iq)
             .unwrap_err().contains("Missing IQ resource"));
         fs::create_dir(&iq).unwrap();
-        assert!(verify_installed_resource("iq/iq40.dat",clean.len() as u64,&clean_hash,&iq)
+        assert!(verify_installed_resource("game/iq/iq40.dat",clean.len() as u64,&clean_hash,&iq)
             .unwrap_err().contains("not a regular file"));
         fs::remove_dir_all(&dir).unwrap();
     }

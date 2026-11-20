@@ -33,55 +33,51 @@ INDEX 00 is omitted in a single raw 2352-byte BIN; source CUE/BIN are
 never altered and strict CD-ROM sector/resource checks remain active.
 Standalone ISO support is a future option, NOT part of this build.
 
-Game installation:
-  CyberGladiatorsFix/
+Game installation — upcoming clean-layout branch (PR #27; not v1.0.1):
+  CyberGladiatorsFix.exe
+  CyberGladiatorsFix.ini
+  CyberGladiatorsFix_installer.log
+  CyberGladiatorsFix.log
+  game/
     cyber.exe
-    CYBER.EXE.bak
+    CYBER.EXE.bak     (original retail backup, SHA-256 verified)
+    cyber.ini
+    fix.dll
     glide.dll
-    CyberGladiatorsFix.dll
-    CyberGladiatorsFix.ini
+    graphics/
+    iq/
+    ... original media, saves
+  music/
+    Track02.flac .. Track15.flac
+  state/
     CyberGladiatorsFix.manifest
-    music/
-      Track02.flac
-      ...
-    (original game IQ, graphics, AVI and other data)
+    CyberGladiatorsFix.sha256
+    CyberGladiatorsFix.gameframe.sha256
+    CyberGladiatorsFix.install-receipt.txt
+  docs/
+    README.md
+    LICENSE-GPL-3.0
+    LICENSE-APACHE
+    LICENSE-MIT
+    CyberGladiatorsFix.ini.example
+    build-info.txt
 
-Music is stored under music/TrackNN.flac, not the game root. An old
-verified root-level FLAC installation migrates automatically without
-lossy re-encoding. The old manifest is archived. The launcher never alters IQ files. All IQ resources are SHA-256 verified
-during initial staged installation. The game can rewrite them: on later
-launches and with --verify, every manifest-listed IQ file must exist as
-a regular file (not a symlink), but size and digest may differ. All other
-retail resources, original EXE, FLAC and DLLs retain strict checks. The WinMM FLAC bridge is always enabled.
+The original CD audio is converted losslessly to sibling music/. These
+tracks are verified through the root state/ manifest and loaded by a
+child-scoped absolute path passed to fix.dll.
 
-CyberGladiatorsFix.ini contains only the user-selectable [Video]
-SkipIntro option. Old [Audio] and [Integrity] sections are automatically
-removed on startup, without changing the selected SkipIntro value.
-CDDA and integrity protections are internal, mandatory behaviors.
+There is NO automatic migration from v1.0.1; fresh CUE/BIN installation
+is required. Owner-managed DLLs may be upgraded without .bak files;
+unknown DLLs are refused rather than overwritten.
 
 SINGLE EXE, TWO DLLs
 --------------------
-Both DLLs have SHA-256 and PE32 checks before installation. The first
-clean install retains GameFrame glide.dll after gameplay. If an old,
-unknown or malformed regular-file glide.dll exists, the launcher first
-renames it to glide.dll.bak without overwriting any existing backup,
-then installs the embedded GameFrame DLL and launches the game.
-If glide.dll.bak is already occupied, it archives the old DLL under
-glide.dll.<16-character-SHA256>.bak, then a numbered .bak if necessary.
-After the game exits, GameFrame stays installed and the backup remains
-available for manual recovery; it is NOT automatically restored.
-Operations, original and embedded SHA-256 digests, selected archive path
-and any collision fallback are recorded in CyberGladiatorsFix_installer.log.
-No size limit or PE32-validity check is imposed on the old DLL: only the
-bundled GameFrame is required to be a validated PE32/SHA-256 file.
-Symlinks are archived as links, without following their targets;
-directory entries cannot be used as glide.dll.
+The next branch bundles verified x86 fix.dll and GameFrame glide.dll in
+one Windows x64 launcher. Both DLLs load beside game/cyber.exe and
+are verified by exact hashes and installer ownership receipts.
+Temporary replacement files are cleaned after activation, with no .bak.
+The original retail CYBER.EXE.bak is retained independently.
 
-The WinMM import name in the patched US retail executable now refers
-to CyberGladiatorsFix.dll rather than the old CyberGladiatorsCDDA.dll.
-The rename is verified by reversing only the known import name bytes
-and checking the SHA-256 of the previously pinned retail patch.
-The original CYBER.EXE.bak is never changed.
 
 The game is Glide 640x480, presented in 4:3 pillarboxed fullscreen at
 the desktop resolution and limited to 60 FPS. The original Cinepak AVI

@@ -17,7 +17,6 @@ mod fr_ddraw_static;
 mod verify;
 mod diagnostics;
 mod bundle;
-mod migration;
 mod autostart;
 
 use std::ffi::OsString;
@@ -32,7 +31,7 @@ const HELP:&str=r"CyberGladiatorsFix — open-source Windows x64 installer and l
 
 Usage:
   CyberGladiatorsFix.exe               Auto-detect verified installed game or CUE/BIN, install if missing, then play
-  CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
+  CyberGladiatorsFix.exe --install-only   Install fresh or prepare an existing new-layout game without starting it
   CyberGladiatorsFix.exe --inspect image.iso
   CyberGladiatorsFix.exe --inspect image.cue [track.bin|track.img]
   CyberGladiatorsFix.exe --launch-no-verify   Launch installed game without any file integrity or presence preflight
@@ -49,9 +48,11 @@ CUE/BIN image. Subsequent launches verify the installation and start automatical
 One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
 (Apache-2.0) and the project's fix.dll WinMM/CDDA bridge
 (GPLv3). They are SHA-256 verified before being installed beside CYBER.EXE.
-Unknown glide.dll files are rejected; installer-owned DLLs are replaced without backups before
-the bundled verified GameFrame is installed; that GameFrame remains after exit.
-Original lossless CD music is stored in music/TrackNN.flac.
+Unknown glide.dll files are rejected; installer-owned fix.dll and glide.dll
+are replaced without persistent backups. Both stay beside game/cyber.exe.
+Original lossless CD music is stored in root music/TrackNN.flac.
+Installed game and fix DLLs are in game/; integrity receipts in state/ and notices in docs/.
+Fresh CUE/BIN installation only; older layouts are never migrated.
 No original game data is distributed. The launcher never rewrites IQ data.
 During first installation original IQ files undergo strict SHA-256 checks.
 Afterwards --verify and automatic launches require IQ files to be present
