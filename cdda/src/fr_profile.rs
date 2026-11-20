@@ -112,11 +112,6 @@ unsafe fn hook()->bool{
     if base!=IMAGE_BASE || read_u16(base)!=0x5a4d {
         HOOK_STATE.store(3,Ordering::Release);return false;
     }
-    // Only the already-patched French game with its original conditional
-    // CDROM JE and second intro NOP gate may use this compatibility shim.
-    if !fr_intro_signature(read_u16(base+0x6df5),read_u16(base+0x6e09)){
-        HOOK_STATE.store(3,Ordering::Release);return false;
-    }
     let pe=read_u32(base+0x3c) as usize;
     if !(0x40..=0x100000).contains(&pe)||read_u32(base+pe)!=0x4550 {
         HOOK_STATE.store(3,Ordering::Release);return false;
@@ -127,6 +122,12 @@ unsafe fn hook()->bool{
     }
     let size=read_u32(opt+56) as usize;
     if !(FR_PROFILE_NAME_RVA as usize + 2 + b"GetPrivateProfileStringA".len() + 1..=0x10000000).contains(&size) {
+        HOOK_STATE.store(3,Ordering::Release);return false;
+    }
+    // Only inspect bytes at the known FR intro branches AFTER validating
+    // the PE image size so unrelated small executables fail closed.
+    if !fits(size,0x6df5,2)||!fits(size,0x6e09,2)
+        ||!fr_intro_signature(read_u16(base+0x6df5),read_u16(base+0x6e09)){
         HOOK_STATE.store(3,Ordering::Release);return false;
     }
     // Validate that this is the exact PE32 import descriptor layout we
