@@ -81,6 +81,9 @@ fn cyber_game_window() -> Option<HWND> {
     }
 }
 
+// The upstream Glide window module does not import this FFI type.
+use std::ffi::c_void;
+
 // Give Wine/XFCE an explicit taskbar icon on the ORIGINAL game window.
 // Discover the retail PE's first icon at runtime: no copyrighted game
 // artwork is redistributed. A standard Windows icon is the fallback.
