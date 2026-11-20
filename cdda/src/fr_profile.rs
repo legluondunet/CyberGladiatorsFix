@@ -11,6 +11,9 @@
 //!
 //! This is a field-test hypothesis: the nonempty relative game path is
 //! intended to permit the normal AVI. Do not equate unit tests with gameplay.
+//! Windows FR a73ff789 observed early CRT environment flags missing.
+//! Identify the patched FR game from its unique PE import and code bytes
+//! instead of relying on launcher-provided flags at CRT initialization.
 use std::ffi::{c_char,c_void,CStr};
 use std::sync::atomic::{AtomicBool,AtomicU32,AtomicUsize,Ordering};
 
@@ -18,9 +21,10 @@ const IMAGE_BASE:usize=0x0040_0000;
 const PAGE_READWRITE:u32=4;
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
 static INSTALLED:AtomicBool=AtomicBool::new(false);
-// Loader-safe installation diagnostic: 0 = constructor not called; 1 = disabled;
-// 2 = wrong edition; 3 = wrong PE; 4 = import layout mismatch;
+// Loader-safe installation diagnostic: 0 = constructor not called;
+// 3 = PE or code guard mismatch; 4 = import layout mismatch;
 // 5 = unresolved IAT; 6 = VirtualProtect failed; 7 = hooked.
+// Initialization no longer depends on environment variables.
 static HOOK_STATE:AtomicU32=AtomicU32::new(0);
 static REPORTED:AtomicBool=AtomicBool::new(false);
 static CALLS:AtomicU32=AtomicU32::new(0);
@@ -29,7 +33,6 @@ static FALLBACKS:AtomicU32=AtomicU32::new(0);
 #[link(name="kernel32")]
 unsafe extern "system" {
     fn GetModuleHandleA(name:*const c_char)->*mut c_void;
-    fn GetEnvironmentVariableA(name:*const c_char,value:*mut c_char,size:u32)->u32;
     fn VirtualProtect(address:*mut c_void,len:usize,protect:u32,previous:*mut u32)->i32;
 }
 
@@ -45,17 +48,6 @@ unsafe fn matches_ascii(base:usize,size:usize,offset:usize,name:&[u8],fold:bool)
         if (if fold{found.to_ascii_lowercase()}else{found})!=expected{return false;}
     }
     ((base+offset+name.len()) as *const u8).read()==0
-}
-unsafe fn env_is_one(name:&[u8])->bool{
-    let mut buf=[0i8;4];
-    GetEnvironmentVariableA(name.as_ptr().cast(),buf.as_mut_ptr(),buf.len() as u32)==1
-        && buf[0]==b'1' as i8
-}
-unsafe fn env_is_fr()->bool{
-    let mut buf=[0i8;4];
-    GetEnvironmentVariableA(
-        b"CYBER_GAME_EDITION\0".as_ptr().cast(),buf.as_mut_ptr(),buf.len() as u32
-    )==2&&buf[0]==b'F' as i8&&buf[1]==b'R' as i8
 }
 fn matching_profile_call(section:&[u8],key:&[u8],filename:&[u8])->bool{
     section.eq_ignore_ascii_case(b"Config")
@@ -112,9 +104,17 @@ const FR_PROFILE_NAME_POINTER_RVA:usize=0x3ed140;
 const FR_PROFILE_NAME_RVA:u32=0x3ed754;
 const FR_PROFILE_IAT_RVA:usize=0x3ed2f4;
 fn profile_name_is_expected(raw_name:u32)->bool{raw_name==FR_PROFILE_NAME_RVA}
+fn fr_intro_signature(first:u16,second:u16)->bool{
+    first==0x2f74 && second==0x9090 // JE +0x2F, NOP NOP
+}
 unsafe fn hook()->bool{
     let base=GetModuleHandleA(std::ptr::null()) as usize;
     if base!=IMAGE_BASE || read_u16(base)!=0x5a4d {
+        HOOK_STATE.store(3,Ordering::Release);return false;
+    }
+    // Only the already-patched French game with its original conditional
+    // CDROM JE and second intro NOP gate may use this compatibility shim.
+    if !fr_intro_signature(read_u16(base+0x6df5),read_u16(base+0x6e09)){
         HOOK_STATE.store(3,Ordering::Release);return false;
     }
     let pe=read_u32(base+0x3c) as usize;
@@ -167,14 +167,10 @@ unsafe fn hook()->bool{
     true
 }
 pub(crate) unsafe extern "C" fn initialize(){
+    // Windows FR reported missing env gating at CRT time. Restrict by
+    // verified FR PE layout, import descriptors and guarded patched bytes.
+    // US and arbitrary executables fail closed without file modification.
     if INSTALLED.load(Ordering::Acquire){return;}
-    if !env_is_one(b"CYBER_GAMEFRAME_TEST\0")
-        || !env_is_one(b"CYBER_FR_PROFILE_FALLBACK\0"){
-        HOOK_STATE.store(1,Ordering::Release);return;
-    }
-    if !env_is_fr() {
-        HOOK_STATE.store(2,Ordering::Release);return;
-    }
     INSTALLED.store(hook(),Ordering::Release);
 }
 // This stage runs before the retail EXE's first profile lookup. It does no
@@ -193,8 +189,8 @@ pub fn report_once(){
     }else{
         let reason=match HOOK_STATE.load(Ordering::Acquire){
             0=>"early_initializer_not_called",
-            1=>"launcher_flag_missing",
-            2=>"edition_not_fr",
+            1=>"legacy_flag_missing_not_expected",
+            2=>"legacy_edition_check_not_expected",
             3=>"invalid_pe_image",
             4=>"fr_import_signature_mismatch",
             5=>"unresolved_or_already_hooked_IAT",
@@ -216,6 +212,13 @@ mod tests{
         assert!(!matching_profile_call(b"Video",b"CDROM",b"sierra.ini"));
         assert!(!matching_profile_call(b"Config",b"CDROM",b"other.ini"));
         assert!(!matching_profile_call(b"Config",b"Other",b"sierra.ini"));
+    }
+    #[test]
+    fn only_original_je_and_secondary_intro_nops_activate_shim(){
+        assert!(fr_intro_signature(0x2f74,0x9090));
+        assert!(!fr_intro_signature(0x9090,0x9090)); // legacy forced intro
+        assert!(!fr_intro_signature(0x2feb,0x9090)); // SkipIntro=1
+        assert!(!fr_intro_signature(0x2f74,0x0c7c)); // original retail
     }
     #[test]
     fn french_import_profile_thunk_matches_verified_dump_offsets(){
