@@ -47,9 +47,9 @@ extracted only from an authenticated, SHA-256-verified US or French retail
 CUE/BIN image. Subsequent launches verify the installation and start automatically.
 
 One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
-(Apache-2.0) and the project's CyberGladiatorsFix.dll WinMM/CDDA bridge
+(Apache-2.0) and the project's fix.dll WinMM/CDDA bridge
 (GPLv3). They are SHA-256 verified before being installed beside CYBER.EXE.
-Any older or unknown glide.dll is renamed to an unused .bak backup before
+Unknown glide.dll files are rejected; installer-owned DLLs are replaced without backups before
 the bundled verified GameFrame is installed; that GameFrame remains after exit.
 Original lossless CD music is stored in music/TrackNN.flac.
 No original game data is distributed. The launcher never rewrites IQ data.
@@ -96,7 +96,7 @@ fn wait_game(mut child:std::process::Child,root:&Path)->Result<(),String>{
 /// renderer. Retired nGlide/DXVK command paths are not shipped.
 fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
-    settings::ensure(&game)?;
+    settings::ensure(root)?;
     let enable_cdda=settings::CDDA_ENABLED;
     let mut glide_session=gameframe::Session::begin(root,&game)?;
     // Start before spawning CYBER.EXE: its DirectDraw initialization may
@@ -131,7 +131,7 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
         ),root);
     }
     // Keep the verified embedded GameFrame DLL after exit; any original
-    // glide.dll stays archived in a unique .bak, never auto-restored.
+    // Owner-managed GameFrame remains installed without persistent DLL backups.
     let finalized=glide_session.finish();
     match (result,finalized){
         (Err(game),Err(dll))=>Err(format!("{game}; GameFrame finalization failed: {dll}")),
@@ -325,7 +325,7 @@ mod diagnostics_tests {
         for expected in ["CyberGladiatorsFix.exe               Auto-detect",
             "--install-only","--launch-no-verify","--verify",
             "--version","--help",
-            "music/TrackNN.flac","CyberGladiatorsFix.dll",
+            "music/TrackNN.flac","fix.dll",
             "CyberGladiatorsFix_installer.log","CyberGladiatorsFix.log","GameFrame"]{
             assert!(HELP.contains(expected),"{expected}");
         }

@@ -9,7 +9,7 @@ use std::path::Path;
 pub const NAME:&str="CyberGladiatorsFix.ini";
 pub const CDDA_ENABLED:bool=true;
 const MAX_SIZE:u64=4096;
-const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n";
+pub const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n";
 
 fn parse(text:&str)->Result<bool,String>{
     let mut video=false;

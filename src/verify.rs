@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Read-only checks. Asset hashes are recorded during extraction and are
 //! independently recomputed before launch, including the original backup.
-use crate::{diagnostics,install::{DIR,MANIFEST},cdda,patch,settings};
+use crate::{diagnostics,install::DIR,cdda,patch,settings,layout,gameframe};
 use sha2::{Digest,Sha256};
 use std::fs::{self,File};
 use std::io::Read;
@@ -32,9 +32,7 @@ fn safe_manifest_path(s:&str)->bool{
 // Only files actually below the game's top-level iq/ directory may change
 // after installation. Similar prefixes (e.g. iq_backup/) are immutable.
 fn is_game_writable_iq(name:&str)->bool{
-    name.split_once('/').is_some_and(|(dir,rest)|
-        dir.eq_ignore_ascii_case("iq") && !rest.is_empty()
-    )
+    name.strip_prefix("game/iq/").is_some_and(|rest|!rest.is_empty())
 }
 /// An installed IQ file must be present and a normal file. Its current size
 /// and hash belong to the running game, not to the original CD manifest.
@@ -72,7 +70,7 @@ fn verify_assets(root:&Path,check_modules:bool)->Result<String,String>{
     let meta=fs::symlink_metadata(&game).map_err(|e|format!("Missing game directory: {e}"))?;
     if !meta.is_dir()||meta.file_type().is_symlink(){return Err("Game folder is not a regular directory".into());}
     patch::verify_exe(&game.join("cyber.exe"))?;
-    let manifest=fs::read_to_string(game.join(MANIFEST)).map_err(|e|format!("Manifest missing: {e}"))?;
+    let manifest=fs::read_to_string(layout::manifest(root)).map_err(|e|format!("Manifest missing: {e}"))?;
     if manifest.len()>4*1024*1024||!manifest.starts_with("# CyberGladiatorsFix manifest v1\n"){
         return Err("Missing or invalid extraction manifest".into());
     }
@@ -87,7 +85,7 @@ fn verify_assets(root:&Path,check_modules:bool)->Result<String,String>{
             !safe_manifest_path(name)||!seen.insert(name.to_ascii_lowercase()) {
             return Err(format!("Invalid manifest entry: {name}"));
         }
-        let mut path=game.clone();
+        let mut path=root.to_path_buf();
         // A local manifest must never cause verification to traverse a
         // symlinked directory outside the installation.
         for component in Path::new(name).components(){
@@ -106,7 +104,8 @@ fn verify_assets(root:&Path,check_modules:bool)->Result<String,String>{
         crate::bundle::verify()?;
         if patch::cdda_active(&game.join("cyber.exe"))?{
             cdda::verify(&game)?;
-            "embedded WinMM bridge verified; FLAC CD audio selected"
+            gameframe::verify(root,&game)?;
+            "embedded WinMM/GameFrame verified; FLAC CD audio selected"
         }else{"legacy system WinMM import"}
     }else{"retail assets checked before module installation"};
     Ok(format!("Verified CYBER.EXE patch + backup, {count} CD resources ({bytes} original manifest bytes), {audio}; immutable_resources_sha256_verified={} IQ_files_presence_only={iq_files} IQ_hash_and_size_not_checked_after_install=1; original CD IQ hashes remain recorded in manifest",count-iq_files))
@@ -131,6 +130,7 @@ fn unchecked_gameframe_command(root:&Path)->Command{
     cmd.env("CYBER_SESSION_ID",diagnostics::session_id());
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_CDDA_MUSIC","1");
+    cmd.env("CYBER_MUSIC_DIR",layout::music(root));
     cmd.env("DXVK_LOG_PATH","none");
 
     // Normal GameFrame/DirectDraw behavior is available to either original
@@ -190,8 +190,8 @@ pub fn launch_gameframe_unchecked(root:&Path)->Result<Child,String>{
 
 pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     let game=root.join(DIR);
-    settings::ensure(&game)?;
-    let skip_intro=settings::read(&game)?;
+    settings::ensure(root)?;
+    let skip_intro=settings::read(root)?;
     let enable_cdda=settings::CDDA_ENABLED;
     let exe=game.join("cyber.exe");
     patch::verify_exe(&exe)?;
@@ -217,7 +217,7 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
         "This launcher does not embed the verified GameFrame Glide; use the one-EXE GameFrame package"
     )?;
     if !glide_hash.eq_ignore_ascii_case(expected) {
-        return Err(format!("GameFrame requires embedded glide.dll SHA-256={expected}; installed SHA-256={glide_hash}. Original Glide backup is preserved"));
+        return Err(format!("GameFrame requires embedded glide.dll SHA-256={expected}; installed SHA-256={glide_hash}"));
     }
     let mut cmd=Command::new(&exe);
     cmd.current_dir(&game);
@@ -296,6 +296,7 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     cmd.env("CYBER_AVI_FULLSCREEN","1");
     cmd.env("CYBER_AVI_SMOOTH_TEST","1");
     cmd.env("CYBER_CDDA_MUSIC",if enable_cdda{"1"}else{"0"});
+    cmd.env("CYBER_MUSIC_DIR",layout::music(root));
     crate::show("GAMEFRAME renderer=GameFrame-OpenGL original_input_hwnd=1 fullscreen_desktop_borderless=1 4x3_letterbox=1 frame_limit=60fps video=native_MCI first_present_handoff=1 log=separate_runtime",root);
     diagnostics::log(root,"MODULE",&format!("GameFrame glide.dll sha256={glide_hash} (embedded_verified_build)"));
     diagnostics::log(root,"CONFIG",&format!("GAMEFRAME launch: SkipIntro={} EnableCDDA={} GLIDE_FPS_LIMIT=60 NGLIDE_BACKEND=not_used 4x3_aspect=preserved AVI_FIRST_PRESENT_HANDOFF=1",u8::from(skip_intro),u8::from(enable_cdda)));
