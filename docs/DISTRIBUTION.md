@@ -3,7 +3,7 @@ CyberGladiatorsFix — Windows x64 release candidate and distribution guide
 
 The distribution contains exactly one Windows x64 launcher, LICENSE-GPL-3.0,
 LICENSE-APACHE, LICENSE-MIT (isomage 2.1.0), this README and SHA256SUMS.txt. The EXE embeds BOTH 32-bit Windows DLLs:
-  1. CyberGladiatorsFix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
+  1. fix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
   2. glide.dll — Apache-2.0 GameFrame Glide-to-OpenGL wrapper
 
 The original Cyber Gladiators (1996) game and its copyrighted CD audio
@@ -17,7 +17,7 @@ retail CUE/BIN image and double-click the EXE. Under Wine/Proton use:
   wine CyberGladiatorsFix.exe
 
 No --launch or additional option is required. The launcher searches
-for an existing CyberGladiatorsFix/ installation first, verifies game
+for an existing game/ installation first, verifies game
 file hashes, then starts it. If no installation exists, it finds one
 adjacent .cue file, extracts the original files from the referenced .bin
 tracks into a temporary staging folder, verifies all extracted files,
@@ -33,55 +33,51 @@ INDEX 00 is omitted in a single raw 2352-byte BIN; source CUE/BIN are
 never altered and strict CD-ROM sector/resource checks remain active.
 Standalone ISO support is a future option, NOT part of this build.
 
-Game installation:
-  CyberGladiatorsFix/
+Game installation — upcoming clean-layout branch (PR #27; not v1.0.1):
+  CyberGladiatorsFix.exe
+  CyberGladiatorsFix.ini
+  CyberGladiatorsFix_installer.log
+  CyberGladiatorsFix.log
+  game/
     cyber.exe
-    CYBER.EXE.bak
+    CYBER.EXE.bak     (original retail backup, SHA-256 verified)
+    cyber.ini
+    fix.dll
     glide.dll
-    CyberGladiatorsFix.dll
-    CyberGladiatorsFix.ini
+    graphics/
+    iq/
+    ... original media, saves
+  music/
+    Track02.flac .. Track15.flac
+  state/
     CyberGladiatorsFix.manifest
-    music/
-      Track02.flac
-      ...
-    (original game IQ, graphics, AVI and other data)
+    CyberGladiatorsFix.sha256
+    CyberGladiatorsFix.gameframe.sha256
+    CyberGladiatorsFix.install-receipt.txt
+  docs/
+    README.md
+    LICENSE-GPL-3.0
+    LICENSE-APACHE
+    LICENSE-MIT
+    CyberGladiatorsFix.ini.example
+    build-info.txt
 
-Music is stored under music/TrackNN.flac, not the game root. An old
-verified root-level FLAC installation migrates automatically without
-lossy re-encoding. The old manifest is archived. The launcher never alters IQ files. All IQ resources are SHA-256 verified
-during initial staged installation. The game can rewrite them: on later
-launches and with --verify, every manifest-listed IQ file must exist as
-a regular file (not a symlink), but size and digest may differ. All other
-retail resources, original EXE, FLAC and DLLs retain strict checks. The WinMM FLAC bridge is always enabled.
+The original CD audio is converted losslessly to sibling music/. These
+tracks are verified through the root state/ manifest and loaded by a
+child-scoped absolute path passed to fix.dll.
 
-CyberGladiatorsFix.ini contains only the user-selectable [Video]
-SkipIntro option. Old [Audio] and [Integrity] sections are automatically
-removed on startup, without changing the selected SkipIntro value.
-CDDA and integrity protections are internal, mandatory behaviors.
+There is NO automatic migration from v1.0.1; fresh CUE/BIN installation
+is required. Owner-managed DLLs may be upgraded without .bak files;
+unknown DLLs are refused rather than overwritten.
 
 SINGLE EXE, TWO DLLs
 --------------------
-Both DLLs have SHA-256 and PE32 checks before installation. The first
-clean install retains GameFrame glide.dll after gameplay. If an old,
-unknown or malformed regular-file glide.dll exists, the launcher first
-renames it to glide.dll.bak without overwriting any existing backup,
-then installs the embedded GameFrame DLL and launches the game.
-If glide.dll.bak is already occupied, it archives the old DLL under
-glide.dll.<16-character-SHA256>.bak, then a numbered .bak if necessary.
-After the game exits, GameFrame stays installed and the backup remains
-available for manual recovery; it is NOT automatically restored.
-Operations, original and embedded SHA-256 digests, selected archive path
-and any collision fallback are recorded in CyberGladiatorsFix_installer.log.
-No size limit or PE32-validity check is imposed on the old DLL: only the
-bundled GameFrame is required to be a validated PE32/SHA-256 file.
-Symlinks are archived as links, without following their targets;
-directory entries cannot be used as glide.dll.
+The next branch bundles verified x86 fix.dll and GameFrame glide.dll in
+one Windows x64 launcher. Both DLLs load beside game/cyber.exe and
+are verified by exact hashes and installer ownership receipts.
+Temporary replacement files are cleaned after activation, with no .bak.
+The original retail CYBER.EXE.bak is retained independently.
 
-The WinMM import name in the patched US retail executable now refers
-to CyberGladiatorsFix.dll rather than the old CyberGladiatorsCDDA.dll.
-The rename is verified by reversing only the known import name bytes
-and checking the SHA-256 of the previously pinned retail patch.
-The original CYBER.EXE.bak is never changed.
 
 The game is Glide 640x480, presented in 4:3 pillarboxed fullscreen at
 the desktop resolution and limited to 60 FPS. The original Cinepak AVI
@@ -168,7 +164,7 @@ Build #37, 2026-11-06, commit 63e0d7dd7490162bd2701f847a333f9f06d6d2f2:
 The user verified a complete fullscreen 4:3 AVI, a seamless transition
 with no desktop flashes, a stable 1920x1080 borderless game at ~59.6 FPS,
 FLAC soundtrack and clean process exit under Wine. Build #42 proved the
-one-file dual-DLL packaging and restored the previously installed DLL under its old policy; current builds **archive** older Glide DLLs as non-overwriting `.bak` files and **retain** GameFrame after exit.
+one-file dual-DLL packaging and restored the previously installed DLL under its old policy; the upcoming unified-layout build **rejects unowned DLLs** and **replaces only installer-owned files without retained .bak backups**.
 Subsequent builds removed failed/unused GDI-child experiments.
 
 Third-party GameFrame pin:

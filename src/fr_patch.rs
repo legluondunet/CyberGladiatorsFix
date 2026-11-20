@@ -31,9 +31,22 @@ const WINMM_NAME_PTR:usize=0x4e634;
 const WINMM_OLD_RVA:u32=0x3ed40c;
 const WINMM_NEW_RVA:u32=0x3edb00;
 const WINMM_SLOT:usize=0x4f100;
-const BRIDGE_NAME:&[u8;24]=b"CyberGladiatorsFix.dll\0\0";
+const BRIDGE_NAME:&[u8;24]=b"fix.dll\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
+const PREVIOUS_BRIDGE_NAME:&[u8;24]=b"CyberGladiatorsFix.dll\0\0";
 
-fn digest(data:&[u8])->String{patch::digest(data)}
+// Keep precomputed FR retail hash pins: only canonicalize the owned import-name
+// slot from fix.dll to the formerly hash-validated bridge name.
+fn digest(data:&[u8])->String{
+    if data.len()==LEN {
+        let rva=u32::from_le_bytes(data[WINMM_NAME_PTR..WINMM_NAME_PTR+4].try_into().unwrap());
+        if rva==WINMM_NEW_RVA && &data[WINMM_SLOT..WINMM_SLOT+24]==BRIDGE_NAME {
+            let mut canonical=data.to_vec();
+            canonical[WINMM_SLOT..WINMM_SLOT+24].copy_from_slice(PREVIOUS_BRIDGE_NAME);
+            return patch::digest(&canonical);
+        }
+    }
+    patch::digest(data)
+}
 fn recognized(hash:&str)->bool{
     matches!(hash,ORIGINAL|PATCHED|PATCHED_SKIP|SYSTEM_WINMM|SYSTEM_WINMM_SKIP)
 }

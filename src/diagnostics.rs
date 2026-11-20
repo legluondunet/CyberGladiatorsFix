@@ -2,7 +2,7 @@
 //! Separate launcher and game-process logs, correlated by a shared session ID.
 //! Only whitelisted, troubleshooting-relevant system data is recorded:
 //! never the machine name, username, MAC, registry identifiers or WINEPREFIX.
-use crate::{graphics,install,settings};
+use crate::{graphics,install,settings,layout};
 use std::ffi::{c_char,c_void,CStr};
 use std::fs::{self,OpenOptions};
 use std::io::{self,Write};
@@ -14,6 +14,49 @@ use std::time::Duration;
 pub const LOG_NAME:&str="CyberGladiatorsFix_installer.log";
 pub const RUNTIME_LOG_NAME:&str="CyberGladiatorsFix.log";
 static SESSION_ID:OnceLock<String>=OnceLock::new();
+
+static LOG_ENABLED:OnceLock<bool>=OnceLock::new();
+fn enabled()->bool{LOG_ENABLED.get().copied().unwrap_or(true)}
+
+/// Configure once per launcher invocation. Automatic diagnostics remain enabled
+/// on first installation and first actual game run, despite Log=0 by default.
+fn resolved_logging(root:&Path,args:&[std::ffi::OsString])->Result<bool,String>{
+    let manual=settings::log_enabled(root)?;
+    let eligible=args.is_empty()||matches!(args,[one] if one.to_str()==Some("--install-only"));
+    let first_run=if eligible {
+        match fs::symlink_metadata(layout::first_launch_receipt(root)){
+            Ok(meta) if meta.is_file()&&!meta.file_type().is_symlink()=>false,
+            Ok(_)=>return Err("Unsafe first-run logging receipt".into()),
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>true,
+            Err(e)=>return Err(format!("Cannot inspect first-run logging receipt: {e}"))
+        }
+    }else{false};
+    Ok(manual||first_run)
+}
+pub fn configure_logging(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
+    LOG_ENABLED.set(resolved_logging(root,args)?)
+        .map_err(|_|"Logging policy already configured".to_owned())
+}
+pub fn logging_enabled()->bool{enabled()}
+
+/// Mark the first game launch only after a successful process exit.
+/// --install-only does not consume the first-runtime logging opportunity.
+pub fn mark_first_game_run(root:&Path)->Result<(),String>{
+    let path=layout::first_launch_receipt(root);
+    match fs::symlink_metadata(&path){
+        Ok(m) if m.is_file()&&!m.file_type().is_symlink()=>return Ok(()),
+        Ok(_)=>return Err("Unsafe first-run receipt path".into()),
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
+        Err(e)=>return Err(format!("Cannot inspect first-run receipt: {e}"))
+    }
+    let state=layout::state(root);
+    if !state.is_dir(){return Ok(());} // unchecked launch may have no installed state
+    let mut f=OpenOptions::new().write(true).create_new(true).open(&path)
+        .map_err(|e|format!("Cannot record first successful game run: {e}"))?;
+    f.write_all(b"First successful game execution completed.\n")
+        .and_then(|_|f.sync_all()).map_err(|e|e.to_string())
+}
+
 
 /// Stable for the whole launcher invocation, independent from the game PID.
 pub fn session_id()->&'static str{
@@ -39,6 +82,7 @@ fn check_log_path(path:&Path)->Result<(),String>{
 /// cannot race the launcher or overwrite its separate diagnostic history.
 pub fn start_runtime_session(root:&Path)->Result<PathBuf,String>{
     let path=runtime_location(root);
+    if !enabled(){return Ok(path);}
     check_log_path(&path)?;
     let mut f=OpenOptions::new().create(true).write(true).truncate(true)
         .open(&path).map_err(|e|format!("Cannot initialize {}: {e}",path.display()))?;
@@ -51,6 +95,7 @@ pub fn start_runtime_session(root:&Path)->Result<PathBuf,String>{
 }
 
 pub fn log_runtime(root:&Path,component:&str,msg:&str){
+    if !enabled(){return;}
     let path=runtime_location(root);
     if let Ok(mut f)=OpenOptions::new().create(true).append(true).open(path) {
         let _=write_line(&mut f,component,msg);
@@ -302,6 +347,7 @@ fn write_line(file:&mut impl Write,component:&str,msg:&str)->io::Result<()>{
     Ok(())
 }
 pub fn log(root:&Path,component:&str,msg:&str){
+    if !enabled(){return;}
     let path=root.join(LOG_NAME);
     if let Ok(mut f)=OpenOptions::new().create(true).append(true).open(path) {
         let _=write_line(&mut f,component,msg);
@@ -309,6 +355,7 @@ pub fn log(root:&Path,component:&str,msg:&str){
 }
 pub fn location(root:&Path)->PathBuf{root.join(LOG_NAME)}
 pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
+    if !enabled(){return Ok(());}
     let path=location(root);
     check_log_path(&path)?;
     // Exactly one log per invocation. A future-run log never contains
@@ -355,7 +402,7 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
         // Read the single user choice. CDDA and immutable CD SHA-256 checks
         // are mandatory; installed game-writable IQ files require presence only.
         // are hardcoded, independent of any legacy INI switches.
-        match settings::read(&game) {
+        match settings::read(root) {
             Ok(skip)=>write_line(&mut file,"CONFIG",&format!(
                 "SkipIntro={} CDDA=required IQ_integrity=presence_only_after_install original_IQ_sha256=checked_on_first_install CDDA_FORMAT=FLAC/44100Hz/16bit/stereo",
                 u8::from(skip)
@@ -380,6 +427,27 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
 mod tests{
     use super::*;
 
+    #[test] fn initial_install_and_first_game_enable_logs_then_log_zero_disables(){
+        let root=std::env::temp_dir().join(format!("cyber-first-log-policy-{}",
+            std::process::id()));
+        let _=fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        assert!(resolved_logging(&root,&[]).unwrap());
+        assert!(resolved_logging(&root,&["--install-only".into()]).unwrap());
+        assert!(!resolved_logging(&root,&["--verify".into()]).unwrap());
+        // --install-only must not mark a successful first game launch.
+        fs::create_dir(layout::state(&root)).unwrap();
+        assert!(resolved_logging(&root,&[]).unwrap());
+        mark_first_game_run(&root).unwrap();
+        assert!(!resolved_logging(&root,&[]).unwrap());
+        assert!(!resolved_logging(&root,&["--install-only".into()]).unwrap());
+        assert!(!resolved_logging(&root,&["--verify".into()]).unwrap());
+        assert!(layout::first_launch_receipt(&root).exists());
+        fs::write(layout::config(&root),b"[Video]\nSkipIntro=0\n[Debug]\nLog=1\n").unwrap();
+        assert!(resolved_logging(&root,&[]).unwrap());
+        assert!(resolved_logging(&root,&["--verify".into()]).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn runtime_log_is_independent_and_rotates_on_next_launch(){
         let dir=std::env::temp_dir().join(format!(
             "CyberGladiatorsFix-log-test-{}-{}",std::process::id(),

@@ -4,6 +4,7 @@
 compile_error!("CyberGladiatorsFix targets Windows x64 (and Wine on Linux). Build for a Windows target.");
 mod cue;
 mod cdda;
+mod layout;
 mod audio;
 mod install;
 mod edition;
@@ -16,7 +17,6 @@ mod fr_ddraw_static;
 mod verify;
 mod diagnostics;
 mod bundle;
-mod migration;
 mod autostart;
 
 use std::ffi::OsString;
@@ -31,7 +31,7 @@ const HELP:&str=r"CyberGladiatorsFix — open-source Windows x64 installer and l
 
 Usage:
   CyberGladiatorsFix.exe               Auto-detect verified installed game or CUE/BIN, install if missing, then play
-  CyberGladiatorsFix.exe --install-only   Install or safely upgrade without starting the game
+  CyberGladiatorsFix.exe --install-only   Install fresh or prepare an existing new-layout game without starting it
   CyberGladiatorsFix.exe --inspect image.iso
   CyberGladiatorsFix.exe --inspect image.cue [track.bin|track.img]
   CyberGladiatorsFix.exe --launch-no-verify   Launch installed game without any file integrity or presence preflight
@@ -46,11 +46,13 @@ extracted only from an authenticated, SHA-256-verified US or French retail
 CUE/BIN image. Subsequent launches verify the installation and start automatically.
 
 One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
-(Apache-2.0) and the project's CyberGladiatorsFix.dll WinMM/CDDA bridge
+(Apache-2.0) and the project's fix.dll WinMM/CDDA bridge
 (GPLv3). They are SHA-256 verified before being installed beside CYBER.EXE.
-Any older or unknown glide.dll is renamed to an unused .bak backup before
-the bundled verified GameFrame is installed; that GameFrame remains after exit.
-Original lossless CD music is stored in music/TrackNN.flac.
+Unknown glide.dll files are rejected; installer-owned fix.dll and glide.dll
+are replaced without persistent backups. Both stay beside game/cyber.exe.
+Lossless CDDA music is stored in music/TrackNN.flac.
+Installed game and fix DLLs are in game/; integrity receipts in state/ and notices in docs/.
+Fresh CUE/BIN installation only; older layouts are never migrated.
 No original game data is distributed. The launcher never rewrites IQ data.
 During first installation original IQ files undergo strict SHA-256 checks.
 Afterwards --verify and automatic launches require IQ files to be present
@@ -62,6 +64,9 @@ Two independent logs appear beside the launcher:
   CyberGladiatorsFix_installer.log (installer, verification and launcher)
   CyberGladiatorsFix.log (WinMM/CDDA and GameFrame game process).
 Both contain the same session ID when a game session is started.
+[Debug] Log=0 (default) preserves both logs after the first successful game
+session; Log=1 restarts fresh noncumulative logs on every invocation.
+The first installation and the first actual game session are always logged.
 CDDA/FLAC music is always on.
 The user INI contains only [Video] SkipIntro.
 Both US and French retail discs are authenticated by exact EXE and resource
@@ -89,13 +94,16 @@ fn wait_game(mut child:std::process::Child,root:&Path)->Result<(),String>{
     show(&event,root);
     diagnostics::log_runtime(root,"SESSION",&event);
     if !status.success(){return Err(format!("Game exited with status {status}"));}
+    // Do not consume the first-run diagnostic session on a failed spawn or
+    // before a game actually exited; --install-only never writes this marker.
+    if diagnostics::logging_enabled(){diagnostics::mark_first_game_run(root)?;}
     Ok(())
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
 /// renderer. Retired nGlide/DXVK command paths are not shipped.
 fn user_gameframe_launch(root:&Path)->Result<(),String>{
     let game=root.join(install::DIR);
-    settings::ensure(&game)?;
+    settings::ensure(root)?;
     let enable_cdda=settings::CDDA_ENABLED;
     let mut glide_session=gameframe::Session::begin(root,&game)?;
     // Start before spawning CYBER.EXE: its DirectDraw initialization may
@@ -130,7 +138,7 @@ fn user_gameframe_launch(root:&Path)->Result<(),String>{
         ),root);
     }
     // Keep the verified embedded GameFrame DLL after exit; any original
-    // glide.dll stays archived in a unique .bak, never auto-restored.
+    // Owner-managed GameFrame remains installed without persistent DLL backups.
     let finalized=glide_session.finish();
     match (result,finalized){
         (Err(game),Err(dll))=>Err(format!("{game}; GameFrame finalization failed: {dll}")),
@@ -271,6 +279,10 @@ fn main(){
     // Help, version and explicit --inspect do not reset the installation log.
     let read_only=matches!(args.as_slice(),[one] if matches!(one.to_str(),Some("--help"|"-h"|"--version")));
     if !read_only {
+        if let Err(e)=diagnostics::configure_logging(&root,&args){
+            eprintln!("{NAME}: invalid [Debug] Log configuration: {e}");
+            std::process::exit(1);
+        }
         if let Err(e)=diagnostics::start_session(&root,&args){
             eprintln!("{NAME}: ERROR: {e}");
             std::process::exit(1);
@@ -324,7 +336,7 @@ mod diagnostics_tests {
         for expected in ["CyberGladiatorsFix.exe               Auto-detect",
             "--install-only","--launch-no-verify","--verify",
             "--version","--help",
-            "music/TrackNN.flac","CyberGladiatorsFix.dll",
+            "music/TrackNN.flac","fix.dll",
             "CyberGladiatorsFix_installer.log","CyberGladiatorsFix.log","GameFrame"]{
             assert!(HELP.contains(expected),"{expected}");
         }

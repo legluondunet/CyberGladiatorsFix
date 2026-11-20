@@ -122,9 +122,13 @@ jobs:
           if ($LASTEXITCODE -ne 0 -or !$version.EndsWith("-$sourceSha")) {
             throw "Version does not identify the checked-out source commit: version=$version source=$sourceSha"
           }
+          $dir = Split-Path -Parent $exe
+          # Explicit Log=1 exercises opt-in diagnostics; a missing INI defaults
+          # to Log=0, except for initial install/first gameplay sessions.
+          @('[Video]','SkipIntro=0','[Debug]','Log=1') |
+            Set-Content (Join-Path $dir 'CyberGladiatorsFix.ini') -Encoding ascii
           & $exe --verify 2>&1 | Out-Null
           if ($LASTEXITCODE -eq 0) { throw 'Strict --verify unexpectedly succeeded without retail assets' }
-          $dir = Split-Path -Parent $exe
           $log = Join-Path $dir 'CyberGladiatorsFix_installer.log'
           $gameLog = Join-Path $dir 'CyberGladiatorsFix.log'
           if (!(Test-Path $log)) { throw 'Strict --verify failed without an installer log' }
@@ -149,7 +153,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
           $dir = Split-Path -Parent $exe
-          $game = Join-Path $dir 'CyberGladiatorsFix'
+          $game = Join-Path $dir 'game'
           $gameLog = Join-Path $dir 'CyberGladiatorsFix.log'
           $installerLog = Join-Path $dir 'CyberGladiatorsFix_installer.log'
           if (Test-Path $game) { throw 'Unexpected game files before unchecked-launch smoke test' }
@@ -179,7 +183,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
           $dir = Split-Path -Parent $exe
-          $game = Join-Path $dir 'CyberGladiatorsFix'
+          $game = Join-Path $dir 'game'
           $help = (& $exe --help | Out-String)
           if ($help.Contains('--inspect-disc')) { throw 'Retired disc inspection command is still advertised' }
           foreach ($arguments in @(
@@ -201,7 +205,7 @@ jobs:
           $ErrorActionPreference = 'Continue'
           $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
           $dir = Split-Path -Parent $exe
-          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+          if (Test-Path (Join-Path $dir 'game')) {
             throw 'Test runner unexpectedly contains an installed game'
           }
           $text = (& $exe 2>&1 | Out-String)
@@ -211,7 +215,7 @@ jobs:
           if ($text -notmatch 'No installed game') {
             throw "Missing diagnostic for absent retail image: $text"
           }
-          if (Test-Path (Join-Path $dir 'CyberGladiatorsFix')) {
+          if (Test-Path (Join-Path $dir 'game')) {
             throw 'Automatic installer created a game directory without a valid CD'
           }
           if (!(Test-Path (Join-Path $dir 'CyberGladiatorsFix_installer.log'))) {
@@ -220,6 +224,47 @@ jobs:
           Write-Host 'One-click auto-discovery no-CD refusal: PASS'
           # The expected native EXE exit was nonzero; reset it explicitly,
           # otherwise pwsh propagates that value despite successful assertions.
+          exit 0
+
+      - name: Check Log=0 retains first diagnostics and Log=1 resets session logs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          $root = Split-Path -Parent $exe
+          $ini = Join-Path $root 'CyberGladiatorsFix.ini'
+          $installerLog = Join-Path $root 'CyberGladiatorsFix_installer.log'
+          $gameLog = Join-Path $root 'CyberGladiatorsFix.log'
+          if (!(Test-Path $installerLog) -or !(Test-Path $gameLog)) {
+            throw 'Expected prior opt-in diagnostics are missing'
+          }
+          # Mark a completed first game run without having original game media
+          # in CI. The unit-tested writer creates this exact state receipt.
+          $state = Join-Path $root 'state'
+          New-Item -ItemType Directory -Path $state -Force | Out-Null
+          'First successful game execution completed.' |
+            Set-Content (Join-Path $state 'CyberGladiatorsFix.first-launch-complete.txt') -Encoding ascii
+          @('[Video]','SkipIntro=0','[Debug]','Log=0') | Set-Content $ini -Encoding ascii
+          $installerHash = (Get-FileHash $installerLog -Algorithm SHA256).Hash
+          $gameHash = (Get-FileHash $gameLog -Algorithm SHA256).Hash
+          & $exe --verify 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw '--verify unexpectedly succeeded without installed game' }
+          if ((Get-FileHash $installerLog -Algorithm SHA256).Hash -ne $installerHash) {
+            throw 'Log=0 modified the existing installer log'
+          }
+          if ((Get-FileHash $gameLog -Algorithm SHA256).Hash -ne $gameHash) {
+            throw 'Log=0 modified the existing runtime log'
+          }
+          @('[Video]','SkipIntro=0','[Debug]','Log=1') | Set-Content $ini -Encoding ascii
+          & $exe --verify 2>&1 | Out-Null
+          if ($LASTEXITCODE -eq 0) { throw '--verify unexpectedly succeeded without installed game' }
+          if ((Get-FileHash $installerLog -Algorithm SHA256).Hash -eq $installerHash) {
+            throw 'Log=1 did not reset the installer log'
+          }
+          if ((Get-FileHash $gameLog -Algorithm SHA256).Hash -ne $gameHash) {
+            throw '--verify modified the runtime log'
+          }
+          Write-Host 'Debug Log=0 preserves old session logs; Log=1 starts fresh ones: PASS'
           exit 0
 
       - name: Package one executable and Apache-2.0 notices

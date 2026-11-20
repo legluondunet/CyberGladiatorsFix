@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Minimal, conservative CD image installation built on ScorchedPlanetFix's
 //! ISO parser (isomage) and strict known-executable fingerprint design.
-use crate::{audio,cdda,cue,graphics,patch,settings};
+use crate::{audio,cdda,cue,graphics,patch,settings,layout,gameframe};
 use isomage::{cat_node,detect_and_parse_filesystem,TreeNode};
 use sha2::{Digest,Sha256};
 use std::collections::{BTreeSet, BTreeMap};
@@ -9,8 +9,8 @@ use std::fs::{self,File,OpenOptions};
 use std::io::Write;
 use std::path::{Path,PathBuf};
 
-pub const DIR:&str="CyberGladiatorsFix";
-pub const MANIFEST:&str="CyberGladiatorsFix.manifest";
+pub const DIR:&str=layout::GAME;
+pub const MANIFEST:&str=layout::MANIFEST;
 const MAX_ENTRIES:usize=25_000;
 const MAX_BYTES:u64=8*1024*1024*1024;
 // Verified against the supplied USA Track 01 CD data: these immutable assets,
@@ -183,12 +183,21 @@ fn image_file(path:&Path)->Result<File,String>{
 /// The installed-game path is verified and launched without requiring the
 /// original disc image; the bundled WinMM bridge serves CD audio as FLAC.
 pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,String>{
-    if destination.exists()||destination.is_symlink(){return Err(format!("Destination already exists: {}",destination.display()));}
     if !cue_path.extension().is_some_and(|s|s.eq_ignore_ascii_case("cue")) {
         return Err("Only a .cue sheet referencing one or more .bin files is supported".into());
     }
-    // Normalize the first raw data track to an internal, short-lived
-    // 2048-byte/sector filesystem view. Standalone ISO is not accepted.
+    if destination!=layout::game(root) {
+        return Err("Installation destination must be root/game".into());
+    }
+    // No upgrade/migration of old layouts. Never touch prior installations.
+    for name in [layout::GAME,layout::MUSIC,layout::STATE,layout::DOCS,"CyberGladiatorsFix"]{
+        let path=root.join(name);
+        match fs::symlink_metadata(&path){
+            Ok(_)=>return Err(format!("New-layout installation requires unused destination {}; refusing overwrite",path.display())),
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
+            Err(e)=>return Err(e.to_string())
+        }
+    }
     let temp_iso=cue::normalize(cue_path,root)?;
     let iso_path=temp_iso.0.as_path();
     let mut iso=image_file(iso_path)?;
@@ -205,9 +214,6 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
     collect(folder,Path::new(""),&mut assets,&mut seen)?;
     let files:BTreeMap<String,Asset>=assets.into_iter().map(|a|(disc_key(&a.path),a)).collect();
     let exe=files.get("cyber.exe").ok_or("Disc not recognized: CYBER/CYBER.EXE missing")?;
-    // First verify the complete original EXE hash, then edition-specific
-    // immutable disc resources. Neither a translated string nor a filename
-    // alone is sufficient for patch authorization.
     let hash=hash_on_disc(&mut iso,exe)?;
     let (edition_name,checks):(&str,&[(&str,&str)])=
         match crate::edition::from_original_exe(exe.size,&hash){
@@ -221,61 +227,97 @@ pub fn install(cue_path:&Path,destination:&Path,root:&Path)->Result<String,Strin
                 ("splash4.avi",FR_SPLASH4_AVI_SHA256),
             ]),
             crate::edition::OriginalEdition::Unknown=>{
-                return Err(format!(
-                    "Unsupported CD edition: CYBER.EXE size={} SHA-256 {hash}; accepted only after exact US/FR retail identification",
-                    exe.size
-                ));
+                return Err(format!("Unsupported CD edition: CYBER.EXE size={} SHA-256 {hash}; accepted only exact US/FR retail images",exe.size));
             }
         };
     for &(name,expected) in checks{
         let asset=files.get(name).ok_or_else(||format!("Unsupported {edition_name} CD: missing CYBER/{name}"))?;
         let actual=hash_on_disc(&mut iso,asset)?;
-        if actual!=expected{
+        if actual!=expected {
             return Err(format!("Unsupported {edition_name} CD: CYBER/{name} SHA-256 {actual} (expected {expected})"));
         }
     }
-    let staged=destination.with_extension("staging");
-    if staged.exists()||staged.is_symlink(){return Err(format!("Staging destination already exists: {}",staged.display()));}
+    let staged=root.join(format!(".cybergladiatorsfix-staging-{}",std::process::id()));
+    if staged.exists()||staged.is_symlink(){return Err("Installer staging path already exists".into());}
     fs::create_dir(&staged).map_err(|e|e.to_string())?;
     let operation=(||->Result<String,String>{
+        let staged_game=layout::game(&staged);
+        fs::create_dir(&staged_game).map_err(|e|e.to_string())?;
+        fs::create_dir(layout::state(&staged)).map_err(|e|e.to_string())?;
+        // Respect an existing root INI without modifying it; otherwise create
+        // a clean default in staging and publish it only on successful install.
+        let config=layout::config(root);
+        match fs::symlink_metadata(&config){
+            Ok(m) if m.is_file()&&!m.file_type().is_symlink()=>{
+                fs::copy(&config,layout::config(&staged)).map_err(|e|e.to_string())?;
+            },
+            Ok(_)=>return Err("Unsafe root CyberGladiatorsFix.ini".into()),
+            Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
+            Err(e)=>return Err(e.to_string())
+        }
+        settings::ensure(&staged)?;
         let mut manifest=String::from("# CyberGladiatorsFix manifest v1\n");
         for (i,(path,asset)) in files.iter().enumerate(){
-            let output=staged.join(&asset.path);
+            let output=staged_game.join(&asset.path);
             let hash=copy_asset(&mut iso,asset,&output)?;
-            if path!="cyber.exe" {manifest.push_str(&format!("{path}\t{}\t{hash}\n",asset.size));}
+            if path!="cyber.exe" {
+                manifest.push_str(&format!("game/{path}\t{}\t{hash}\n",asset.size));
+            }
             if (i+1)%50==0 {println!("Extracted {}/{} files",i+1,files.len());}
         }
-        // Generate [Video] preferences before patching. CDDA and strict IQ
-        // integrity are always-on internal behavior, not user settings.
-        // Existing INIs are only migrated to remove obsolete sections.
-        settings::ensure(&staged)?;
-        // WinMM is always proxied to keep fullscreen AVI, the DXVK repair
-        // and always-on FLAC playback in one x86 DLL. The child process
-        // environment enables CDDA music without a user INI option.
-        cdda::try_install(root,&staged)?;
-        let exe=staged.join("cyber.exe");
+        let exe=staged_game.join("cyber.exe");
         let outcome=patch::apply(&exe)?;
         patch::set_cdda(&exe,true)?;
         patch::set_skip_intro(&exe,settings::read(&staged)?)?;
-        // Provide graphics preferences on the first boot. The original CD
-        // does not contain CYBER.INI; preserve the valid 32-byte layout.
-        graphics::create_defaults(&staged)?;
+        graphics::create_defaults(&staged_game)?;
         let audio_report=audio::extract(cue_path,&staged)?;
         manifest.push_str(&audio_report.manifest_rows);
-        fs::write(staged.join(MANIFEST),&manifest).map_err(|e|e.to_string())?;
+        fs::write(layout::manifest(&staged),&manifest).map_err(|e|e.to_string())?;
         verify_staged_manifest(&staged,&manifest)?;
-        patch::verify_exe(&staged.join("cyber.exe"))?;
-        cdda::verify(&staged)?;
-        // No incomplete or corrupted game installation can be published.
-        // GameFrame is embedded and activated by autostart at first launch.
-        // Do not copy proprietary nGlide into a fresh open-source install.
-        fs::rename(&staged,destination).map_err(|e|format!("Cannot publish installation: {e}"))?;
-        let audio_note=format!("{} lossless FLAC tracks saved in music/TrackNN.flac; {} tracks omitted (missing BIN files)",
+        layout::ensure_support_files(&staged,edition_name)?;
+        cdda::try_install(&staged,&staged_game)?;
+        let mut glide=gameframe::Session::begin(&staged,&staged_game)?;
+        glide.finish()?;
+        patch::verify_exe(&exe)?;
+        cdda::verify(&staged_game)?;
+        gameframe::verify(&staged,&staged_game)?;
+        // All folders are verified before any is visible in the final tree.
+        // Roll back only the brand-new directories on a failed rename.
+        let mut published=Vec::new();
+        for name in [layout::GAME,layout::MUSIC,layout::STATE,layout::DOCS]{
+            let from=staged.join(name);
+            let to=root.join(name);
+            if let Err(e)=fs::rename(&from,&to){
+                let mut errors=Vec::new();
+                for previous in published.into_iter().rev(){
+                    if let Err(err)=fs::rename(root.join(previous),staged.join(previous)){
+                        errors.push(format!("{previous}: {err}"));
+                    }
+                }
+                return Err(format!("Cannot publish {name}: {e}; rollback failures: {errors:?}"));
+            }
+            published.push(name);
+        }
+        if !config.exists(){
+            if let Err(e)=fs::rename(layout::config(&staged),&config){
+                // The game tree is still recoverable in the staging directory.
+                let mut errors=Vec::new();
+                for previous in published.into_iter().rev(){
+                    if let Err(err)=fs::rename(root.join(previous),staged.join(previous)){
+                        errors.push(format!("{previous}: {err}"));
+                    }
+                }
+                return Err(format!("Cannot publish root INI: {e}; rollback failures: {errors:?}"));
+            }
+        }
+        let audio_note=format!("{} lossless FLAC tracks saved in music/TrackNN.flac; {} omitted",
             audio_report.extracted,audio_report.missing.len());
-        Ok(format!("Detected edition: {edition_name}. {} game files extracted, {}, default CYBER.INI created (640x480, detail 3/3), CyberGladiatorsFix.ini created (SkipIntro=0 only; CDDA always enabled), native 4:3 AVI and embedded WinMM bridge selected. Renderer: bundled open-source GameFrame staged at first launch. Audio: {}. Installed to {}.",
-            files.len(),outcome,audio_note,destination.display()))
+        Ok(format!("Edition: {edition_name}. {} original files; {}; {}. Installed to game/, music/, state/ and docs/.",
+            files.len(),outcome,audio_note))
     })();
-    if operation.is_err(){let _=fs::remove_dir_all(&staged);}
+    // A failed rollback can leave newly published folders for user recovery;
+    // never silently delete anything outside our private staging root.
+    if staged.exists(){let _=fs::remove_dir_all(&staged);}
     operation
 }
 
@@ -287,16 +329,16 @@ mod iq_staging_policy_tests {
         let dir=std::env::temp_dir().join(format!("CyberIQStaging-{}",
             std::process::id()));
         let _=fs::remove_dir_all(&dir);
-        fs::create_dir_all(dir.join("iq")).unwrap();
-        let iq=dir.join("iq").join("iq40.dat");
+        fs::create_dir_all(dir.join("game/iq")).unwrap();
+        let iq=dir.join("game/iq/iq40.dat");
         let original=b"original";
         fs::write(&iq,original).unwrap();
-        let manifest=format!("# CyberGladiatorsFix manifest v1\niq/iq40.dat\t{}\t{}\n",
+        let manifest=format!("# CyberGladiatorsFix manifest v1\ngame/iq/iq40.dat\t{}\t{}\n",
             original.len(),crate::patch::digest(original));
         assert!(verify_staged_manifest(&dir,&manifest).is_ok());
         fs::write(&iq,b"modified").unwrap();
         assert!(verify_staged_manifest(&dir,&manifest).unwrap_err()
-            .contains("Staged file SHA-256 mismatch: iq/iq40.dat"));
+            .contains("Staged file SHA-256 mismatch: game/iq/iq40.dat"));
         fs::remove_file(&iq).unwrap();
         assert!(verify_staged_manifest(&dir,&manifest).is_err());
         fs::remove_dir_all(&dir).unwrap();

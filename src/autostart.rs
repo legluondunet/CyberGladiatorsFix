@@ -3,7 +3,7 @@
 //! or an existing installation. Never rewrite an existing game installation
 //! after an integrity error. A named per-folder mutex prevents two sessions
 //! from racing DLL staging, FLAC migration or game process startup.
-use crate::{audio,cdda,install,migration,patch,settings,verify};
+use crate::{cdda,install,patch,settings,verify,layout};
 use sha2::{Digest,Sha256};
 use std::ffi::c_void;
 use std::fs;
@@ -55,18 +55,16 @@ pub fn prepare(root:&Path,selected:Option<&Path>)->Result<(),String>{
             return Err("Game already installed; an explicit CD path cannot silently replace it. Use --verify to check existing files".into());
         }
         crate::show("AUTO_DETECT existing_game=1 disc_search=skipped",root);
-        settings::ensure(&game)?;
+        settings::ensure(root)?;
         // Strictly check the original EXE and immutable CD assets. After installation,
         // game-writable IQ files are required to exist, but are not rehashed.
         crate::show(&format!("AUTO_INTEGRITY_PRECHECK {}",verify::verify_install_content(root)?),root);
-        let moved=migration::migrate(&game)?;
-        if moved>0{crate::show(&format!("AUTO_MUSIC_MIGRATION moved_tracks={moved} destination=music/ legacy_manifest_backup=preserved"),root);}
         cdda::try_install(root,&game)?;
         let exe=game.join("cyber.exe");
         let result=patch::apply(&exe)?;
         patch::set_cdda(&exe,true)?;
-        patch::set_skip_intro(&exe,settings::read(&game)?)?;
-        crate::show(&format!("AUTO_PATCH {result} imported_bridge=CyberGladiatorsFix.dll"),root);
+        patch::set_skip_intro(&exe,settings::read(root)?)?;
+        crate::show(&format!("AUTO_PATCH {result} imported_bridge=fix.dll"),root);
     }else{
         let cue=match selected{
             Some(path)=>path.to_path_buf(),
