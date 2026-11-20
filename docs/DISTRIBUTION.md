@@ -102,8 +102,8 @@ Windows FR test on the merged source build 2.0.0-2ae6cadb also passed
 fresh retail CYBERG.CUE installation, 4:3 video/GameFrame, FLAC/CDDA,
 focus return and normal exit after 30.8s. Its physical 1920x1200 mode
 remained unchanged; logical screen metrics were 1536x960. Windows USA,
-repeat launch and independently confirmed visual/audio quality remain
-untested in this layout. A final tagged v2.0.0 release binary is not
+repeat launch remain untested in this layout; the maintainer confirmed
+the FR image, music and Alt+Tab return were correct. A final tagged v2.0.0 release binary is not
 yet field-tested.
 
 SIX-FILE DISTRIBUTION AND LICENSES
