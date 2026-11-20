@@ -53,7 +53,7 @@ const WINMM_NAME_POINTER:usize=0x4e434;
 const OLD_WINMM_RVA:u32=0x3ed40c;
 const CDDA_NAME_RVA:u32=0x3edb00;
 const CDDA_NAME_OFFSET:usize=0x4ef00;
-const CDDA_NAME:&[u8;24]=b"CyberGladiatorsFix.dll\0\0";
+const CDDA_NAME:&[u8;24]=b"fix.dll\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0";
 const LEGACY_CDDA_NAME:&[u8;24]=b"CyberGladiatorsCDDA.dll\0";
 /// Verify the renamed imported WinMM module using already pinned SHA-256:
 /// virtual reversal of ONLY the 24-byte name slot yields the trusted old hash.
@@ -279,7 +279,7 @@ pub fn set_cdda(path:&Path,enabled:bool)->Result<&'static str,String>{
     let current=hash==PATCHED||hash==PATCHED_SKIP_INTRO;
     let legacy=current&&&original[CDDA_NAME_OFFSET..CDDA_NAME_OFFSET+24]==LEGACY_CDDA_NAME;
     if current==enabled && !legacy{
-        return Ok(if enabled{"CyberGladiatorsFix.dll already imported"}else{"Legacy system WinMM import already selected"});
+        return Ok(if enabled{"fix.dll already imported"}else{"Legacy system WinMM import already selected"});
     }
     let mut updated=original;
     let name=u32::from_le_bytes(updated[WINMM_NAME_POINTER..WINMM_NAME_POINTER+4]

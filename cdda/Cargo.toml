@@ -9,7 +9,7 @@ authors = ["legluondunet assisted by ChatGPT (OpenAI)"]
 publish = false
 
 [lib]
-name = "CyberGladiatorsFix"
+name = "fix"
 crate-type = ["cdylib"]
 path = "src/lib.rs"
 

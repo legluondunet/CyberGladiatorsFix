@@ -4,6 +4,7 @@
 compile_error!("CyberGladiatorsFix targets Windows x64 (and Wine on Linux). Build for a Windows target.");
 mod cue;
 mod cdda;
+mod layout;
 mod audio;
 mod install;
 mod edition;

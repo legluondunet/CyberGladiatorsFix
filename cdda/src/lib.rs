@@ -174,8 +174,17 @@ unsafe fn cd_type_matches(flags:Dword,data:Ptr)->bool {
     CStr::from_ptr(typ as *const c_char)
         .to_bytes().eq_ignore_ascii_case(b"cdaudio")
 }
+fn music_dir()->PathBuf {
+    // Child-only launcher setting; direct CYBER.EXE launches use the same
+    // sibling music/ layout when the environment variable is absent.
+    std::env::var_os("CYBER_MUSIC_DIR").filter(|path|!path.is_empty())
+        .map(PathBuf::from).unwrap_or_else(||{
+            let game=game_dir();
+            game.parent().unwrap_or(&game).join("music")
+        })
+}
 fn track_path(track:u8)->PathBuf {
-    game_dir().join("music").join(format!("Track{track:02}.flac"))
+    music_dir().join(format!("Track{track:02}.flac"))
 }
 fn available_count()->usize{
     (2u8..=15).filter(|&t|track_path(t).is_file()).count()
@@ -183,7 +192,7 @@ fn available_count()->usize{
 fn open_virtual(params:Ptr)->Dword {
     if params==0{return MCIERR_MISSING_PARAMETER;}
     if available_count()==0 {
-        log("MCI_OPEN: no music/Track02.flac .. Track15.flac beside CYBER.EXE");
+        log("MCI_OPEN: no root music/Track02.flac .. Track15.flac (CYBER_MUSIC_DIR)");
         return MCIERR_UNSUPPORTED_FUNCTION;
     }
     let mut ctl=controller().lock().unwrap_or_else(|e|e.into_inner());
@@ -195,7 +204,7 @@ fn open_virtual(params:Ptr)->Dword {
             frames:AtomicU32::new(0),
         });
         let state=Arc::clone(&shared);
-        let folder=game_dir();
+        let folder=music_dir();
         if std::thread::Builder::new()
             .name("CyberGladiators-CDDA".into())
             .spawn(move||player::run(rx,state,folder)).is_err(){
@@ -331,7 +340,7 @@ static SYSTEM_WINMM:OnceLock<Option<usize>>=OnceLock::new();
 fn system_winmm()->Option<usize> {
     *SYSTEM_WINMM.get_or_init(||unsafe{
         // A local winmm.dll override is forbidden. Absolute system-directory
-        // loading avoids resolving to CyberGladiatorsFix.dll or the game dir.
+        // loading avoids resolving to fix.dll or the game dir.
         let mut path=[0u16;1024];
         let n=GetSystemDirectoryW(path.as_mut_ptr(),path.len() as u32) as usize;
         if n==0 || n>=path.len()-12 {
