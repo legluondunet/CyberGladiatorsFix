@@ -125,8 +125,12 @@ fn unchecked_gameframe_command(root:&Path)->Command{
     cmd.current_dir(&game);
 
     let runtime_log=diagnostics::runtime_location(root);
-    cmd.env("CYBER_LOG_FILE",&runtime_log);
-    cmd.env("GLIDE_LOG",&runtime_log);
+    // GameFrame uses GLIDE_LOG; "NUL" is the Windows/Wine null device.
+    // Our fix.dll independently obeys CYBER_LOG_ENABLED before opening files.
+    let active=diagnostics::logging_enabled();
+    cmd.env("CYBER_LOG_ENABLED",if active{"1"}else{"0"});
+    cmd.env("CYBER_LOG_FILE",if active {runtime_log.as_os_str()} else {std::ffi::OsStr::new("NUL")});
+    cmd.env("GLIDE_LOG",if active {runtime_log.as_os_str()} else {std::ffi::OsStr::new("NUL")});
     cmd.env("CYBER_SESSION_ID",diagnostics::session_id());
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_CDDA_MUSIC","1");
@@ -263,8 +267,12 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
         "NGLIDE_VSYNC","NGLIDE_GAMMA","NGLIDE_SPLASH",
     ] {cmd.env_remove(key);}
     let runtime_log=diagnostics::runtime_location(root);
-    cmd.env("CYBER_LOG_FILE",&runtime_log);
-    cmd.env("GLIDE_LOG",&runtime_log);
+    // GameFrame uses GLIDE_LOG; "NUL" is the Windows/Wine null device.
+    // Our fix.dll independently obeys CYBER_LOG_ENABLED before opening files.
+    let active=diagnostics::logging_enabled();
+    cmd.env("CYBER_LOG_ENABLED",if active{"1"}else{"0"});
+    cmd.env("CYBER_LOG_FILE",if active {runtime_log.as_os_str()} else {std::ffi::OsStr::new("NUL")});
+    cmd.env("GLIDE_LOG",if active {runtime_log.as_os_str()} else {std::ffi::OsStr::new("NUL")});
     cmd.env("CYBER_SESSION_ID",diagnostics::session_id());
     cmd.env("GLIDE_FPS_LIMIT","60");
     cmd.env("CYBER_GAMEFRAME_TEST","1");

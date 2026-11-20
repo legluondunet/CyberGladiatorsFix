@@ -125,6 +125,9 @@ fn game_dir()->PathBuf {
         .unwrap_or_else(||PathBuf::from("."))
 }
 fn log(message:&str){
+    // Disable all WinMM/CDDA/AVI diagnostics when the launcher chooses Log=0.
+    // No file is created or reopened. GameFrame has its own NUL log target.
+    if std::env::var("CYBER_LOG_ENABLED").as_deref()!=Ok("1"){return;}
     // The launcher passes the independent game-runtime log location. Direct
     // CYBER.EXE launches retain the conventional parent-folder fallback.
     let path=std::env::var_os("CYBER_LOG_FILE").map(PathBuf::from)

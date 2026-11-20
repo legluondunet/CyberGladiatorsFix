@@ -68,6 +68,7 @@ migrate v1.0.1 layouts or change the previously published binary.
     CyberGladiatorsFix.sha256
     CyberGladiatorsFix.gameframe.sha256
     CyberGladiatorsFix.install-receipt.txt
+    CyberGladiatorsFix.first-launch-complete.txt   (after first successful game run)
   docs/
     README.md
     LICENSE-GPL-3.0
@@ -76,6 +77,14 @@ migrate v1.0.1 layouts or change the previously published binary.
     CyberGladiatorsFix.ini.example
     build-info.txt
 ```
+
+**Logging:** new `CyberGladiatorsFix.ini` files contain `[Debug] Log=0`.
+The first installation and the first successful game session still generate
+`CyberGladiatorsFix_installer.log` and `CyberGladiatorsFix.log` automatically.
+Afterward, `Log=0` leaves the two files untouched; `Log=1` recreates both
+logs for each launch, noncumulatively. The first-launch completion receipt
+is stored in `state/CyberGladiatorsFix.first-launch-complete.txt`.
+Use `Log=1` when reproducing a problem.
 
 The original US/FR CUE/BIN is only required for the first installation.
 Music uses a child-only absolute `CYBER_MUSIC_DIR` path supplied by the

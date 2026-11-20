@@ -25,6 +25,7 @@ Status: approved architecture; implementation in progress on PR #27. This docume
     CyberGladiatorsFix.manifest
     CyberGladiatorsFix.sha256
     CyberGladiatorsFix.install-receipt.txt
+    CyberGladiatorsFix.first-launch-complete.txt  # created after first successful game run
   docs/
     README.md
     LICENSE-GPL-3.0
@@ -70,3 +71,13 @@ Status: approved architecture; implementation in progress on PR #27. This docume
 - Validate `fix.dll` imports, GameFrame loading, FLAC playback, complete intro/skip, 4:3, Alt-Tab and clean exit on native Windows and Wine/Proton.
 - Confirm no unwanted backups of `fix.dll` / `glide.dll`, original `CYBER.EXE.bak` retained, `iq/` not changed on relaunch, logs reset per session, and no empty `CyberGladiatorsFix/` directory.
 - Keep this work on a separate **draft PR** until a test binary has been accepted. Never update the published v1.0.1 release artifacts.
+
+## Default logging (implemented after the layout refactor)
+
+`CyberGladiatorsFix.ini` has `[Debug] Log=0` by default. Initial
+installation and the first successful game run always create both launcher
+and game logs (noncumulative). An `--install-only` does not consume the
+first-game logging opportunity. After the first successful run, Log=0
+preserves the last logs without rewriting or truncating them. With Log=1,
+subsequent sessions recreate logs. The separate read-only `--inspect`
+report remains explicitly generated on user request.

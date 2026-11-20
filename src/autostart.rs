@@ -63,8 +63,8 @@ pub fn prepare(root:&Path,selected:Option<&Path>)->Result<(),String>{
         let exe=game.join("cyber.exe");
         let result=patch::apply(&exe)?;
         patch::set_cdda(&exe,true)?;
-        patch::set_skip_intro(&exe,settings::read(&game)?)?;
-        crate::show(&format!("AUTO_PATCH {result} imported_bridge=CyberGladiatorsFix.dll"),root);
+        patch::set_skip_intro(&exe,settings::read(root)?)?;
+        crate::show(&format!("AUTO_PATCH {result} imported_bridge=fix.dll"),root);
     }else{
         let cue=match selected{
             Some(path)=>path.to_path_buf(),

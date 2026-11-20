@@ -64,6 +64,9 @@ Two independent logs appear beside the launcher:
   CyberGladiatorsFix_installer.log (installer, verification and launcher)
   CyberGladiatorsFix.log (WinMM/CDDA and GameFrame game process).
 Both contain the same session ID when a game session is started.
+[Debug] Log=0 (default) preserves both logs after the first successful game
+session; Log=1 restarts fresh noncumulative logs on every invocation.
+The first installation and the first actual game session are always logged.
 CDDA/FLAC music is always on.
 The user INI contains only [Video] SkipIntro.
 Both US and French retail discs are authenticated by exact EXE and resource
@@ -91,6 +94,9 @@ fn wait_game(mut child:std::process::Child,root:&Path)->Result<(),String>{
     show(&event,root);
     diagnostics::log_runtime(root,"SESSION",&event);
     if !status.success(){return Err(format!("Game exited with status {status}"));}
+    // Do not consume the first-run diagnostic session on a failed spawn or
+    // before a game actually exited; --install-only never writes this marker.
+    if diagnostics::logging_enabled(){diagnostics::mark_first_game_run(root)?;}
     Ok(())
 }
 /// The standard one-click path uses the embedded, SHA-256-verified GameFrame
@@ -273,6 +279,10 @@ fn main(){
     // Help, version and explicit --inspect do not reset the installation log.
     let read_only=matches!(args.as_slice(),[one] if matches!(one.to_str(),Some("--help"|"-h"|"--version")));
     if !read_only {
+        if let Err(e)=diagnostics::configure_logging(&root,&args){
+            eprintln!("{NAME}: invalid [Debug] Log configuration: {e}");
+            std::process::exit(1);
+        }
         if let Err(e)=diagnostics::start_session(&root,&args){
             eprintln!("{NAME}: ERROR: {e}");
             std::process::exit(1);
