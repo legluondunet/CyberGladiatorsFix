@@ -10,6 +10,7 @@ pub const CONFIG:&str="CyberGladiatorsFix.ini";
 pub const MANIFEST:&str="CyberGladiatorsFix.manifest";
 pub const DLL_RECEIPT:&str="CyberGladiatorsFix.sha256";
 pub const GLIDE_RECEIPT:&str="CyberGladiatorsFix.gameframe.sha256";
+pub const FIRST_LAUNCH_RECEIPT:&str="CyberGladiatorsFix.first-launch-complete.txt";
 
 pub fn game(root:&Path)->PathBuf{root.join(GAME)}
 pub fn music(root:&Path)->PathBuf{root.join(MUSIC)}
@@ -19,6 +20,7 @@ pub fn config(root:&Path)->PathBuf{root.join(CONFIG)}
 pub fn manifest(root:&Path)->PathBuf{state(root).join(MANIFEST)}
 pub fn dll_receipt(root:&Path)->PathBuf{state(root).join(DLL_RECEIPT)}
 pub fn glide_receipt(root:&Path)->PathBuf{state(root).join(GLIDE_RECEIPT)}
+pub fn first_launch_receipt(root:&Path)->PathBuf{state(root).join(FIRST_LAUNCH_RECEIPT)}
 
 #[cfg(test)]
 mod tests{

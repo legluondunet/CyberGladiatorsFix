@@ -9,7 +9,7 @@ use std::path::Path;
 pub const NAME:&str="CyberGladiatorsFix.ini";
 pub const CDDA_ENABLED:bool=true;
 const MAX_SIZE:u64=4096;
-pub const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n";
+pub const DEFAULT:&str="; CyberGladiatorsFix preferences (NOT the game's binary cyber.ini)\r\n; 0 = play the opening AVI (default), 1 = skip only the opening AVI.\r\n[Video]\r\nSkipIntro=0\r\n\r\n[Debug]\r\n; 0 = disable logs after first successful game launch, 1 = fresh logs each run\r\n; First installation and first actual game session always generate both logs\r\nLog=0\r\n";
 
 fn parse(text:&str)->Result<bool,String>{
     let mut video=false;
@@ -44,6 +44,51 @@ fn parse(text:&str)->Result<bool,String>{
     choice.ok_or_else(||"CyberGladiatorsFix.ini is missing SkipIntro=0 or SkipIntro=1".into())
 }
 
+/// Read the launcher-owned [Debug] Log option. Missing section means Log=0.
+/// No file creation and no mutation; malformed or duplicate keys fail closed.
+fn parse_log(text:&str)->Result<bool,String>{
+    let mut in_debug=false;
+    let mut seen=false;
+    let mut result=false;
+    for (idx,raw) in text.trim_start_matches('\u{feff}').lines().enumerate(){
+        let line=raw.trim();
+        if line.is_empty()||line.starts_with(';')||line.starts_with('#'){continue;}
+        if line.starts_with('['){
+            if !line.ends_with(']'){
+                return Err(format!("Malformed INI section on line {}",idx+1));
+            }
+            in_debug=line[1..line.len()-1].trim().eq_ignore_ascii_case("Debug");
+            continue;
+        }
+        if !in_debug{continue;}
+        let (key,value)=line.split_once('=').ok_or_else(||format!(
+            "Malformed [Debug] setting on line {}",idx+1))?;
+        if !key.trim().eq_ignore_ascii_case("Log"){
+            return Err(format!("Unknown [Debug] option: {}",key.trim()));
+        }
+        if seen{return Err("Duplicate [Debug] Log option".into());}
+        seen=true;
+        result=match value.trim(){
+            "0"=>false,
+            "1"=>true,
+            _=>return Err("Invalid [Debug] Log value: use 0 or 1".into())
+        };
+    }
+    Ok(result)
+}
+pub fn log_enabled(root:&Path)->Result<bool,String>{
+    match fs::symlink_metadata(root.join(NAME)){
+        Ok(meta)=>{
+            if !meta.is_file()||meta.file_type().is_symlink()||meta.len()>MAX_SIZE{
+                return Err("CyberGladiatorsFix.ini must be a regular file up to 4096 bytes".into());
+            }
+            let text=read_text(root)?;
+            parse_log(&text)
+        },
+        Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(false),
+        Err(e)=>Err(format!("Cannot inspect root CyberGladiatorsFix.ini: {e}"))
+    }
+}
 /// Remove only retired programmatic [Audio]/[Integrity] sections and their
 /// exact old default comment lines. Preserve [Video], its user choice,
 /// unrelated sections, casing, comments, BOM, and line endings byte-for-byte.
@@ -93,9 +138,11 @@ pub fn ensure(game:&Path)->Result<(),String>{
             }
             let contents=read_text(game)?;
             parse(&contents)?;
+            parse_log(&contents)?;
             let (cleaned,changed)=without_legacy_options(&contents);
             if !changed{return Ok(());}
             parse(&cleaned)?; // Never replace a valid file with invalid settings.
+            parse_log(&cleaned)?;
             let staging=game.join("CyberGladiatorsFix.ini.cleanup.tmp");
             let mut file=OpenOptions::new().create_new(true).write(true).open(&staging)
                 .map_err(|e|format!("Cannot stage obsolete INI cleanup: {e}"))?;
@@ -140,6 +187,20 @@ mod tests{
                 .unwrap().as_nanos()));
         fs::create_dir_all(&folder).unwrap();
         folder
+    }
+    #[test]
+    fn debug_log_defaults_off_and_rejects_invalid_options(){
+        assert!(!parse_log(DEFAULT).unwrap());
+        assert!(DEFAULT.contains("[Debug]\r\n"));
+        assert!(DEFAULT.contains("Log=0"));
+        assert!(!parse_log("[Video]\nSkipIntro=1\n").unwrap());
+        assert!(parse_log("[Video]\nSkipIntro=0\n[Debug]\nLog=1\n").unwrap());
+        for bad in ["[Debug]\nLog=2","[Debug]\nLog=yes",
+            "[Debug]\nLog=0\nLog=1",
+            "[Debug]\nLog=1\n[Debug]\nLog=0",
+            "[Debug]\nExtra=1\nLog=0"] {
+            assert!(parse_log(bad).is_err(),"{bad}");
+        }
     }
     #[test]
     fn default_ini_exposes_video_only_and_cdda_is_internal(){
