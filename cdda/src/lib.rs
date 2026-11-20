@@ -524,6 +524,8 @@ forward_winmm!(mmioClose(h:Handle,flags:u32)->u32, 1);
 #[no_mangle]
 pub unsafe extern "system" fn mciSendCommandA(id:u32,message:u32,flags:usize,param:usize)->u32 {
     mark_trace_session_once();
+    // Include profile-hook status even if the opening AVI was skipped.
+    fr_profile::report_once();
     // Keep video services active even with music disabled: only the CD-audio
     // device uses the optional virtual FLAC implementation.
     if music_enabled() {

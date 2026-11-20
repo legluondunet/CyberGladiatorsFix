@@ -18,6 +18,7 @@ const IMAGE_BASE:usize=0x0040_0000;
 const PAGE_READWRITE:u32=4;
 static ORIGINAL:AtomicUsize=AtomicUsize::new(0);
 static INSTALLED:AtomicBool=AtomicBool::new(false);
+static REPORTED:AtomicBool=AtomicBool::new(false);
 static CALLS:AtomicU32=AtomicU32::new(0);
 static FALLBACKS:AtomicU32=AtomicU32::new(0);
 
@@ -150,6 +151,7 @@ unsafe extern "C" fn initialize(){
 static EARLY_PROFILE_HOOK:unsafe extern "C" fn()=initialize;
 
 pub fn report_once(){
+    if REPORTED.swap(true,Ordering::AcqRel){return;}
     if INSTALLED.load(Ordering::Acquire){
         crate::log(&format!(
             "FR_PROFILE_HOOK installed=1 calls={} fallbacks={} scope=exact_Config_CDROM_sierra.ini",
