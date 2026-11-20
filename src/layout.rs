@@ -71,3 +71,24 @@ pub fn ensure_support_files(root:&Path,edition:&str)->Result<(),String>{
         &format!("Layout=unified-1\nEdition={}\nOriginalRetailBackup=game/CYBER.EXE.bak\n",edition))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod support_file_tests{
+    use super::*;
+    use std::fs;
+    #[test] fn writes_state_and_docs_without_creating_named_fix_dir(){
+        let root=std::env::temp_dir().join(format!("cyber-layout-support-{}",std::process::id()));
+        let _=fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        ensure_support_files(&root,"USA retail").unwrap();
+        assert!(docs(&root).join("README.md").is_file());
+        assert!(docs(&root).join("LICENSE-APACHE").is_file());
+        assert!(docs(&root).join("CyberGladiatorsFix.ini.example").is_file());
+        assert!(state(&root).join("CyberGladiatorsFix.install-receipt.txt").is_file());
+        assert!(!root.join("CyberGladiatorsFix").exists());
+        let before=fs::read(docs(&root).join("README.md")).unwrap();
+        ensure_support_files(&root,"USA retail").unwrap();
+        assert_eq!(fs::read(docs(&root).join("README.md")).unwrap(),before);
+        fs::remove_dir_all(root).unwrap();
+    }
+}

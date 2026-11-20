@@ -50,7 +50,7 @@ One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
 (GPLv3). They are SHA-256 verified before being installed beside CYBER.EXE.
 Unknown glide.dll files are rejected; installer-owned fix.dll and glide.dll
 are replaced without persistent backups. Both stay beside game/cyber.exe.
-Original lossless CD music is stored in root music/TrackNN.flac.
+Lossless CDDA music is stored in music/TrackNN.flac.
 Installed game and fix DLLs are in game/; integrity receipts in state/ and notices in docs/.
 Fresh CUE/BIN installation only; older layouts are never migrated.
 No original game data is distributed. The launcher never rewrites IQ data.

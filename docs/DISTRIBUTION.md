@@ -3,7 +3,7 @@ CyberGladiatorsFix — Windows x64 release candidate and distribution guide
 
 The distribution contains exactly one Windows x64 launcher, LICENSE-GPL-3.0,
 LICENSE-APACHE, LICENSE-MIT (isomage 2.1.0), this README and SHA256SUMS.txt. The EXE embeds BOTH 32-bit Windows DLLs:
-  1. CyberGladiatorsFix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
+  1. fix.dll — our GPLv3 WinMM/Cinepak AVI and FLAC bridge
   2. glide.dll — Apache-2.0 GameFrame Glide-to-OpenGL wrapper
 
 The original Cyber Gladiators (1996) game and its copyrighted CD audio
@@ -17,7 +17,7 @@ retail CUE/BIN image and double-click the EXE. Under Wine/Proton use:
   wine CyberGladiatorsFix.exe
 
 No --launch or additional option is required. The launcher searches
-for an existing CyberGladiatorsFix/ installation first, verifies game
+for an existing game/ installation first, verifies game
 file hashes, then starts it. If no installation exists, it finds one
 adjacent .cue file, extracts the original files from the referenced .bin
 tracks into a temporary staging folder, verifies all extracted files,
@@ -164,7 +164,7 @@ Build #37, 2026-11-06, commit 63e0d7dd7490162bd2701f847a333f9f06d6d2f2:
 The user verified a complete fullscreen 4:3 AVI, a seamless transition
 with no desktop flashes, a stable 1920x1080 borderless game at ~59.6 FPS,
 FLAC soundtrack and clean process exit under Wine. Build #42 proved the
-one-file dual-DLL packaging and restored the previously installed DLL under its old policy; current builds **archive** older Glide DLLs as non-overwriting `.bak` files and **retain** GameFrame after exit.
+one-file dual-DLL packaging and restored the previously installed DLL under its old policy; the upcoming unified-layout build **rejects unowned DLLs** and **replaces only installer-owned files without retained .bak backups**.
 Subsequent builds removed failed/unused GDI-child experiments.
 
 Third-party GameFrame pin:
