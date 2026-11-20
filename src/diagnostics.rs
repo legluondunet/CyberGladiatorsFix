@@ -20,7 +20,7 @@ fn enabled()->bool{LOG_ENABLED.get().copied().unwrap_or(true)}
 
 /// Configure once per launcher invocation. Automatic diagnostics remain enabled
 /// on first installation and first actual game run, despite Log=0 by default.
-pub fn configure_logging(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
+fn resolved_logging(root:&Path,args:&[std::ffi::OsString])->Result<bool,String>{
     let manual=settings::log_enabled(root)?;
     let eligible=args.is_empty()||matches!(args,[one] if one.to_str()==Some("--install-only"));
     let first_run=if eligible {
@@ -31,7 +31,11 @@ pub fn configure_logging(root:&Path,args:&[std::ffi::OsString])->Result<(),Strin
             Err(e)=>return Err(format!("Cannot inspect first-run logging receipt: {e}"))
         }
     }else{false};
-    LOG_ENABLED.set(manual||first_run).map_err(|_|"Logging policy already configured".to_owned())
+    Ok(manual||first_run)
+}
+pub fn configure_logging(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
+    LOG_ENABLED.set(resolved_logging(root,args)?)
+        .map_err(|_|"Logging policy already configured".to_owned())
 }
 pub fn logging_enabled()->bool{enabled()}
 
@@ -423,6 +427,27 @@ pub fn start_session(root:&Path,args:&[std::ffi::OsString])->Result<(),String>{
 mod tests{
     use super::*;
 
+    #[test] fn initial_install_and_first_game_enable_logs_then_log_zero_disables(){
+        let root=std::env::temp_dir().join(format!("cyber-first-log-policy-{}",
+            std::process::id()));
+        let _=fs::remove_dir_all(&root);
+        fs::create_dir(&root).unwrap();
+        assert!(resolved_logging(&root,&[]).unwrap());
+        assert!(resolved_logging(&root,&["--install-only".into()]).unwrap());
+        assert!(!resolved_logging(&root,&["--verify".into()]).unwrap());
+        // --install-only must not mark a successful first game launch.
+        fs::create_dir(layout::state(&root)).unwrap();
+        assert!(resolved_logging(&root,&[]).unwrap());
+        mark_first_game_run(&root).unwrap();
+        assert!(!resolved_logging(&root,&[]).unwrap());
+        assert!(!resolved_logging(&root,&["--install-only".into()]).unwrap());
+        assert!(!resolved_logging(&root,&["--verify".into()]).unwrap());
+        assert!(layout::first_launch_receipt(&root).exists());
+        fs::write(layout::config(&root),b"[Video]\nSkipIntro=0\n[Debug]\nLog=1\n").unwrap();
+        assert!(resolved_logging(&root,&[]).unwrap());
+        assert!(resolved_logging(&root,&["--verify".into()]).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
     #[test] fn runtime_log_is_independent_and_rotates_on_next_launch(){
         let dir=std::env::temp_dir().join(format!(
             "CyberGladiatorsFix-log-test-{}-{}",std::process::id(),
