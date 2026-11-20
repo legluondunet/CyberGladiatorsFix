@@ -81,6 +81,71 @@ fn cyber_game_window() -> Option<HWND> {
     }
 }
 
+// Give Wine/XFCE an explicit taskbar icon on the ORIGINAL game window.
+// Discover the retail PE's first icon at runtime: no copyrighted game
+// artwork is redistributed. A standard Windows icon is the fallback.
+// WM_SETICON is limited to the verified game HWND; keep HWND, styles,
+// foreground and AVI host ownership untouched.
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    #[link_name = "GetModuleFileNameA"]
+    fn cyber_icon_module_filename(module: *mut c_void, path: *mut u8, size: u32) -> u32;
+}
+#[link(name = "shell32")]
+unsafe extern "system" {
+    #[link_name = "ExtractIconExA"]
+    fn cyber_icon_extract(path: *const u8, index: i32,
+        large: *mut *mut c_void, small: *mut *mut c_void, count: u32) -> u32;
+}
+#[link(name = "user32")]
+unsafe extern "system" {
+    #[link_name = "LoadIconA"]
+    fn cyber_icon_load(instance: *mut c_void, name: *const u8) -> *mut c_void;
+    #[link_name = "SendMessageA"]
+    fn cyber_icon_send(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize;
+}
+fn cyber_apply_taskbar_icon(hwnd: HWND) {
+    static ICON_APPLIED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if ICON_APPLIED.load(std::sync::atomic::Ordering::Acquire) { return; }
+    unsafe {
+        let mut large: *mut c_void = std::ptr::null_mut();
+        let mut small: *mut c_void = std::ptr::null_mut();
+        let mut source = "system_fallback";
+        let mut path = [0u8; 1024];
+        let len = cyber_icon_module_filename(std::ptr::null_mut(),
+            path.as_mut_ptr(), path.len() as u32) as usize;
+        if len > 0 && len < path.len() {
+            let count = cyber_icon_extract(path.as_ptr(), 0,
+                &mut large, &mut small, 1);
+            if count > 0 && (!large.is_null() || !small.is_null()) {
+                source = "game_exe";
+            }
+        }
+        // IDI_APPLICATION = MAKEINTRESOURCE(32512), never a file-system path.
+        // If the original retail PE has no icon group, still expose a
+        // nonempty Win32 icon to Wine's taskbar/window manager.
+        let fallback = cyber_icon_load(std::ptr::null_mut(),
+            32512usize as *const u8);
+        if small.is_null() {
+            small = if !large.is_null() { large } else { fallback };
+        }
+        if large.is_null() {
+            large = if !small.is_null() { small } else { fallback };
+        }
+        if small.is_null() || large.is_null() {
+            log!("CYBER_TASKBAR_ICON installed=0 reason=no_icon_resource hwnd={hwnd:?}");
+            return;
+        }
+        // WM_SETICON=0x80, ICON_SMALL=0, ICON_BIG=1. The icon handles
+        // remain alive until process exit; never destroy a live WM icon.
+        cyber_icon_send(hwnd, 0x80, 0, small as isize);
+        cyber_icon_send(hwnd, 0x80, 1, large as isize);
+        ICON_APPLIED.store(true, std::sync::atomic::Ordering::Release);
+        log!("CYBER_TASKBAR_ICON installed=1 source={source} hwnd={hwnd:?} small=1 big=1 original_hwnd=1 no_focus_change=1");
+    }
+}
+
 fn window_monitor(hwnd: HWND) -> Option<RECT> {
     unsafe {
         let monitor = MonitorFromWindow(hwnd, 2);
@@ -119,6 +184,7 @@ pub fn cyber_viewport_size(w: u32, h: u32) -> Option<(u32, u32)> {
         if !own.is_null() {
             unsafe { ShowWindow(own, 0) };
         }
+        cyber_apply_taskbar_icon(game);
         log!("CyberGladiators using original input HWND {game:?} (not a rendering proxy)");
         game
     } else if found.1 {""",
