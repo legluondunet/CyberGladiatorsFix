@@ -4,12 +4,27 @@
 
 The version jump to **2.0.0** reflects a breaking directory layout introduced by merged [PR #27](https://github.com/legluondunet/CyberGladiatorsFix/pull/27) (main `189e98c1`). The installer intentionally **does not migrate old v1.0.1 installations**. Public v1.0.0/v1.0.1 releases remain immutable.
 
+## Publication blocker: intermittent native Windows FR crash
+
+[Issue #30](https://github.com/legluondunet/CyberGladiatorsFix/issues/30) records a later attempt with the same
+`2.0.0-2ae6cadb` binary that ended in **`0xc0000005`** after 6.638 seconds.
+The crash happened before AVI open, after the owned COM wrapper's
+`SetCooperativeLevel` was logged. The faulting instruction and module
+are **not identified**. Both attempts were treated as a new installation
+(`game installation not present yet`), not a proven repeat launch.
+The earlier successful 30.8-second run and maintainer visual/audio/Alt+Tab
+acceptance remain valid **for that one run**, but cannot establish
+reliable repeated Windows startup.
+
+- [ ] **Block publication until issue #30 is investigated and resolved**, or
+      an explicit subsequent documented release-risk decision is made
+
 ## Acceptance evidence, new layout and v2.0.0 candidate
 
 | Scenario | FR / Wine-staging 11.19 | USA / Wine-staging 11.19 | Native Windows |
 | --- | --- | --- | --- |
-| Authentic CUE/BIN fresh install and layout | Validated: 343 files | Validated: 342 files, including v2.0.0 candidate | **FR validated** on `2.0.0-2ae6cadb` (343 files); USA not tested |
-| 14 FLAC, 4:3 AVI, GameFrame and normal exit | Validated | Validated on `2.0.0-0f86b592` (53.6 s, exit 0) | **FR validated** on `2.0.0-2ae6cadb` (30.8 s, exit 0); maintainer confirmed image, music and Alt+Tab return correct; USA not tested |
+| Authentic CUE/BIN fresh install and layout | Validated: 343 files | Validated: 342 files, including v2.0.0 candidate | **FR one clean install passed**, second clean-install trial crashed (`0xc0000005`); USA not tested |
+| 14 FLAC, 4:3 AVI, GameFrame and normal exit | Validated | Validated on `2.0.0-0f86b592` (53.6 s, exit 0) | **FR first run passed** (30.8 s, exit 0, visual/audio/Alt+Tab accepted), **later start crashed** before AVI; USA not tested |
 | Second launch without source disc, Log=0 | Validated | Not tested | Not tested |
 | Two noncumulative Log=1 sessions | Validated | Not tested | Not tested |
 

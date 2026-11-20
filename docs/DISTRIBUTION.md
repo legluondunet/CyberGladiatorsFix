@@ -106,6 +106,18 @@ repeat launch remain untested in this layout; the maintainer confirmed
 the FR image, music and Alt+Tab return were correct. A final tagged v2.0.0 release binary is not
 yet field-tested.
 
+KNOWN WINDOWS FR v2.0.0 STARTUP REGRESSION
+-----------------------------------------
+A later native Windows FR clean-install attempt using the exact same
+2.0.0-2ae6cadb binary crashed before AVI open with exit code
+0xc0000005, following the virtual DirectDraw cooperative-level trace.
+Both observed attempts were logged as new installations, not a proven
+repeat launch. The precise faulting module and instruction are unknown.
+The earlier successful image, music and Alt+Tab test remains valid for
+that one session only. **Do not publish while this release blocker
+remains unresolved.**
+https://github.com/legluondunet/CyberGladiatorsFix/issues/30
+
 SIX-FILE DISTRIBUTION AND LICENSES
 ----------------------------------
 CyberGladiatorsFix.exe, README.txt, LICENSE-GPL-3.0, LICENSE-APACHE,

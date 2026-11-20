@@ -2,6 +2,21 @@
 
 **Release candidate only. Nothing has been published.** CyberGladiatorsFix is a GPL-3.0-or-later single-file Windows x64 installer/launcher for the original *Cyber Gladiators* (1996) PC game, also usable with Wine/Proton. Only authenticated original **US and French CUE/BIN** media are supported for installation. Game data and copyrighted CD music are **not distributed**.
 
+## Blocking Windows FR regression — investigation in progress
+
+**Do not publish this candidate while [issue #30](https://github.com/legluondunet/CyberGladiatorsFix/issues/30) is unresolved.**
+The native Windows French first-install smoke test completed successfully on
+20 November 2026 (30.8 s, exit 0), with image, music and Alt+Tab return
+confirmed by the maintainer. However, a subsequent trial using the **same
+`2.0.0-2ae6cadb`** binary **crashed with an access violation
+`0xc0000005`** after 6.638 seconds, after owned virtual DirectDraw
+`SetCooperativeLevel` and before opening the AVI. Both installer logs said
+`game installation not present yet`: the two attempts must not be presented
+as proof of a successful repeat launch of an existing installation. The
+faulting module/address is not yet known; proximity to a DirectDraw trace
+does not establish its root cause. Native Windows FR launch stability
+therefore remains **unresolved**, notwithstanding the successful first test.
+
 ## Breaking change: new installation required
 
 **v2.0.0 does not migrate v1.0.1 installations.** Put the new CyberGladiatorsFix.exe and original CUE/BIN in an empty writable directory. Do not replace a previous installation or assume old saves will be moved. Existing v1.x installations and the published v1.0.0/v1.0.1 downloads remain untouched.
