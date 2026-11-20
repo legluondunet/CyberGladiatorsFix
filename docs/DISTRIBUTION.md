@@ -97,9 +97,14 @@ GameFrame and FLAC playback were successfully tested under Wine-staging
 fresh retail CUE/BIN install and 53.6-second session with video focus
 recovery, FLAC/CDDA and normal exit. FR additionally validated
 subsequent Log=0 and consecutive Log=1 sessions.
-Windows CI succeeded, including native DLL loader checks, but this new
-v2 installation layout has NOT been gameplay-tested under native Windows.
-A final tagged v2.0.0 release binary is not yet field-tested.
+Windows CI succeeded, including native DLL loader checks. A native
+Windows FR test on the merged source build 2.0.0-2ae6cadb also passed
+fresh retail CYBERG.CUE installation, 4:3 video/GameFrame, FLAC/CDDA,
+focus return and normal exit after 30.8s. Its physical 1920x1200 mode
+remained unchanged; logical screen metrics were 1536x960. Windows USA,
+repeat launch and independently confirmed visual/audio quality remain
+untested in this layout. A final tagged v2.0.0 release binary is not
+yet field-tested.
 
 SIX-FILE DISTRIBUTION AND LICENSES
 ----------------------------------
