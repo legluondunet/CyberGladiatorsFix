@@ -188,6 +188,9 @@ fn owned_virtual_profiles(requested:bool,fr:bool,us:bool,wine:bool)->(bool,bool,
 }
 unsafe extern "C" fn initialize(){
     INITIALIZED.store(true,Ordering::Release);
+    // Install a verified game-only early COM cleanup guard. It only
+    // bypasses a cleanup call when the game's surface globals are null.
+    crate::ddraw_cleanup::initialize();
     if !env_is_one(b"CYBER_GAMEFRAME_TEST\0"){return;}
     let ntdll=GetModuleHandleA(b"ntdll.dll\0".as_ptr().cast());
     let wine=!ntdll.is_null()
@@ -216,6 +219,9 @@ unsafe extern "C" fn initialize(){
 unsafe extern "system" fn forward_ddraw_create(
     guid:*mut c_void,out:*mut *mut c_void,outer:*mut c_void
 )->i32{
+    // The US pre-AVI crash can happen before *any* MCI call. Report whether
+    // this fail-closed early cleanup guard attached at first DirectDrawCreate.
+    crate::ddraw_cleanup::report_once();
     let addr=CREATE_FN.load(Ordering::Acquire);
     if addr==0{return 0x88760000u32 as i32;}
     let original:unsafe extern "system" fn(
