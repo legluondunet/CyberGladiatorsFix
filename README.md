@@ -73,16 +73,18 @@ Normal launch selects a shared DirectDraw/MCI/AVI path for both exact retail edi
 
 ## Validation and limitations
 
-The new architecture was implemented in [merged PR #27](https://github.com/legluondunet/CyberGladiatorsFix/pull/27). [Windows CI after the merge](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44752207790) passed the source build, x86 DLL/loader, Rust tests and packaging, **not retail gameplay**.
+The v2 architecture was merged in [PR #27](https://github.com/legluondunet/CyberGladiatorsFix/pull/27). [PR #31](https://github.com/legluondunet/CyberGladiatorsFix/pull/31) adds a signature-verified memory-only guard for **early NULL DirectDraw cleanup** on both original French and USA executables, plus an XFCE taskbar icon loaded directly from the installed retail EXE. The resulting source was merged to `main` at `4ecd56d1`. The latest field-tested `2.0.0-2b720877` build passed [Windows CI #44838205814](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44838205814), including 32-bit runtime and 64-bit launcher compilation, automated tests and packaging checks. CI does **not** run the retail game.
 
-Under **Wine-staging 11.19**, authentic USA and French CUE/BIN sets installed and launched successfully with 4:3 AVI, GameFrame, FLAC/CDDA and normal exit. The version-bumped **USA `2.0.0-0f86b592` candidate** also passed a fresh retail CUE/BIN installation and 53.6-second session including video focus recovery, FLAC and normal exit. French Wine confirmed `Log=0` leaves both logs unchanged on second launch and two consecutive `Log=1` sessions are not cumulative. **Native Windows gameplay with the v2 layout was not field-tested**; earlier native Windows validation belongs to older builds. A USA subsequent no-CD/Log=0 session and a final tagged v2.0.0 binary also remain unverified.
+Under **native Windows**, the French edition on `cbad024d` visibly played its AVI, passed Alt+Tab and `SkipIntro=1`, exercised the guarded early cleanup and exited normally. The American edition on `fdca004d` passed a fresh retail CUE/BIN install, visibly played its AVI, exercised the US guarded cleanup, reached the menu/GameFrame/FLAC and exited normally. Both are v2-layout builds, but earlier than the icon-only `2b720877` change.
 
-The project supports only specifically verified original retail binaries and disc files; other editions, hardware and Wine/Proton versions are not guaranteed.
+Under **Wine-staging 11.19 / XFCE**, the final `2b720877` candidate ran both FR and US original editions with native MCI AVI, GameFrame/OpenGL, FLAC and normal exit. The **original game icon was visually confirmed** in the XFCE taskbar on USA. The French session reused an existing verified installation and skipped the AVI early with Space. Prior Wine FR runs verified `Log=0` file preservation and noncumulative `Log=1` sessions.
+
+**Scope limits:** do not infer full unskipped AVI playback from an early Space bypass; the final tagged binary, every latest-build Windows `SkipIntro`/repeat permutation, audible quality and all other host combinations have not been independently validated. See [v2 readiness](docs/RELEASE_READINESS_v2.0.0.md).
 
 ## Releases
 
 - **Latest published:** [v1.0.1](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v1.0.1) (unchanged)
-- **Proposed:** v2.0.0 — release preparation, **not yet published**
+- **Prepared:** v2.0.0 — pending guarded manual publication; **not yet published**
 - [v2.0.0 release notes](docs/RELEASE_NOTES_v2.0.0.md)
 - [v2.0.0 release readiness](docs/RELEASE_READINESS_v2.0.0.md)
 - [Guarded manual release process](docs/RELEASE_PROCESS.md)
