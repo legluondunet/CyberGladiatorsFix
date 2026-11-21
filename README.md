@@ -83,8 +83,8 @@ Under **Wine-staging 11.19 / XFCE**, the final `2b720877` candidate ran both FR 
 
 ## Releases
 
-- **Latest published:** [v1.0.1](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v1.0.1) (unchanged)
-- **Prepared:** v2.0.0 — pending guarded manual publication; **not yet published**
+- **Previous stable:** [v1.0.1](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v1.0.1) (historical release, unchanged)
+- **v2.0.0:** [Release page, once published](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0) — published only through the guarded manual workflow
 - [v2.0.0 release notes](docs/RELEASE_NOTES_v2.0.0.md)
 - [v2.0.0 release readiness](docs/RELEASE_READINESS_v2.0.0.md)
 - [Guarded manual release process](docs/RELEASE_PROCESS.md)
