@@ -1,6 +1,6 @@
 # CyberGladiatorsFix v2.0.0 — major layout release
 
-**Prepared release notes: the stable release has not yet been published.** CyberGladiatorsFix is a GPL-3.0-or-later single-file Windows x64 installer/launcher for the original *Cyber Gladiators* (1996) PC game, also usable with Wine/Proton. Only authenticated original **US and French CUE/BIN** media are supported for installation. Game data and copyrighted CD music are **not distributed**.
+CyberGladiatorsFix is a GPL-3.0-or-later single-file Windows x64 installer/launcher for the original *Cyber Gladiators* (1996) PC game, also usable with Wine/Proton. Only authenticated original **US and French CUE/BIN** media are supported for installation. Game data and copyrighted CD music are **not distributed**.
 
 ## Breaking change: new installation required
 
