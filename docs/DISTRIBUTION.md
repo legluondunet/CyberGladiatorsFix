@@ -19,7 +19,9 @@ On subsequent runs the CUE/BIN is not required. Standalone ISO **cannot be
 installed**, although --inspect supports disc-image inventory.
 
 There is NO migration from old v1.0.1 game folders. Keep old installations
-and saves separately. No proprietary game assets are bundled or overwritten.
+and saves separately. No proprietary game assets are bundled. Original source CUE/BIN media are
+never modified; the installed CYBER.EXE is patched only after its verified
+original is preserved as game/CYBER.EXE.bak.
 
 INSTALLED TREE
 --------------
@@ -91,15 +93,32 @@ resolution 4:3 graphics at approximately 60 FPS. The verified WinMM bridge
 handles native Cinepak AVI, CDDA/FLAC and DirectDraw/MCI compatibility.
 Focus/Alt+Tab adaptations exist for Windows and Wine.
 
-After merged PR #27, original USA and French CUE/BIN installs, AVI,
-GameFrame and FLAC playback were successfully tested under Wine-staging
-11.19. The version-bumped USA candidate 2.0.0-0f86b592 also passed a
-fresh retail CUE/BIN install and 53.6-second session with video focus
-recovery, FLAC/CDDA and normal exit. FR additionally validated
-subsequent Log=0 and consecutive Log=1 sessions.
-Windows CI succeeded, including native DLL loader checks, but this new
-v2 installation layout has NOT been gameplay-tested under native Windows.
-A final tagged v2.0.0 release binary is not yet field-tested.
+The v2 layout, authenticated USA/FR media, AVI, GameFrame and FLAC were
+tested under Wine-staging 11.19/XFCE. Earlier French Wine tests also
+confirmed default Log=0 and noncumulative Log=1 session logging.
+
+The same final engine 2.0.0-9605dff4 was exercised with both original
+USA and French editions under native Windows on 22 November 2026.
+USA: the live DirectDraw null-cleanup guard was invoked, original MCI AVI
+played for about 28 seconds, GameFrame/OpenGL menu and FLAC playback
+started, approximately 59 FPS stabilized, and the game exited with code 0.
+FR: a fresh CYBERG.CUE/BIN installed 343 original game files and 14 FLAC
+tracks; 356 resources passed integrity checks. The live FR DirectDraw
+guard was invoked, MCI AVI played for about 36 seconds, the menu and
+FLAC started, and the game exited with code 0. Both sessions logged video
+focus loss and recovery; the FR physical desktop mode remained unchanged.
+
+These final US/FR observations are log-confirmed. Both movie sessions
+recorded a Space key press: full natural AVI completion is NOT proven.
+Subjective video/audio quality and all current-build SkipIntro/repeat
+permutations have not been separately confirmed. The exact tagged
+release ZIP has not yet been run on a real host.
+
+The tested 9605dff4 engine passed Windows CI #44845426448; the latest
+documentation-only main commit 94370065 passed Windows CI #44989934680.
+CI covers native build/tests, DLL checks and package validation, not
+interactive retail gameplay. Check CI again on the final main SHA before
+the separately approved manual publication.
 
 SIX-FILE DISTRIBUTION AND LICENSES
 ----------------------------------

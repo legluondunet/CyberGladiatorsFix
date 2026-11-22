@@ -68,7 +68,7 @@ Both contain the same session ID when a game session is started.
 session; Log=1 restarts fresh noncumulative logs on every invocation.
 The first installation and the first actual game session are always logged.
 CDDA/FLAC music is always on.
-The user INI contains only [Video] SkipIntro.
+The user INI exposes [Video] SkipIntro and [Debug] Log.
 Both US and French retail discs are authenticated by exact EXE and resource
 hashes before installing or patching. A single-BIN raw disc with a verified
 150-sector zero pause before the first AUDIO INDEX 01 is accepted even when

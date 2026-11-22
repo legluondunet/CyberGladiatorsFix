@@ -1,6 +1,6 @@
 # Pre-release code audit — CyberGladiatorsFix
 
-Status: cleanup merged in PR #25; this audit is not a substitute for real-game smoke tests. See [v1.0.1 readiness](RELEASE_READINESS_v1.0.1.md).
+**Historical pre-v2 audit (PR #25):** this records the older CLI/renderer cleanup and is not the current v2.0.0 publication checklist. Consult [v2.0.0 readiness](RELEASE_READINESS_v2.0.0.md), [v2.0.0 release notes](RELEASE_NOTES_v2.0.0.md), and the [manual release process](RELEASE_PROCESS.md).
 
 ## Baseline and scope
 

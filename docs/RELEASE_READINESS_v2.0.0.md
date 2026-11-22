@@ -25,7 +25,8 @@ These tests **supersede the earlier assertion that the v2-layout game had not be
 - [x] Final `9605dff4` native Windows **FR** fresh retail CUE/BIN install and runtime (22 November 2026): 343 original files, 14 FLAC, 356 resources verified, FR null-COM guard **actually exercised**, MCI AVI ~36s with focus loss/return, physical 1920×1200 display mode preserved, first real GameFrame/OpenGL SwapBuffers, FLAC Track12 waveOut started, stable ~58.9 FPS and exit code 0 after 47.296s. **Log evidence only; not a visual/audio quality sign-off.**
 - [x] Final `9605dff4` [Windows CI #44845426448](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44845426448) passed before this documentation update.
 - [x] [Windows CI #44989204545](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44989204545) passed after the prior US documentation merge (`4631d6c1`).
-- [ ] Verify CI green on the next final source SHA after the new FR documentation merge.
+- [x] [Windows CI #44989934680](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44989934680) passed on `94370065` after the FR documentation merge (PR #37).
+- [ ] Verify Windows CI green on the exact final `main` SHA selected for manual release after the last documentation/help-text cleanup PR merges.
 - [ ] Obtain explicit approval **to publish v2.0.0**, distinct from approving its merges.
 - [ ] Manually dispatch [publish-v2.0.0](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/publish-v2.0.0.yml) on `main` with confirmation `publish-v2.0.0`.
 - [ ] Confirm public `v2.0.0` tag points to the selected `main` commit, exact six-file ZIP and ZIP SHA-256, correct EXE commit suffix, unchanged v1.0.0/v1.0.1 assets, and perform a final host smoke test.
