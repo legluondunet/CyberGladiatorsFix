@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-**One-click installer and modern compatibility fix for Cyber Gladiators (1996).**
+**One-click installer and modern compatibility fix for CyberGladiators (1996).**
 
 [**Download CyberGladiatorsFix v2.0.0**](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0)
 

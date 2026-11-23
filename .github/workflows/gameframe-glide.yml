@@ -51,7 +51,7 @@ jobs:
         with:
           targets: i686-pc-windows-msvc, x86_64-pc-windows-msvc
 
-      - name: Apply narrow Cyber Gladiators adaptations to pinned GameFrame sources
+      - name: Apply narrow CyberGladiators adaptations to pinned GameFrame sources
         shell: pwsh
         run: |
           python tools/gameframe/patch_gameframe.py third_party/game-frame

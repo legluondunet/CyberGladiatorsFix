@@ -1,4 +1,4 @@
-# Cyber Gladiators — French edition identification (static research only)
+# CyberGladiators — French edition identification (static research only)
 
 **Status: EXPERIMENTAL FR IMPLEMENTATION ON PR #5, NO FRENCH GAMEPLAY VALIDATION YET.** No French game asset or proprietary executable is checked into this repository. Findings are from the supplied original `CYBERG.BIN` and identical `cyber.exe`, with only metadata and isolated source patches committed.
 

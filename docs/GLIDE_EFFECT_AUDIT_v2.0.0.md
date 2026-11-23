@@ -23,7 +23,7 @@
 | General texture combiner | `grTexCombine` | Some cases are mapped to simple decal; conditional gap warnings |
 | 2D framebuffer scaling | `GLIDE_LFB_FILTER` in GameFrame `config.rs` | Default `nearest`; opt-in `linear` changes 2D sharpness, not the game's 3D texel filter |
 
-None of the above establishes that Cyber Gladiators **asks for** the approximated modes in a representative level. Do not introduce new filtering, anisotropy, post-processing or dither hacks until a concrete difference is demonstrated.
+None of the above establishes that CyberGladiators **asks for** the approximated modes in a representative level. Do not introduce new filtering, anisotropy, post-processing or dither hacks until a concrete difference is demonstrated.
 
 ## Recorded in-game effects — original FR edition under Wine, 23 November 2026
 

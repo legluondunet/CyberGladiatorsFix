@@ -1,6 +1,6 @@
 # CyberGladiatorsFix v1.0.0 — release notes
 
-CyberGladiatorsFix 1.0.0 is the first public release for the original 1996 **Cyber Gladiators** PC game. It supports original authenticated US and FR CUE/BIN editions. The publisher workflow creates tag `v1.0.0` at the exact successfully built and verified source commit; the distributed executable displays that commit's eight-character suffix. The listed hardware field tests document accepted combinations, not universal platform guarantees.
+CyberGladiatorsFix 1.0.0 is the first public release for the original 1996 **CyberGladiators** PC game. It supports original authenticated US and FR CUE/BIN editions. The publisher workflow creates tag `v1.0.0` at the exact successfully built and verified source commit; the distributed executable displays that commit's eight-character suffix. The listed hardware field tests document accepted combinations, not universal platform guarantees.
 
 ## Overview
 

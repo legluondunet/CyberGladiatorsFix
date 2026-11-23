@@ -2,7 +2,7 @@ CyberGladiatorsFix v2.0.0 — README for the one-file Windows package
 =====================================================================
 
 Open-source one-click installer and compatibility launcher for the original
-Cyber Gladiators (1996) PC game. Windows x64 and Wine/Proton. GPL-3.0-or-later.
+CyberGladiators (1996) PC game. Windows x64 and Wine/Proton. GPL-3.0-or-later.
 
 THIS ZIP DOES NOT CONTAIN THE ORIGINAL GAME OR COPYRIGHTED CD TRACKS.
 

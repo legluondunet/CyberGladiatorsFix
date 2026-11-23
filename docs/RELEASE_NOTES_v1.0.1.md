@@ -1,7 +1,7 @@
 # CyberGladiatorsFix v1.0.1 — maintenance release
 
 CyberGladiatorsFix **1.0.1** is a maintenance update to the published v1.0.0
-release for the original **Cyber Gladiators (1996)** PC game. Supported
+release for the original **CyberGladiators (1996)** PC game. Supported
 original retail installation images remain **US and French CUE/BIN**.
 The game and original copyrighted files are **not** included.
 
