@@ -314,7 +314,11 @@ pub fn launch_gameframe(root:&Path)->Result<Child,String>{
     if native_fr {crate::fr_ddraw_static::inspect(root,&exe);}
     // Prepare the independent game/DLL log only after launch prerequisites pass.
     diagnostics::start_runtime_session(root)?;
-    cmd.spawn().map_err(|e|format!("Unable to start Cyber Gladiators through GameFrame: {e}"))
+    // On one-click launches, the launcher stays alive while the game runs.
+    // Hide only an independently created console, never a shared terminal.
+    let console_action=crate::console::hide_private_console();
+    diagnostics::log(root,"CONSOLE",&format!("GAME_LAUNCH_CONSOLE action={console_action} shared_terminal_preserved=1"));
+    cmd.spawn().map_err(|e|format!("Unable to start CyberGladiators through GameFrame: {e}"))
 }
 
 #[cfg(test)]

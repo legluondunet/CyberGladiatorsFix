@@ -18,6 +18,7 @@ mod verify;
 mod diagnostics;
 mod bundle;
 mod autostart;
+mod console;
 
 use std::ffi::OsString;
 use std::fs;
@@ -297,6 +298,7 @@ fn main(){
     if let Err(e)=dispatch(&args,&root){
         show(&format!("{NAME}: ERROR: {e}"),&root);
         if !read_only {diagnostics::log(&root,"SESSION","END failure");}
+        console::report_fatal_if_hidden(&e);
         std::process::exit(1);
     }
     if !read_only {diagnostics::log(&root,"SESSION","END success");}
