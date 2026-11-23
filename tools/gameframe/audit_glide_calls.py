@@ -7,9 +7,12 @@ it does not assert visual equivalence or change the renderer.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import io
 from collections import Counter, defaultdict
 from pathlib import Path
 import re
+import zipfile
 
 CALL = re.compile(r"^(gr[A-Za-z0-9_]+|gu[A-Za-z0-9_]+)\((.*)\)\tframe ([0-9]+)\s*$")
 EFFECTS = {
@@ -55,12 +58,33 @@ CAUTIONS = {
 MAX_VARIANTS = 12
 
 
+@contextmanager
+def open_trace(path: Path):
+    """Stream a text trace or a single .txt member in a ZIP; never extract to disk."""
+    if path.suffix.lower() != ".zip":
+        with path.open("r", encoding="utf-8", errors="replace") as source:
+            yield source
+        return
+    with zipfile.ZipFile(path) as archive:
+        files = [
+            info for info in archive.infolist()
+            if not info.is_dir() and info.filename.lower().endswith(".txt")
+        ]
+        if len(files) != 1:
+            raise ValueError("ZIP must contain exactly one .txt trace")
+        if files[0].file_size > 512_000_000:
+            raise ValueError("ZIP trace exceeds the 512 MB safety limit")
+        with archive.open(files[0]) as compressed:
+            with io.TextIOWrapper(compressed, encoding="utf-8", errors="replace") as source:
+                yield source
+
+
 def read_trace(path: Path):
     totals: Counter[str] = Counter()
     modes: dict[str, Counter[str]] = defaultdict(Counter)
     frames: set[int] = set()
     matched = 0
-    with path.open("r", encoding="utf-8", errors="replace") as source:
+    with open_trace(path) as source:
         for raw in source:
             result = CALL.match(raw.rstrip("\r\n"))
             if result is None:
@@ -114,11 +138,11 @@ def report(path: Path) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("trace", type=Path, help="WRAPPER_CALLS .txt file from one Wine game run")
+    parser.add_argument("trace", type=Path, help="WRAPPER_CALLS .txt or .txt.zip file from one Wine game run")
     args = parser.parse_args()
     try:
         return report(args.trace)
-    except (OSError, UnicodeError) as error:
+    except (OSError, UnicodeError, ValueError, zipfile.BadZipFile) as error:
         parser.error(str(error))
         return 2
 
