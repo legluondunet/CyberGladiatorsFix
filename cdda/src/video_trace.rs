@@ -861,6 +861,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     if !register_black_host_class(base as *mut c_void){return None;}
     let smooth=smooth_enabled();
     let virtual_video=smooth&&virtual_mci_surface_enabled();
+    let wine_virtual=wine_virtual_mci_profile();
     if virtual_video && !register_virtual_video_class(base as *mut c_void){
         video_log(&format!("{}_SETUP_FAILED reason=class_registration",virtual_mci_log_prefix()));
         return None;
