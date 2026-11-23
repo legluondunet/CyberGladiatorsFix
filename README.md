@@ -1,49 +1,41 @@
 # CyberGladiatorsFix
 
-**One-click installer, compatibility patch and launcher for Cyber Gladiators (1996).**
+**One-click installer and modern compatibility fix for Cyber Gladiators (1996).**
 
-[![Windows CI](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml/badge.svg)](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml)
+[**Download CyberGladiatorsFix v2.0.0**](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0)
 
-CyberGladiatorsFix is a GPL-3.0-or-later Windows x64 launcher for Windows and Wine/Proton. It bundles our verified x86 **`fix.dll`** (WinMM/MCI/FLAC/CDDA and DirectDraw video support) and the verified x86 **GameFrame `glide.dll`** wrapper (Glide-to-OpenGL, Apache-2.0). **No copyrighted game data, original CD music or proprietary nGlide are distributed.**
+CyberGladiatorsFix installs and launches the original **US and French PC editions** on modern Windows, and on Linux through Wine/Proton. It is open source and **does not include the original game or CD audio**.
 
-## Quick start
+## Features
 
-1. Obtain the EXE from a successful [Windows x64 test build](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml) or a published release.
-2. In a **new empty writable folder**, place `CyberGladiatorsFix.exe` next to **one original USA `CYBER.cue`/`CYBER.bin` or French `CYBERG.CUE`/`CYBERG.BIN`** disc image.
-3. Double-click the EXE on Windows or run `wine CyberGladiatorsFix.exe` on Linux. The installer authenticates, extracts and checks the retail files, installs both embedded DLLs, extracts 14 FLAC music tracks and launches the game. Subsequent launches do not need the source CUE/BIN.
+- **Automatic installation:** detects supported original CUE/BIN disc images, installs the game, verifies its files and launches it. The disc image is no longer needed after installation.
+- **Modern graphics:** GameFrame Glide-to-OpenGL rendering, borderless fullscreen at desktop resolution, original **4:3 aspect ratio** and a 60 FPS limiter.
+- **Original videos:** AVI playback with an option to skip the introduction.
+- **CD music:** automatically extracts the original audio as **14 lossless FLAC tracks** for disc-free playback.
+- **Windows and Wine/Proton:** compatibility fixes for video, focus and Alt+Tab.
+- **Single executable:** the launcher includes the required compatibility components; no separate graphics wrapper installation is needed.
 
-**Important v2.0.0 breaking change:** the old v1.0.1 `CyberGladiatorsFix/` installation is **not migrated**. Preserve old installations and saved games separately; never expect an in-place upgrade to work. Standalone ISO may be inspected with `--inspect` but **cannot be installed**.
+## Installation
 
-## Installation structure (v2.0.0 source)
+1. Download and extract the [latest release](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0) into a **new, empty, writable folder**.
+2. Put your original disc image beside `CyberGladiatorsFix.exe`:
+   - **US:** `CYBER.cue` and `CYBER.bin`
+   - **French:** `CYBERG.CUE` and `CYBERG.BIN`
+3. Run `CyberGladiatorsFix.exe` on Windows, or use Wine on Linux:
 
-```text
-CyberGladiatorsFix.exe
-CyberGladiatorsFix.ini
-CyberGladiatorsFix_installer.log
-CyberGladiatorsFix.log
-game/
-  cyber.exe
-  CYBER.EXE.bak     # original verified retail executable
-  cyber.ini
-  fix.dll           # our embedded WinMM/MCI/FLAC bridge
-  glide.dll         # verified embedded GameFrame
-  graphics/, iq/, ... original resources
-music/
-  Track02.flac ... Track15.flac
-state/
-  CyberGladiatorsFix.manifest
-  CyberGladiatorsFix.sha256
-  CyberGladiatorsFix.gameframe.sha256
-  CyberGladiatorsFix.install-receipt.txt
-  CyberGladiatorsFix.first-launch-complete.txt # created after first successful run
-docs/
-  README.md, LICENSE-GPL-3.0, LICENSE-APACHE, LICENSE-MIT
-  CyberGladiatorsFix.ini.example, build-info.txt
-```
+   ```sh
+   wine CyberGladiatorsFix.exe
+   ```
 
-There is no nested `CyberGladiatorsFix/` directory. `CYBER.EXE.bak` is **intentionally retained** for verification. Installer-owned `fix.dll` and `glide.dll` can be replaced only after ownership checks, **without permanent DLL backups**; unknown DLL files are never silently overwritten. On initial install, all original assets including writable `iq/` are hashed; later, changed IQ files must exist as regular files but are no longer hash-compared, while immutable assets remain SHA-256-checked.
+The installer handles the rest. For future launches, simply run `CyberGladiatorsFix.exe` again.
 
-## INI and logging
+> **Upgrading from v1.x:** v2.0.0 requires a fresh installation and does not migrate existing installations or saved games. Keep your previous folder and saves separately.
+>
+> **Disc formats:** original US/FR CUE/BIN images are supported for installation; a standalone ISO cannot be installed.
+
+## Configuration
+
+The optional `CyberGladiatorsFix.ini` file contains:
 
 ```ini
 [Video]
@@ -53,43 +45,19 @@ SkipIntro=0
 Log=0
 ```
 
-The **first installation and first successful gameplay session** generate both root logs even with `Log=0`. Afterward `Log=0` leaves both files untouched. Set `Log=1` to regenerate two noncumulative diagnostic logs each session; launcher and game logs share a session ID. `SkipIntro=1` skips the opening AVI; original FLAC/CDDA music remains automatic.
+Set `SkipIntro=1` to skip the opening video or `Log=1` to enable diagnostic logs.
 
-## Commands
+Useful commands:
 
 ```text
-CyberGladiatorsFix.exe                     auto install / verify / launch
-CyberGladiatorsFix.exe --install-only      install without launching
-CyberGladiatorsFix.exe --verify            verify existing installation
-CyberGladiatorsFix.exe --launch-no-verify  direct launch without checks/repairs
-CyberGladiatorsFix.exe --inspect image.iso
-CyberGladiatorsFix.exe --inspect image.cue [track.bin|track.img]
-CyberGladiatorsFix.exe --verbose           diagnostic modifier (combinable)
-CyberGladiatorsFix.exe --version
-CyberGladiatorsFix.exe --help              also -h
+CyberGladiatorsFix.exe                 Install, verify and launch
+CyberGladiatorsFix.exe --install-only  Install without launching
+CyberGladiatorsFix.exe --verify        Verify an existing installation
+CyberGladiatorsFix.exe --help          Show all available options
 ```
 
-Normal launch selects a shared DirectDraw/MCI/AVI path for both exact retail editions, with original native video, optional skip, a centered **4:3** image in desktop-resolution borderless fullscreen, GameFrame/OpenGL ~60 FPS limiting, FLAC music, focus/Alt+Tab adaptations for Windows/Wine and a menu-only version/commit signature. Neither a special renderer option nor a separate player is required.
+## License
 
-## Validation and limitations
+CyberGladiatorsFix and its compatibility bridge are licensed under **GPL-3.0-or-later**. The bundled [GameFrame](https://github.com/tanepiper/game-frame) renderer is **Apache-2.0**; `isomage` is **MIT**.
 
-The v2 architecture was merged in [PR #27](https://github.com/legluondunet/CyberGladiatorsFix/pull/27). [PR #31](https://github.com/legluondunet/CyberGladiatorsFix/pull/31) adds a signature-verified memory-only guard for **early NULL DirectDraw cleanup** on both original French and USA executables, plus an XFCE taskbar icon loaded directly from the installed retail EXE. The resulting source was merged to `main` at `4ecd56d1`. The Wine/XFCE-tested `2.0.0-2b720877` candidate passed [Windows CI #44838205814](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44838205814). The newer `9605dff4` engine passed [Windows CI #44845426448](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44845426448) and was subsequently field-tested on native Windows in both retail editions, as detailed below. The post-test documentation-only `main` commit `94370065` passed [Windows CI #44989934680](https://github.com/legluondunet/CyberGladiatorsFix/actions/runs/44989934680), including launcher and runtime builds, automated tests and packaging checks. CI does **not** run the retail game.
-
-Under **native Windows**, the French edition on `cbad024d` visibly played its AVI, passed Alt+Tab and `SkipIntro=1`, exercised the guarded early cleanup and exited normally. The American edition on `fdca004d` passed a fresh retail CUE/BIN install, visibly played its AVI, exercised the US guarded cleanup, reached the menu/GameFrame/FLAC and exited normally. **The final `9605dff4` US Windows smoke log (22 November 2026)** further confirms actual early null-cleanup interception, roughly 28 seconds of MCI video activity with focus loss/recovery, successful 3D handoff, FLAC startup, ~59 FPS after stabilization and exit code 0. This last test was **log-confirmed**, not an independent visual/audio sign-off. **The final `9605dff4` FR native Windows smoke logs (22 November 2026)** now validate a fresh original CUE/BIN installation (343 files, 14 FLAC, 356 resources verified), FR null-cleanup guard actually invoked, ~36 seconds of MCI AVI, video focus loss/recovery, first GameFrame OpenGL present, FLAC startup, ~59 FPS after stabilization, unchanged physical 1920×1200 desktop mode and clean exit code 0 after 47.296s. Both latest Windows FR/US results are **log-confirmed**, not independent visual/audio fidelity sign-offs.
-
-Under **Wine-staging 11.19 / XFCE**, the final `2b720877` candidate ran both FR and US original editions with native MCI AVI, GameFrame/OpenGL, FLAC and normal exit. The **original game icon was visually confirmed** in the XFCE taskbar on USA. The French session reused an existing verified installation and skipped the AVI early with Space. Prior Wine FR runs verified `Log=0` file preservation and noncumulative `Log=1` sessions.
-
-**Scope limits:** a Space keydown appears in both final native FR and US movie runs, so natural full-length playback cannot be inferred. The future tagged binary, latest-build Windows `SkipIntro`/repeat permutations, subjective video/audio fidelity, natural full-length movie completion and all other host combinations have not been independently validated. See [v2 readiness](docs/RELEASE_READINESS_v2.0.0.md).
-
-## Releases
-
-- **Previous stable:** [v1.0.1](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v1.0.1) (historical release, unchanged)
-- **v2.0.0:** [Release page, once published](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0) — published only through the guarded manual workflow
-- [v2.0.0 release notes](docs/RELEASE_NOTES_v2.0.0.md)
-- [v2.0.0 release readiness](docs/RELEASE_READINESS_v2.0.0.md)
-- [Guarded manual release process](docs/RELEASE_PROCESS.md)
-- [Detailed installation-layout record](docs/UNIFIED_LAYOUT_PLAN.md)
-
-The release ZIP contains the one EXE, README.txt, GPL/Apache/MIT licenses and SHA256SUMS (six flat files). Public release creation requires **separate, explicit maintainer approval**: merging a PR never publishes a release. Existing v1.0.0 and v1.0.1 assets remain untouched.
-
-CyberGladiatorsFix and fix.dll: GPL-3.0-or-later; GameFrame: Apache-2.0; isomage: MIT.
+Original game files, textures, videos and CD audio are **not distributed**. You must supply your own supported original game media.
