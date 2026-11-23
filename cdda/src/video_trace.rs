@@ -2375,13 +2375,13 @@ mod fullscreen_tests {
     }
     #[test]
     fn smooth_window_is_managed_and_video_surface_initially_hidden(){
-        assert_ne!(host_exstyle(true)&WS_EX_APPWINDOW,0);
-        assert_eq!(host_exstyle(true)&WS_EX_TOOLWINDOW,0);
-        assert_ne!(host_exstyle(true)&WS_EX_NOACTIVATE,0);
-        assert_ne!(host_exstyle(true)&WS_EX_TOPMOST,0);
+        assert_ne!(host_exstyle(true,false)&WS_EX_APPWINDOW,0);
+        assert_eq!(host_exstyle(true,false)&WS_EX_TOOLWINDOW,0);
+        assert_ne!(host_exstyle(true,false)&WS_EX_NOACTIVATE,0);
+        assert_ne!(host_exstyle(true,false)&WS_EX_TOPMOST,0);
         assert_eq!(video_surface_style(true)&WS_VISIBLE,0);
-        assert_eq!(host_exstyle(false)&WS_EX_APPWINDOW,0);
-        assert_ne!(host_exstyle(false)&WS_EX_TOOLWINDOW,0);
+        assert_eq!(host_exstyle(false,false)&WS_EX_APPWINDOW,0);
+        assert_ne!(host_exstyle(false,false)&WS_EX_TOOLWINDOW,0);
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
     }
     #[test]
@@ -2398,7 +2398,7 @@ mod fullscreen_tests {
             assert_eq!(temporary & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW),
                 previous & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW));
         }
-        assert_ne!(host_exstyle(true)&WS_EX_APPWINDOW,0,
+        assert_ne!(host_exstyle(true,false)&WS_EX_APPWINDOW,0,
             "video host must remain selectable from native Alt+Tab");
     }
     #[test]
