@@ -713,9 +713,16 @@ fn destination_command(text:&str)->bool {
 // popup. Using the NORMAL window type (not a transient DIALOG) lets the
 // Linux WM hide its panel for this monitor-filling temporary host.
 // The validated normal launch keeps the original topmost tool-window style.
-fn host_exstyle(smooth:bool)->u32 {
+// GE-Proton may stack an independently managed fullscreen AVI host behind
+// the game's still-visible Glide window. A game-owned popup instead has
+// explicit Win32 owner-above-owned z-order. It is an opt-in Wine experiment;
+// native Windows and default Wine retain the existing independent host.
+fn use_game_owned_avi_host(smooth:bool,wine_virtual:bool,requested:bool)->bool{
+    smooth && wine_virtual && requested
+}
+fn host_exstyle(smooth:bool,game_owned:bool)->u32 {
     WS_EX_NOACTIVATE|WS_EX_TOPMOST|
-        if smooth{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
+        if smooth && !game_owned{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
 }
 // With the independently managed AVI host in the Windows task switcher,
 // exposing the underlying black GameFrame/Glide HWND produces two Alt+Tab
@@ -862,8 +869,17 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // popup (rather than an owned tool-window/dialog). This prevents the
     // Linux desktop panel from staying above the video on WMs which honor
     // EWMH fullscreen. WS_EX_NOACTIVATE preserves keyboard focus on the game.
-    let owner=if smooth{std::ptr::null_mut()}else{hwnd};
-    let host=CreateWindowExA(host_exstyle(smooth),
+    let game_owned=use_game_owned_avi_host(
+        smooth,wine_virtual,
+        std::env::var("CYBER_AVI_GAME_OWNED_HOST").as_deref()==Ok("1")
+    );
+    let owner=if smooth && !game_owned{std::ptr::null_mut()}else{hwnd};
+    video_log(&format!(
+        "AVI_HOST_OWNERSHIP game_owned={} independent={} wine_virtual={} experiment_opt_in={} game_input_hwnd={game:#x} focus_change=0",
+        u8::from(game_owned),u8::from(!game_owned),u8::from(wine_virtual),
+        u8::from(std::env::var("CYBER_AVI_GAME_OWNED_HOST").as_deref()==Ok("1"))
+    ));
+    let host=CreateWindowExA(host_exstyle(smooth,game_owned),
         HOST_CLASS.as_ptr(),b"\0".as_ptr(),
         WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN,
         info.monitor.left,info.monitor.top,screen_w,screen_h,owner,
@@ -924,7 +940,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         let mut rect=WinRect::default();
         let geometry_ok=GetWindowRect(host,&mut rect);
         video_log(&format!(
-            "WM_FULLSCREEN_REQUEST managed_app_window=1 independent_owner=1 no_activate=1 setpos={positioned} rect_valid={geometry_ok} rect=({},{} {}x{}) monitor=({},{} {}x{}) source_surface_initially_hidden=1",
+            "WM_FULLSCREEN_REQUEST managed_app_window={} independent_owner={} no_activate=1 setpos={positioned} rect_valid={geometry_ok} rect=({},{} {}x{}) monitor=({},{} {}x{}) source_surface_initially_hidden=1",
+            u8::from(!game_owned),u8::from(!game_owned),
             rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,
             info.monitor.left,info.monitor.top,screen_w,screen_h
         ));
@@ -2493,6 +2510,18 @@ mod fullscreen_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owned_host_is_opt_in_and_only_for_wine_video(){
+        assert!(use_game_owned_avi_host(true,true,true));
+        for (smooth,wine,requested) in [
+            (false,true,true),(true,false,true),(true,true,false)
+        ]{
+            assert!(!use_game_owned_avi_host(smooth,wine,requested));
+        }
+        assert_eq!(host_exstyle(true,false)&WS_EX_APPWINDOW,WS_EX_APPWINDOW);
+        assert_eq!(host_exstyle(true,true)&WS_EX_TOOLWINDOW,WS_EX_TOOLWINDOW);
+        assert_eq!(host_exstyle(false,false)&WS_EX_TOOLWINDOW,WS_EX_TOOLWINDOW);
+    }
     #[test]
     fn shared_video_painter_serves_all_authenticated_editions(){
         assert!(virtual_mci_profile(true,true));
