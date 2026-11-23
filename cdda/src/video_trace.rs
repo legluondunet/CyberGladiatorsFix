@@ -1904,6 +1904,15 @@ fn should_transfer_initial_avi_keyboard_focus(
     wine_virtual && first_status && !already_attempted
         && foreground_is_video_host && same_game_ui_thread
 }
+// GE-Proton/UMU may initially map the managed native-MCI AVI host below an
+// opaque game window even though Win32 reports the host as visible. An actual
+// Alt+Tab unmap/remap makes the frames appear. Keep the same one-time remap
+// opt-in for diagnosis; do not change validated native Windows or Wine runs.
+fn should_force_initial_avi_remap(
+    wine_virtual:bool,active:bool,first_focus_status:bool,opted_in:bool
+)->bool{
+    wine_virtual && active && first_focus_status && opted_in
+}
 fn expected_virtual_avi_host_visibility(wine_virtual:bool,active:bool)->Option<bool>{
     wine_virtual.then_some(active)
 }
@@ -1992,6 +2001,27 @@ pub fn refresh_managed_movie_focus(command:&str,result:u32)->Option<CString>{
             const NO_MOVE_SIZE_ACTIVATE:u32=SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE;
             let previous_visible=IsWindowVisible(host)!=0;
             let (host_result,game_result)=if active{
+                if should_force_initial_avi_remap(
+                    wine_virtual,active,h.video_last_active.is_none(),
+                    std::env::var("CYBER_AVI_INITIAL_REMAP").as_deref()==Ok("1")
+                ) {
+                    // Reproduce only the compositor map transition that
+                    // makes the AVI visible after Alt+Tab. No focus theft,
+                    // game minimization, renderer swap or MCI time change.
+                    let before=IsWindowVisible(host)!=0;
+                    if before {
+                        let _=ShowWindow(host,SW_HIDE);
+                        let hidden=IsWindowVisible(host)==0;
+                        let _=ShowWindow(host,SW_SHOWNOACTIVATE);
+                        let after=IsWindowVisible(host)!=0;
+                        video_log(&format!(
+                            "WINE_AVI_INITIAL_REMAP opt_in=1 before_visible=1 hidden={} after_visible={} focus_change=0 game_minimize=0 first_status=1",
+                            u8::from(hidden),u8::from(after)
+                        ));
+                    }else{
+                        video_log("WINE_AVI_INITIAL_REMAP opt_in=1 skipped=host_not_visible first_status=1");
+                    }
+                }
                 // Remap the same host and video-surface HWNDs; no new
                 // renderer, no alternative decoder and no focus stealing.
                 if wine_virtual {
@@ -2433,6 +2463,15 @@ mod fullscreen_tests {
     }
     #[test]
     fn wine_initial_keyboard_focus_transfer_never_steals_from_other_apps(){
+        assert!(should_force_initial_avi_remap(true,true,true,true));
+        for &(wine,active,first,opted) in &[
+            (false,true,true,true),
+            (true,false,true,true),
+            (true,true,false,true),
+            (true,true,true,false),
+        ] {
+            assert!(!should_force_initial_avi_remap(wine,active,first,opted));
+        }
         assert!(should_transfer_initial_avi_keyboard_focus(true,true,false,true,true));
         assert!(!should_transfer_initial_avi_keyboard_focus(false,true,false,true,true));
         assert!(!should_transfer_initial_avi_keyboard_focus(true,false,false,true,true));
