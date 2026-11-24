@@ -1,6 +1,6 @@
 # CyberGladiatorsFix
 
-[![Standalone Windows x64 build](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml/badge.svg)](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml) [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux%20Wine%20%2F%20Proton-compatible-428b40?logo=linux&logoColor=white)](#installation)
+[![Windows x64 Build](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml/badge.svg?branch=main)](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml) [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux%20Wine%20%2F%20Proton-compatible-428b40?logo=linux&logoColor=white)](#installation)
 
 **One-click installer and modern compatibility fix for CyberGladiators (1996).**
 
