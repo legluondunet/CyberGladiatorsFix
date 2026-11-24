@@ -1,4 +1,4 @@
-name: CyberGladiatorsFix - Windows x64 one-file pre-release checks
+name: Windows x64 Build
 
 on:
   # Run the complete release build for every change, not just selected paths.
