@@ -1,5 +1,7 @@
 # CyberGladiatorsFix v2.0.0 — major layout release
 
+> **Historical release notes:** v2.0.0 was published on **23 November 2026**. References below to a future v2.0.0 publication reflect the original pre-publication audit; they are not current instructions. For the next version see [v2.0.1 notes](RELEASE_NOTES_v2.0.1.md) and [readiness](RELEASE_READINESS_v2.0.1.md).
+
 CyberGladiatorsFix is a GPL-3.0-or-later single-file Windows x64 installer/launcher for the original *CyberGladiators* (1996) PC game, also usable with Wine/Proton. Only authenticated original **US and French CUE/BIN** media are supported for installation. Game data and copyrighted CD music are **not distributed**.
 
 ## Breaking change: new installation required
