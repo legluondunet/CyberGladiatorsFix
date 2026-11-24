@@ -1,6 +1,6 @@
 # CyberGladiatorsFix v2.0.1 — GE-Proton AVI compatibility
 
-Maintenance update to the already published [v2.0.0](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0). **These are proposed notes for a future v2.0.1 publication, not evidence that v2.0.1 has been released.**
+Maintenance update to the previously published [v2.0.0](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0).
 
 CyberGladiatorsFix remains a single Windows x64 installer/launcher for original authenticated **USA and French CyberGladiators CUE/BIN** discs. It runs on native Windows and under Wine/Proton. The archive contains the open-source compatibility tools, not game executables, original game assets, disc images or CD music.
 
@@ -39,7 +39,7 @@ The same six-file ZIP structure remains: `CyberGladiatorsFix.exe`, `README.txt`,
 
 ## Scope and limits
 
-This maintenance version **does not** introduce a new renderer, filtering or graphics options, installer-supported ISO images, a new save-game format or additional retail language editions. Full unskipped AVI completion, every GPU/WM/runner combination and extended gameplay sessions are not established by this fix's validation logs. The real-host observations above must not be substituted for an end-to-end smoke test of the **future tagged v2.0.1 ZIP**.
+This maintenance version **does not** introduce a new renderer, filtering or graphics options, installer-supported ISO images, a new save-game format or additional retail language editions. Full unskipped AVI completion, every GPU/WM/runner combination and extended gameplay sessions are not established by this fix's validation logs. The real-host observations above must not be substituted for an end-to-end smoke test of the **official tagged v2.0.1 ZIP**.
 
 Source license: CyberGladiatorsFix and `fix.dll` **GPL-3.0-or-later**; bundled GameFrame **Apache-2.0**; `isomage` **MIT**. No original copyrighted game or disc audio is bundled.
 
