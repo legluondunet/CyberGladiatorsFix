@@ -1,10 +1,8 @@
 # CyberGladiatorsFix
 
+[![Standalone Windows x64 build](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml/badge.svg)](https://github.com/legluondunet/CyberGladiatorsFix/actions/workflows/gameframe-glide.yml) [![Linux Wine / Proton compatible](https://img.shields.io/badge/Linux%20Wine%20%2F%20Proton-compatible-428b40?logo=linux&logoColor=white)](#installation)
+
 **One-click installer and modern compatibility fix for CyberGladiators (1996).**
-
-**Developed by [legluondunet](https://github.com/legluondunet), with assistance from ChatGPT (OpenAI).**
-
-[**Download the latest stable CyberGladiatorsFix release**](https://github.com/legluondunet/CyberGladiatorsFix/releases/latest)
 
 CyberGladiatorsFix installs and launches the original **US and French PC editions** on modern Windows, and on Linux through Wine/Proton. It is open source and **does not include the original game or CD audio**.
 
@@ -63,3 +61,7 @@ CyberGladiatorsFix.exe --help          Show all available options
 CyberGladiatorsFix and its compatibility bridge are licensed under **GPL-3.0-or-later**. The bundled [GameFrame](https://github.com/tanepiper/game-frame) renderer is **Apache-2.0**; `isomage` is **MIT**.
 
 Original game files, textures, videos and CD audio are **not distributed**. You must supply your own supported original game media.
+
+---
+
+**Developed by [legluondunet](https://github.com/legluondunet), with assistance from ChatGPT (OpenAI).**
