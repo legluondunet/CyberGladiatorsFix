@@ -10,7 +10,7 @@ CyberGladiatorsFix installs and launches the original **US and French PC edition
   <tr>
     <td width="48%" align="center"><img src="docs/images/character-selection.webp" width="100%" alt="CyberGladiators character selection screen"></td>
     <td width="4%">&nbsp;</td>
-    <td width="48%" align="center"><img src="docs/images/gameplay-combat.webp" width="100%" alt="CyberGladiators in-game combat scene"></td>
+    <td width="48%" align="center"><img src="docs/images/purple-background-fight.webp" width="100%" alt="CyberGladiators two robots fighting against a purple background"></td>
   </tr>
 </table>
 
