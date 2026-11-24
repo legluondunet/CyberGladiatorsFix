@@ -199,6 +199,29 @@ jobs:
           Write-Host 'Both removed disc inspection commands rejected without installation: PASS'
           exit 0
 
+      - name: Verify supported disc inspection remains separate from retired --inspect-disc
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $exe = (Resolve-Path 'target/x86_64-pc-windows-msvc/release/CyberGladiatorsFix.exe').Path
+          $dir = Split-Path -Parent $exe
+          $help = (& $exe --help | Out-String)
+          if (!$help.Contains('--inspect image.iso')) { throw 'Supported --inspect missing from help' }
+          $report = Join-Path $dir 'CyberGladiatorsFix_inspect.log'
+          $installerLog = Join-Path $dir 'CyberGladiatorsFix_installer.log'
+          $oldHash = if (Test-Path $installerLog) { (Get-FileHash $installerLog -Algorithm SHA256).Hash } else { $null }
+          $output = (& $exe --inspect missing-image.iso 2>&1 | Out-String)
+          if ($LASTEXITCODE -eq 0) { throw '--inspect unexpectedly accepted a missing ISO' }
+          if (!(Test-Path $report) -or !(Get-Content $report -Raw).Contains('INSPECT_RESULT=FAILED')) {
+            throw 'Supported --inspect did not produce a failure report'
+          }
+          if (Test-Path (Join-Path $dir 'game')) { throw '--inspect installed the game' }
+          if ($oldHash -ne $null -and (Get-FileHash $installerLog -Algorithm SHA256).Hash -ne $oldHash) {
+            throw '--inspect modified the unrelated installer log'
+          }
+          Write-Host 'Supported --inspect safely rejected missing ISO without installing: PASS'
+          exit 0
+
       - name: Verify one-click auto-discovery fails safely without a retail CD
         shell: pwsh
         run: |
