@@ -713,9 +713,48 @@ fn destination_command(text:&str)->bool {
 // popup. Using the NORMAL window type (not a transient DIALOG) lets the
 // Linux WM hide its panel for this monitor-filling temporary host.
 // The validated normal launch keeps the original topmost tool-window style.
-fn host_exstyle(smooth:bool)->u32 {
+// GE-Proton may stack an independently managed fullscreen AVI host behind
+// the opaque game window. A game-owned popup has explicit owner/owned z-order.
+// Detect GE-Proton/UMU from established runner metadata. Do not infer Proton
+// from WINEPREFIX, WINEDEBUG, SteamAppId or the Wine version string: those are
+// not reliable GE-Proton markers. Never log the environment paths themselves.
+fn contains_ge_proton(value:&str)->bool{
+    let lower=value.to_ascii_lowercase();
+    lower.contains("ge-proton") || lower.contains("proton-ge")
+        || lower.contains("ge_proton")
+}
+fn ge_proton_source(
+    protonpath:Option<&str>,tool_paths:Option<&str>,mounts:Option<&str>
+)->&'static str{
+    if protonpath.is_some_and(contains_ge_proton){"PROTONPATH"}
+    else if tool_paths.is_some_and(contains_ge_proton){"STEAM_COMPAT_TOOL_PATHS"}
+    else if mounts.is_some_and(contains_ge_proton){"STEAM_COMPAT_MOUNTS"}
+    else {"none"}
+}
+fn detected_ge_proton_source()->&'static str{
+    ge_proton_source(
+        std::env::var("PROTONPATH").ok().as_deref(),
+        std::env::var("STEAM_COMPAT_TOOL_PATHS").ok().as_deref(),
+        std::env::var("STEAM_COMPAT_MOUNTS").ok().as_deref()
+    )
+}
+// Legacy manual testing switch stays available for diagnosis. Missing value
+// selects the automatic GE-Proton policy, "0" disables, "1" forces enable.
+// Native Windows and normal Wine are unchanged unless explicitly opted in.
+fn game_owned_host_setting(override_value:Option<&str>,ge_detected:bool)->(bool,&'static str){
+    match override_value {
+        Some("1")=>(true,"forced-on"),
+        Some("0")=>(false,"forced-off"),
+        _ if ge_detected=>(true,"auto-ge-proton"),
+        _=>(false,"auto-default"),
+    }
+}
+fn use_game_owned_avi_host(smooth:bool,wine_virtual:bool,requested:bool)->bool{
+    smooth && wine_virtual && requested
+}
+fn host_exstyle(smooth:bool,game_owned:bool)->u32 {
     WS_EX_NOACTIVATE|WS_EX_TOPMOST|
-        if smooth{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
+        if smooth && !game_owned{WS_EX_APPWINDOW}else{WS_EX_TOOLWINDOW}
 }
 // With the independently managed AVI host in the Windows task switcher,
 // exposing the underlying black GameFrame/Glide HWND produces two Alt+Tab
@@ -854,6 +893,7 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     if !register_black_host_class(base as *mut c_void){return None;}
     let smooth=smooth_enabled();
     let virtual_video=smooth&&virtual_mci_surface_enabled();
+    let wine_virtual=wine_virtual_mci_profile();
     if virtual_video && !register_virtual_video_class(base as *mut c_void){
         video_log(&format!("{}_SETUP_FAILED reason=class_registration",virtual_mci_log_prefix()));
         return None;
@@ -862,8 +902,17 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
     // popup (rather than an owned tool-window/dialog). This prevents the
     // Linux desktop panel from staying above the video on WMs which honor
     // EWMH fullscreen. WS_EX_NOACTIVATE preserves keyboard focus on the game.
-    let owner=if smooth{std::ptr::null_mut()}else{hwnd};
-    let host=CreateWindowExA(host_exstyle(smooth),
+    let ge_source=detected_ge_proton_source();
+    let explicit=std::env::var("CYBER_AVI_GAME_OWNED_HOST").ok();
+    let (requested,policy)=game_owned_host_setting(explicit.as_deref(),ge_source!="none");
+    let game_owned=use_game_owned_avi_host(smooth,wine_virtual,requested);
+    let owner=if smooth && !game_owned{std::ptr::null_mut()}else{hwnd};
+    video_log(&format!(
+        "AVI_HOST_OWNERSHIP game_owned={} independent={} wine_virtual={} policy={policy} ge_proton_source={ge_source} manual_override={} game_input_hwnd={game:#x} focus_change=0",
+        u8::from(game_owned),u8::from(!game_owned),u8::from(wine_virtual),
+        if explicit.is_some(){"set"}else{"unset"}
+    ));
+    let host=CreateWindowExA(host_exstyle(smooth,game_owned),
         HOST_CLASS.as_ptr(),b"\0".as_ptr(),
         WS_POPUP|WS_VISIBLE|WS_CLIPCHILDREN,
         info.monitor.left,info.monitor.top,screen_w,screen_h,owner,
@@ -924,7 +973,8 @@ unsafe fn prepare_host(original_window:usize)->Option<NativeHost>{
         let mut rect=WinRect::default();
         let geometry_ok=GetWindowRect(host,&mut rect);
         video_log(&format!(
-            "WM_FULLSCREEN_REQUEST managed_app_window=1 independent_owner=1 no_activate=1 setpos={positioned} rect_valid={geometry_ok} rect=({},{} {}x{}) monitor=({},{} {}x{}) source_surface_initially_hidden=1",
+            "WM_FULLSCREEN_REQUEST managed_app_window={} independent_owner={} no_activate=1 setpos={positioned} rect_valid={geometry_ok} rect=({},{} {}x{}) monitor=({},{} {}x{}) source_surface_initially_hidden=1",
+            u8::from(!game_owned),u8::from(!game_owned),
             rect.left,rect.top,rect.right-rect.left,rect.bottom-rect.top,
             info.monitor.left,info.monitor.top,screen_w,screen_h
         ));
@@ -2358,13 +2408,13 @@ mod fullscreen_tests {
     }
     #[test]
     fn smooth_window_is_managed_and_video_surface_initially_hidden(){
-        assert_ne!(host_exstyle(true)&WS_EX_APPWINDOW,0);
-        assert_eq!(host_exstyle(true)&WS_EX_TOOLWINDOW,0);
-        assert_ne!(host_exstyle(true)&WS_EX_NOACTIVATE,0);
-        assert_ne!(host_exstyle(true)&WS_EX_TOPMOST,0);
+        assert_ne!(host_exstyle(true,false)&WS_EX_APPWINDOW,0);
+        assert_eq!(host_exstyle(true,false)&WS_EX_TOOLWINDOW,0);
+        assert_ne!(host_exstyle(true,false)&WS_EX_NOACTIVATE,0);
+        assert_ne!(host_exstyle(true,false)&WS_EX_TOPMOST,0);
         assert_eq!(video_surface_style(true)&WS_VISIBLE,0);
-        assert_eq!(host_exstyle(false)&WS_EX_APPWINDOW,0);
-        assert_ne!(host_exstyle(false)&WS_EX_TOOLWINDOW,0);
+        assert_eq!(host_exstyle(false,false)&WS_EX_APPWINDOW,0);
+        assert_ne!(host_exstyle(false,false)&WS_EX_TOOLWINDOW,0);
         assert_ne!(video_surface_style(false)&WS_VISIBLE,0);
     }
     #[test]
@@ -2381,7 +2431,7 @@ mod fullscreen_tests {
             assert_eq!(temporary & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW),
                 previous & !(WS_EX_TOOLWINDOW|WS_EX_APPWINDOW));
         }
-        assert_ne!(host_exstyle(true)&WS_EX_APPWINDOW,0,
+        assert_ne!(host_exstyle(true,false)&WS_EX_APPWINDOW,0,
             "video host must remain selectable from native Alt+Tab");
     }
     #[test]
@@ -2493,6 +2543,35 @@ mod fullscreen_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn owned_host_auto_ge_proton_policy_is_scoped_to_wine(){
+        assert_eq!(ge_proton_source(
+            Some("GE-Proton11-12-x86_64"),None,None
+        ),"PROTONPATH");
+        assert_eq!(ge_proton_source(
+            None,Some("/steam/compatibilitytools.d/GE-Proton11-12-x86_64:/steamrt4"),None
+        ),"STEAM_COMPAT_TOOL_PATHS");
+        assert_eq!(ge_proton_source(
+            None,None,Some("C:/steam/compatibilitytools.d/Proton-GE/steamrt")
+        ),"STEAM_COMPAT_MOUNTS");
+        for key in [Some("Wine-staging-11.19"),Some(""),None]{
+            assert_eq!(ge_proton_source(key,None,None),"none");
+        }
+        assert_eq!(ge_proton_source(None,None,None),"none");
+        assert_eq!(game_owned_host_setting(None,true),(true,"auto-ge-proton"));
+        assert_eq!(game_owned_host_setting(None,false),(false,"auto-default"));
+        assert_eq!(game_owned_host_setting(Some("0"),true),(false,"forced-off"));
+        assert_eq!(game_owned_host_setting(Some("1"),false),(true,"forced-on"));
+        assert!(use_game_owned_avi_host(true,true,true));
+        for (smooth,wine,requested) in [
+            (false,true,true),(true,false,true),(true,true,false)
+        ]{
+            assert!(!use_game_owned_avi_host(smooth,wine,requested));
+        }
+        assert_eq!(host_exstyle(true,false)&WS_EX_APPWINDOW,WS_EX_APPWINDOW);
+        assert_eq!(host_exstyle(true,true)&WS_EX_TOOLWINDOW,WS_EX_TOOLWINDOW);
+        assert_eq!(host_exstyle(false,false)&WS_EX_TOOLWINDOW,WS_EX_TOOLWINDOW);
+    }
     #[test]
     fn shared_video_painter_serves_all_authenticated_editions(){
         assert!(virtual_mci_profile(true,true));
