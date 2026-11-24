@@ -6,6 +6,14 @@
 
 CyberGladiatorsFix installs and launches the original **US and French PC editions** on modern Windows, and on Linux through Wine/Proton. It is open source and **does not include the original game or CD audio**.
 
+<table>
+  <tr>
+    <td width="48%" align="center"><img src="docs/images/character-selection.webp" width="100%" alt="CyberGladiators character selection screen"></td>
+    <td width="4%">&nbsp;</td>
+    <td width="48%" align="center"><img src="docs/images/gameplay-combat.webp" width="100%" alt="CyberGladiators in-game combat scene"></td>
+  </tr>
+</table>
+
 ## Features
 
 - **Automatic installation:** detects supported original CUE/BIN disc images, installs the game, verifies its files and launches it. The disc image is no longer needed after installation.
