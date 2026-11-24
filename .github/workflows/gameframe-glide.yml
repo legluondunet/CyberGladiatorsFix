@@ -1,13 +1,20 @@
 name: Windows x64 Build
 
 on:
-  # Run the complete release build for every change, not just selected paths.
-  # This covers license, toolchain, packaging, CI and metadata updates too.
+  # Build on source/packaging changes; avoid expensive Windows builds for
+  # homepage wording and screenshot-only edits. Release tags and manual runs
+  # remain supported; bundled docs/DISTRIBUTION.md is still build-checked.
   push:
     branches: [main]
     tags: ['v*']  # Verify tags; no automatic GitHub Release publishing.
+    paths-ignore:
+      - README.md
+      - docs/images/**
   pull_request:
     branches: [main]
+    paths-ignore:
+      - README.md
+      - docs/images/**
   workflow_dispatch:
   # The one-click release publisher runs this exact, tested build as a reusable job.
   workflow_call:
@@ -368,5 +375,6 @@ jobs:
         with:
           name: CyberGladiatorsFix-Windows-x64-${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'PreRelease' }}
           path: dist/CyberGladiatorsFix-PreRelease/
+          retention-days: 3
           if-no-files-found: error
           retention-days: 30
