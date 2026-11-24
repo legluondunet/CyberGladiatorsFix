@@ -18,9 +18,17 @@ CyberGladiatorsFix installs and launches the original **US and French PC edition
 ## Installation
 
 1. Download and extract the [latest stable release](https://github.com/legluondunet/CyberGladiatorsFix/releases/latest) into a **new, empty, writable folder**.
-2. Put your original disc image beside `CyberGladiatorsFix.exe`:
-   - **US:** `CYBER.cue` and `CYBER.bin`
-   - **French:** `CYBERG.CUE` and `CYBERG.BIN`
+2. Place `CyberGladiatorsFix.exe` and an image of your original game CD (**CUE/BIN**) in the same folder. For example:
+
+   ```text
+   CyberGladiatorsFix/
+   ├── CyberGladiatorsFix.exe
+   ├── CYBERG.CUE
+   └── CYBERG.BIN
+   ```
+
+   The disc image filenames may vary. Keep the `.cue` file and its referenced `.bin` file(s) together, with **only one `.cue` file** beside the launcher.
+
 3. Run `CyberGladiatorsFix.exe` on Windows, or use Wine on Linux:
 
    ```sh
