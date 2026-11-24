@@ -2,6 +2,8 @@
 
 **One-click installer and modern compatibility fix for CyberGladiators (1996).**
 
+**Developed by [legluondunet](https://github.com/legluondunet), with assistance from ChatGPT (OpenAI).**
+
 [**Download the latest stable CyberGladiatorsFix release**](https://github.com/legluondunet/CyberGladiatorsFix/releases/latest)
 
 CyberGladiatorsFix installs and launches the original **US and French PC editions** on modern Windows, and on Linux through Wine/Proton. It is open source and **does not include the original game or CD audio**.
