@@ -47,7 +47,7 @@ CUE/BIN image. Subsequent launches verify the installation and start automatical
 
 One Windows x64 EXE embeds the open-source GameFrame Glide x86 wrapper
 (Apache-2.0) and the project's fix.dll WinMM/CDDA bridge
-(GPLv3). They are SHA-256 verified before being installed beside CYBER.EXE.
+(GPL-3.0-or-later). They are SHA-256 verified before being installed beside CYBER.EXE.
 Unknown glide.dll files are rejected; installer-owned fix.dll and glide.dll
 are replaced without persistent backups. Both stay beside game/cyber.exe.
 Lossless CDDA music is stored in music/TrackNN.flac.
@@ -75,7 +75,9 @@ hashes before installing or patching. A single-BIN raw disc with a verified
 its original CUE omits INDEX 00; the source CUE/BIN are never rewritten.
 The same owned DirectDraw/MCI adapter is selected automatically for US/FR
 under Windows and Wine/Proton. No special launch mode is necessary;
-both original editions were field-tested on Windows 11 and Wine-staging 11.17.
+both original editions were field-tested on Windows 11 and Wine-staging.
+GE-Proton uses a game-owned AVI popup when detected, avoiding a black
+introduction without changing the native Windows or other Wine defaults.
 Legacy nGlide/DXVK command paths have been retired; normal game sessions
 use only the source-pinned GameFrame wrapper.
 ";
