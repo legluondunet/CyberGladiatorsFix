@@ -15,6 +15,17 @@ CyberGladiatorsFix installs and launches the original **US and French PC edition
 - **Windows and Wine/Proton:** compatibility fixes for video, focus and Alt+Tab. **From v2.0.1**, GE-Proton is detected automatically and uses a game-owned AVI window to avoid a black introduction; other Wine runners and native Windows keep their previous window policy.
 - **Single executable:** the launcher includes the required compatibility components; no separate graphics wrapper installation is needed.
 
+## Supported Game Editions
+
+The original retail CD editions below are supported. Each SHA-256 identifies the **unmodified `CYBER/CYBER.EXE` file on the game CD**, not the CUE/BIN disc image or the executable patched by CyberGladiatorsFix.
+
+| Edition | Original EXE size | Original `CYBER.EXE` SHA-256 |
+| --- | ---: | --- |
+| US retail (v1.0) | 351,776 bytes | `226a04a745addbfe77709aa7ec56bf5c17792c524b31882da7653e1973775624` |
+| French retail | 352,288 bytes | `12db5e29120832ebc304695ecfa38f6c0d825afe2640433714d27f624da53cdb` |
+
+The installer also verifies edition-specific files on the original CD; other executable or disc variants are not supported.
+
 ## Installation
 
 1. Download and extract the [latest stable release](https://github.com/legluondunet/CyberGladiatorsFix/releases/latest) into a **new, empty, writable folder**.
@@ -26,8 +37,6 @@ CyberGladiatorsFix installs and launches the original **US and French PC edition
    ├── CYBERG.CUE
    └── CYBERG.BIN
    ```
-
-   The disc image filenames may vary. Keep the `.cue` file and its referenced `.bin` file(s) together, with **only one `.cue` file** beside the launcher.
 
 3. Run `CyberGladiatorsFix.exe` on Windows, or use Wine on Linux:
 
