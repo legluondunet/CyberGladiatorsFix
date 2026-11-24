@@ -1,11 +1,11 @@
-# GameFrame glide.dll ownership and replacement policy — v2.0.0
+# GameFrame glide.dll ownership and replacement policy — v2.x
 
-**Current policy:** CyberGladiatorsFix v2.0.0 uses the verified, embedded
+**Current policy:** CyberGladiatorsFix v2.0.0 and v2.0.1 use the verified, embedded
 GameFrame Glide wrapper and an installer-owned `fix.dll` WinMM/CDDA bridge
 beside `game/cyber.exe`. Unlike the historical v1.x behavior, **v2 never
 creates a persistent `glide.dll.bak` or `fix.dll.bak` when replacing an
 installer-owned runtime DLL**. The older archival/rename policy remains
-available in Git history; it is not a v2.0.0 installation instruction.
+available in Git history; it is not a v2.x installation instruction.
 
 ## Verified ownership
 
@@ -50,5 +50,5 @@ for authentication and safe patching. It is intentionally retained and
 never treated as disposable installation staging.
 
 See `src/gameframe.rs`, `src/cdda.rs`, `src/layout.rs` and the
-[active v2.0.0 release notes](RELEASE_NOTES_v2.0.0.md) for the
+[active v2.0.1 release notes](RELEASE_NOTES_v2.0.1.md) for the
 implementation and compatibility scope.

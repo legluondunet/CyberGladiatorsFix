@@ -2,7 +2,7 @@
 
 **One-click installer and modern compatibility fix for CyberGladiators (1996).**
 
-[**Download CyberGladiatorsFix v2.0.0**](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0)
+[**Download the latest stable CyberGladiatorsFix release**](https://github.com/legluondunet/CyberGladiatorsFix/releases/latest)
 
 CyberGladiatorsFix installs and launches the original **US and French PC editions** on modern Windows, and on Linux through Wine/Proton. It is open source and **does not include the original game or CD audio**.
 
@@ -12,12 +12,12 @@ CyberGladiatorsFix installs and launches the original **US and French PC edition
 - **Modern graphics:** GameFrame Glide-to-OpenGL rendering, borderless fullscreen at desktop resolution, original **4:3 aspect ratio** and a 60 FPS limiter.
 - **Original videos:** AVI playback with an option to skip the introduction.
 - **CD music:** automatically extracts the original audio as **14 lossless FLAC tracks** for disc-free playback.
-- **Windows and Wine/Proton:** compatibility fixes for video, focus and Alt+Tab.
+- **Windows and Wine/Proton:** compatibility fixes for video, focus and Alt+Tab. **From v2.0.1**, GE-Proton is detected automatically and uses a game-owned AVI window to avoid a black introduction; other Wine runners and native Windows keep their previous window policy.
 - **Single executable:** the launcher includes the required compatibility components; no separate graphics wrapper installation is needed.
 
 ## Installation
 
-1. Download and extract the [latest release](https://github.com/legluondunet/CyberGladiatorsFix/releases/tag/v2.0.0) into a **new, empty, writable folder**.
+1. Download and extract the [latest stable release](https://github.com/legluondunet/CyberGladiatorsFix/releases/latest) into a **new, empty, writable folder**.
 2. Put your original disc image beside `CyberGladiatorsFix.exe`:
    - **US:** `CYBER.cue` and `CYBER.bin`
    - **French:** `CYBERG.CUE` and `CYBERG.BIN`
@@ -29,7 +29,7 @@ CyberGladiatorsFix installs and launches the original **US and French PC edition
 
 The installer handles the rest. For future launches, simply run `CyberGladiatorsFix.exe` again.
 
-> **Upgrading from v1.x:** v2.0.0 requires a fresh installation and does not migrate existing installations or saved games. Keep your previous folder and saves separately.
+> **Upgrading:** v1.x requires a fresh installation; keep its old folder and saves separately. From v2.0.0 to v2.0.1, keep the existing `game/`, `music/` and `state/` directories and replace the launcher executable. The installer verifies the original game and safely updates only the runtime DLLs that it owns.
 >
 > **Disc formats:** original US/FR CUE/BIN images are supported for installation; a standalone ISO cannot be installed.
 
@@ -45,7 +45,7 @@ SkipIntro=0
 Log=0
 ```
 
-Set `SkipIntro=1` to skip the opening video or `Log=1` to enable diagnostic logs.
+Set `SkipIntro=1` to skip the opening video or `Log=1` to enable diagnostic logs. On GE-Proton v2.0.1+, no manual environment variable is needed; a diagnostic override `CYBER_AVI_GAME_OWNED_HOST=0` disables the automatic AVI-window policy, and `=1` forces it on the supported Wine video path.
 
 Useful commands:
 

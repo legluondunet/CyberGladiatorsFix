@@ -1,6 +1,6 @@
 # CyberGladiatorsFix v2.0.0 — release readiness
 
-**Status: source merged and tested; public release not yet published.** The v1.0.0 and v1.0.1 releases remain unchanged. The [manual publication process](RELEASE_PROCESS.md) requires **explicit approval to publish**, separately from approving source changes.
+**Historical document:** v2.0.0 was published on **23 November 2026**. The checkboxes and publication instructions below record the *former* pre-publication plan and should not be executed again. For the next release see [v2.0.1 readiness](RELEASE_READINESS_v2.0.1.md) and the [current manual procedure](RELEASE_PROCESS.md). Published v1.0.0, v1.0.1 and v2.0.0 releases remain unchanged.
 
 The v2.0.0 layout ([merged PR #27](https://github.com/legluondunet/CyberGladiatorsFix/pull/27)) **does not migrate v1.x installations**. [Merged PR #31](https://github.com/legluondunet/CyberGladiatorsFix/pull/31) fixed early DirectDraw cleanup on French and USA retail executables, and restored the real EXE taskbar icon on Wine/XFCE. Its latest field-tested source was `2b720877`, merged to `main` as `4ecd56d1`.
 

@@ -1,6 +1,6 @@
 # Pre-release code audit — CyberGladiatorsFix
 
-**Historical pre-v2 audit (PR #25):** this records the older CLI/renderer cleanup and is not the current v2.0.0 publication checklist. Consult [v2.0.0 readiness](RELEASE_READINESS_v2.0.0.md), [v2.0.0 release notes](RELEASE_NOTES_v2.0.0.md), and the [manual release process](RELEASE_PROCESS.md).
+**Historical pre-v2 audit (PR #25):** this records the older CLI/renderer cleanup and is not the current v2.0.0 publication checklist. Consult the [active v2.0.1 audit](CODE_AUDIT_v2.0.1.md), [readiness](RELEASE_READINESS_v2.0.1.md), [release notes](RELEASE_NOTES_v2.0.1.md), and [manual release process](RELEASE_PROCESS.md). Historical [v2.0.0 readiness](RELEASE_READINESS_v2.0.0.md) and [notes](RELEASE_NOTES_v2.0.0.md) remain archived.
 
 ## Baseline and scope
 
